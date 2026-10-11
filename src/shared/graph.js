@@ -4,8 +4,9 @@
 import { EXPORT_FORMATS } from './defs.js';
 import { layoutProject, mainTrack, transitionDuration, projectDuration, cropDims, fitScale } from './timeline.js';
 import { clipOps, effectClipOps, ffFilters } from './ops.js';
-import { animScaleExpr, animOffsetExprs, animFades } from './anim.js';
+import { animScaleExpr, animOffsetExprs, animFades, animRotExpr } from './anim.js';
 import { effectDef, isSegmentEffect, seedOf } from './effects.js';
+import { isCamTransition, camClipChain, camMixExpr } from './camtrans.js';
 
 const r3 = (x) => String(Math.round(x * 1000) / 1000);
 const n4 = (x) => String(Math.round(x * 10000) / 10000);
@@ -112,6 +113,8 @@ export function buildExport({ project: src, mediaMap, out, textAssets = {}, fxAs
     const op = c.opacity ?? 1;
     if (op < 0.999) f.push(`colorchannelmixer=aa=${n4(op)}`);
     if (t0 > 0) f.push(`setpts=PTS+${r3(t0)}/TB`);
+    const rx = animRotExpr(c, t0);
+    if (rx) f.push(`rotate=a='${rx}':c=none:ow='hypot(iw,ih)':oh='ow'`);
     const sx = animScaleExpr(c, t0);
     if (sx) f.push(`scale=w='max(2,trunc(iw*${sx}))':h='max(2,trunc(ih*${sx}))':eval=frame`);
     f.push(...animFades(c, t0));
@@ -153,12 +156,20 @@ export function buildExport({ project: src, mediaMap, out, textAssets = {}, fxAs
     // ---- Faixa principal: cada clipe vira um quadro completo, depois concat/xfade ----
     const parts = [];
     const showMain = main && !main.hidden;
+    const tdqs = mainClips.map((c, i) => {
+      const dur = q(c.duration);
+      const td = transitionDuration(c, mainClips[i + 1]);
+      return td > 0 ? Math.min(Math.round(td * FPS) / FPS, dur / 2) : 0;
+    });
     mainClips.forEach((c, i) => {
       const m = mediaOf(c);
       const dur = q(c.duration);
-      const td = transitionDuration(c, mainClips[i + 1]);
-      const tdq = td > 0 ? Math.min(Math.round(td * FPS) / FPS, dur / 2) : 0;
-      const lab = L('v');
+      const tdq = tdqs[i];
+      const outT = tdq > 0 && isCamTransition(c.transition?.id) ? { id: c.transition.id, d: tdq } : null;
+      const prevC = mainClips[i - 1];
+      const inT = i > 0 && tdqs[i - 1] > 0 && isCamTransition(prevC.transition?.id) ? { id: prevC.transition.id, d: tdqs[i - 1] } : null;
+      const camL = outT || inT ? L('cv') : null;
+      const lab = camL ? L('vr') : L('v');
       if (!showMain || !usable(m) || (m.type !== 'video' && m.type !== 'image')) {
         F.push(`color=c=${hex(bgDefault.color)}:s=${W}x${H}:r=${FPS}:d=${r3(dur)},format=yuv420p,setsar=1,settb=AVTB[${lab}]`);
       } else {
@@ -179,7 +190,8 @@ export function buildExport({ project: src, mediaMap, out, textAssets = {}, fxAs
         }
         F.push(`[${bgL}][${fgL}]overlay=x='${pl.x}':y='${pl.y}':eof_action=pass:format=auto,trim=duration=${r3(dur)},setpts=PTS-STARTPTS,fps=${FPS},format=yuv420p,setsar=1,settb=AVTB[${lab}]`);
       }
-      parts.push({ lab, dur, tdq, tid: c.transition?.id });
+      if (camL) F.push(...camClipChain({ inL: lab, outL: camL, inc: inT, out: outT, dur, FPS, H, L }));
+      parts.push({ lab: camL || lab, dur, tdq, tid: c.transition?.id });
     });
 
     let acc = null, accDur = 0, prevTd = 0, prevId = 'fade';
@@ -197,7 +209,8 @@ export function buildExport({ project: src, mediaMap, out, textAssets = {}, fxAs
         if (acc === null) { acc = gl; accDur = groupDur; }
         else {
           const l = L('x');
-          F.push(`[${acc}][${gl}]xfade=transition=${prevId}:duration=${r3(prevTd)}:offset=${r3(accDur - prevTd)}[${l}]`);
+          const tr = isCamTransition(prevId) ? `custom:expr='${camMixExpr(prevId)}'` : prevId;
+          F.push(`[${acc}][${gl}]xfade=transition=${tr}:duration=${r3(prevTd)}:offset=${r3(accDur - prevTd)}[${l}]`);
           acc = l;
           accDur += groupDur - prevTd;
         }
@@ -281,6 +294,8 @@ export function buildExport({ project: src, mediaMap, out, textAssets = {}, fxAs
           if (!a) continue;
           const idx = addInput(['-loop', '1', '-framerate', String(FPS), '-t', r3(c.duration + 0.1), '-i', a.path]);
           const f = ['format=rgba', `setpts=PTS-STARTPTS+${r3(s)}/TB`];
+          const rx = animRotExpr(c, s);
+          if (rx) f.push(`rotate=a='${rx}':c=none:ow='hypot(iw,ih)':oh='ow'`);
           const sx = animScaleExpr(c, s);
           if (sx) f.push(`scale=w='max(2,trunc(iw*${sx}))':h='max(2,trunc(ih*${sx}))':eval=frame`);
           f.push(...animFades(c, s));
@@ -328,40 +343,46 @@ export function buildExport({ project: src, mediaMap, out, textAssets = {}, fxAs
   }
 
   // ---- Codificação ----
+  // Com out.vKbps (taxa de bits alvo) o tamanho final fica previsível; sem ele, usa CRF.
   const crf = { high: 18, standard: 21, small: 26 }[out.quality] ?? 21;
   const nv = out.hw === 'nvenc';
+  const vk = out.vKbps ? Math.round(out.vKbps) : 0;
+  const rate = vk ? ['-b:v', `${vk}k`, '-maxrate', `${Math.round(vk * 1.5)}k`, '-bufsize', `${vk * 2}k`] : null;
+  const ak = out.aKbps ? `${Math.round(out.aKbps)}k` : null;
   const v = [], a = [];
   switch (fmt.id) {
     case 'mp4': case 'mov': case 'mkv':
-      if (nv) v.push('-c:v', 'h264_nvenc', '-preset', 'p5', '-rc', 'vbr', '-cq', String(crf + 2), '-b:v', '0', '-pix_fmt', 'yuv420p');
-      else v.push('-c:v', 'libx264', '-preset', out.quality === 'high' ? 'slow' : 'medium', '-crf', String(crf), '-pix_fmt', 'yuv420p');
+      if (nv) v.push('-c:v', 'h264_nvenc', '-preset', 'p5', '-rc', 'vbr', ...(rate || ['-cq', String(crf + 2), '-b:v', '0']), '-pix_fmt', 'yuv420p');
+      else v.push('-c:v', 'libx264', '-preset', out.quality === 'high' ? 'slow' : 'medium', ...(rate || ['-crf', String(crf)]), '-pix_fmt', 'yuv420p');
       if (fmt.id !== 'mkv') v.push('-movflags', '+faststart');
-      a.push('-c:a', 'aac', '-b:a', '192k');
+      a.push('-c:a', 'aac', '-b:a', ak || '192k');
       break;
-    case 'mp4_hevc':
-      if (nv) v.push('-c:v', 'hevc_nvenc', '-preset', 'p5', '-rc', 'vbr', '-cq', String(crf + 4), '-b:v', '0', '-pix_fmt', 'yuv420p');
-      else v.push('-c:v', 'libx265', '-preset', 'medium', '-crf', String(crf + 5), '-pix_fmt', 'yuv420p');
+    case 'mp4_hevc': case 'mov_hevc':
+      if (nv) v.push('-c:v', 'hevc_nvenc', '-preset', 'p5', '-rc', 'vbr', ...(rate || ['-cq', String(crf + 4), '-b:v', '0']), '-pix_fmt', 'yuv420p');
+      else v.push('-c:v', 'libx265', '-preset', 'medium', ...(rate || ['-crf', String(crf + 5)]), '-pix_fmt', 'yuv420p');
       v.push('-tag:v', 'hvc1', '-movflags', '+faststart');
-      a.push('-c:a', 'aac', '-b:a', '192k');
+      a.push('-c:a', 'aac', '-b:a', ak || '192k');
       break;
     case 'prores':
       v.push('-c:v', 'prores_ks', '-profile:v', '2', '-pix_fmt', 'yuv422p10le');
       a.push('-c:a', 'pcm_s16le');
       break;
     case 'webm':
-      v.push('-c:v', 'libvpx-vp9', '-crf', String(crf + 12), '-b:v', '0', '-row-mt', '1', '-deadline', 'good', '-cpu-used', '3', '-pix_fmt', 'yuv420p');
-      a.push('-c:a', 'libopus', '-b:a', '160k');
+      if (vk) v.push('-c:v', 'libvpx-vp9', '-b:v', `${vk}k`, '-minrate', `${Math.round(vk * 0.5)}k`, '-maxrate', `${Math.round(vk * 1.45)}k`);
+      else v.push('-c:v', 'libvpx-vp9', '-crf', String(crf + 12), '-b:v', '0');
+      v.push('-row-mt', '1', '-deadline', 'good', '-cpu-used', '3', '-pix_fmt', 'yuv420p');
+      a.push('-c:a', 'libopus', '-b:a', ak || '160k');
       break;
     case 'avi':
-      v.push('-c:v', 'mpeg4', '-vtag', 'xvid', '-q:v', String({ high: 2, standard: 3, small: 5 }[out.quality] ?? 3));
-      a.push('-c:a', 'libmp3lame', '-b:a', '192k');
+      v.push('-c:v', 'mpeg4', '-vtag', 'xvid', ...(vk ? ['-b:v', `${vk}k`] : ['-q:v', String({ high: 2, standard: 3, small: 5 }[out.quality] ?? 3)]));
+      a.push('-c:a', 'libmp3lame', '-b:a', ak || '192k');
       break;
     case 'gif':
       v.push('-loop', '0');
       break;
-    case 'mp3': a.push('-c:a', 'libmp3lame', '-b:a', { high: '320k', standard: '192k', small: '128k' }[out.quality] || '192k'); break;
+    case 'mp3': a.push('-c:a', 'libmp3lame', '-b:a', ak || { high: '320k', standard: '192k', small: '128k' }[out.quality] || '192k'); break;
     case 'wav': a.push('-c:a', 'pcm_s16le'); break;
-    case 'm4a': a.push('-c:a', 'aac', '-b:a', { high: '256k', standard: '192k', small: '128k' }[out.quality] || '192k'); break;
+    case 'm4a': a.push('-c:a', 'aac', '-b:a', ak || { high: '256k', standard: '192k', small: '128k' }[out.quality] || '192k'); break;
     case 'flac': a.push('-c:a', 'flac'); break;
     default: break;
   }

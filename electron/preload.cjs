@@ -11,6 +11,9 @@ contextBridge.exposeInMainWorld('api', {
   info: () => ipcRenderer.invoke('app:info'),
   nvenc: () => ipcRenderer.invoke('app:nvenc'),
   pendingFile: () => ipcRenderer.invoke('app:pendingFile'),
+  setCurrentProject: (id) => ipcRenderer.invoke('app:currentProject', id),
+  logError: (msg) => ipcRenderer.invoke('app:logError', msg),
+  errorLogPath: () => ipcRenderer.invoke('app:errorLogPath'),
   onOpenFile: on('app:openFile'),
 
   openMediaDialog: () => ipcRenderer.invoke('dialog:openMedia'),

@@ -118,6 +118,21 @@ export const TRANSITIONS = [
   { id: 'pixelize', name: 'Pixelizar' },
   { id: 'zoomin', name: 'Zoom' },
   { id: 'hblur', name: 'Desfoque' },
+  // Câmera / criativas (camtrans.js)
+  { id: 'mc_spin', name: 'Giro', cat: 'camera' },
+  { id: 'mc_spinccw', name: 'Giro anti-horário', cat: 'camera' },
+  { id: 'mc_spinzoom', name: 'Giro com zoom', cat: 'camera' },
+  { id: 'mc_zoom', name: 'Zoom rápido', cat: 'camera' },
+  { id: 'mc_whipl', name: 'Chicote ←', cat: 'camera' },
+  { id: 'mc_whipr', name: 'Chicote →', cat: 'camera' },
+  { id: 'mc_whipu', name: 'Chicote ↑', cat: 'camera' },
+  { id: 'mc_whipd', name: 'Chicote ↓', cat: 'camera' },
+  { id: 'mc_roll', name: 'Rolar', cat: 'camera' },
+  { id: 'mc_impact', name: 'Impacto', cat: 'camera' },
+];
+export const TRANSITION_CATS = [
+  { id: 'basic', name: 'Básicas' },
+  { id: 'camera', name: 'Câmera e criativas' },
 ];
 
 export const ANIMS_IN = [
@@ -130,6 +145,8 @@ export const ANIMS_IN = [
   { id: 'slideRight', name: 'Entrar →' },
   { id: 'slideUp', name: 'Entrar ↑' },
   { id: 'slideDown', name: 'Entrar ↓' },
+  { id: 'spin', name: 'Girar' },
+  { id: 'flip', name: 'Virar' },
 ];
 
 export const ANIMS_OUT = [
@@ -142,12 +159,15 @@ export const ANIMS_OUT = [
   { id: 'slideRight', name: 'Sair →' },
   { id: 'slideUp', name: 'Sair ↑' },
   { id: 'slideDown', name: 'Sair ↓' },
+  { id: 'spin', name: 'Girar' },
+  { id: 'flip', name: 'Virar' },
 ];
 
 export const EXPORT_FORMATS = [
   { id: 'mp4', name: 'MP4 (H.264)', ext: 'mp4', kind: 'video', desc: 'Funciona em qualquer lugar' },
   { id: 'mp4_hevc', name: 'MP4 (H.265)', ext: 'mp4', kind: 'video', desc: 'Arquivo menor, mesma qualidade' },
   { id: 'mov', name: 'MOV (H.264)', ext: 'mov', kind: 'video', desc: 'Padrão Apple' },
+  { id: 'mov_hevc', name: 'MOV (H.265)', ext: 'mov', kind: 'video', desc: 'Padrão Apple, arquivo menor' },
   { id: 'prores', name: 'MOV (ProRes 422)', ext: 'mov', kind: 'video', desc: 'Para pós-produção (arquivo grande)' },
   { id: 'webm', name: 'WebM (VP9)', ext: 'webm', kind: 'video', desc: 'Para sites' },
   { id: 'mkv', name: 'MKV (H.264)', ext: 'mkv', kind: 'video', desc: 'Contêiner aberto' },
@@ -168,10 +188,58 @@ export const RESOLUTIONS = [
 ];
 
 export const QUALITIES = [
-  { id: 'high', name: 'Alta' },
+  { id: 'small', name: 'Mais baixa' },
   { id: 'standard', name: 'Recomendada' },
-  { id: 'small', name: 'Arquivo menor' },
+  { id: 'high', name: 'Mais alta' },
+  { id: 'custom', name: 'Personalizada' },
 ];
+
+// Contêiner + codec → formato de exportação
+export const CONTAINERS = {
+  mp4: { name: 'MP4', codecs: [{ id: 'h264', name: 'H.264', format: 'mp4' }, { id: 'hevc', name: 'H.265 (HEVC)', format: 'mp4_hevc' }] },
+  mov: { name: 'MOV', codecs: [{ id: 'h264', name: 'H.264', format: 'mov' }, { id: 'hevc', name: 'H.265 (HEVC)', format: 'mov_hevc' }, { id: 'prores', name: 'ProRes 422', format: 'prores' }] },
+};
+
+// Taxa de bits de vídeo (kbps) para H.264 a 30 fps, por resolução (lado menor) e qualidade.
+const H264_KBPS = { 480: [1500, 2500, 4000], 720: [3000, 5000, 8000], 1080: [5000, 8000, 14000], 1440: [10000, 16000, 24000], 2160: [20000, 35000, 50000] };
+const QIDX = { small: 0, standard: 1, high: 2 };
+
+export function videoKbps({ format, res, fps, width, height, quality, customMbps }) {
+  if (format === 'prores') return Math.round(147000 * ((width * height) / (1920 * 1080)) * (fps / 29.97));
+  if (quality === 'custom') return Math.round((customMbps || 8) * 1000);
+  const row = H264_KBPS[res] || H264_KBPS[1080];
+  let v = row[QIDX[quality] ?? 1] * (fps > 30 ? 1.5 : 1);
+  if (format === 'mp4_hevc' || format === 'mov_hevc') v *= 0.6;
+  if (format === 'webm') v *= 0.7;
+  if (format === 'avi') v *= 1.5;
+  return Math.round(v);
+}
+
+export function audioKbps(format, quality) {
+  switch (format) {
+    case 'prores': case 'wav': return 1536;
+    case 'flac': return 900;
+    case 'mp3': return { small: 128, standard: 192, high: 320, custom: 320 }[quality] || 192;
+    case 'm4a': return { small: 128, standard: 192, high: 256, custom: 256 }[quality] || 192;
+    case 'webm': return 160;
+    case 'gif': return 0;
+    default: return 192;
+  }
+}
+
+// Estimativa de tamanho do arquivo (bytes).
+export function estimateBytes({ kind, width, height, fps, duration, vKbps, aKbps }) {
+  if (kind === 'gif') return Math.round(Math.min(width, 540) * Math.min(height, 960) * Math.min(fps, 15) * duration * 0.06);
+  const kbps = (kind === 'audio' ? 0 : vKbps) + aKbps;
+  return Math.round(((kbps * 1000) / 8) * duration * 1.01);
+}
+
+export function fmtBytes(b) {
+  if (!b && b !== 0) return '—';
+  if (b < 1024 * 1024) return `${Math.max(1, Math.round(b / 1024))} KB`;
+  if (b < 1024 * 1024 * 1024) return `${(b / 1024 / 1024).toFixed(b < 100 * 1024 * 1024 ? 1 : 0).replace('.', ',')} MB`;
+  return `${(b / 1024 / 1024 / 1024).toFixed(2).replace('.', ',')} GB`;
+}
 
 export const MEDIA_EXTS = {
   video: ['mp4', 'mov', 'm4v', 'mkv', 'webm', 'avi', 'wmv', 'flv', 'mpg', 'mpeg', 'ts', 'mts', 'm2ts', '3gp', 'ogv', 'gif'],

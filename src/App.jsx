@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { AlertTriangle, Info } from 'lucide-react';
+import { AlertTriangle, Info, RotateCcw, House, FileText } from 'lucide-react';
 import { useStore } from './store.js';
 import { initAutosave, saveNow } from './autosave.js';
 import { uid, projectDuration } from './shared/timeline.js';
@@ -7,6 +7,46 @@ import Home from './components/Home.jsx';
 import Editor from './components/Editor.jsx';
 
 initAutosave();
+
+// Registra qualquer erro num arquivo (logs/erros.txt) para diagnóstico.
+const logError = (msg) => { try { window.api.logError(msg); } catch { /* sem ponte */ } };
+window.addEventListener('error', (e) => logError(`erro: ${e.message}
+${e.error?.stack || ''}`));
+window.addEventListener('unhandledrejection', (e) => logError(`promessa rejeitada: ${e.reason?.stack || e.reason}`));
+// Informa ao processo principal o projeto aberto (para reabrir se a interface cair).
+useStore.subscribe((s, prev) => {
+  const id = s.project?.id || null;
+  if (id !== (prev.project?.id || null)) window.api.setCurrentProject?.(id);
+});
+
+// Se algum componente falhar, mostra uma tela de recuperação em vez de deixar a janela preta.
+class ErrorBoundary extends React.Component {
+  constructor(props) { super(props); this.state = { error: null, details: false }; }
+  static getDerivedStateFromError(error) { return { error }; }
+  componentDidCatch(error, info) { logError(`falha na interface: ${error?.stack || error}
+${info?.componentStack || ''}`); }
+  render() {
+    if (!this.state.error) return this.props.children;
+    const retry = () => this.setState({ error: null, details: false });
+    const home = async () => { try { await saveNow(); } catch { /* ignore */ } useStore.getState().goHome(); retry(); };
+    return (
+      <div style={{ flex: 1, display: 'grid', placeItems: 'center', padding: 30 }}>
+        <div style={{ maxWidth: 520, textAlign: 'center' }}>
+          <AlertTriangle size={36} color="#ffb74d" />
+          <h2 style={{ margin: '12px 0 6px' }}>Algo deu errado nesta tela</h2>
+          <div className="hint" style={{ fontSize: 13, marginBottom: 18 }}>Seu projeto está salvo. Você pode continuar de onde parou.</div>
+          <div style={{ display: 'flex', gap: 8, justifyContent: 'center' }}>
+            <button className="btn primary" onClick={retry}><RotateCcw size={15} /> Continuar editando</button>
+            <button className="btn" onClick={home}><House size={15} /> Voltar ao início</button>
+            <button className="btn ghost" onClick={async () => window.api.openPath(await window.api.errorLogPath())}><FileText size={15} /> Registro</button>
+          </div>
+          <button className="btn small ghost" style={{ marginTop: 14 }} onClick={() => this.setState({ details: !this.state.details })}>Detalhes técnicos</button>
+          {this.state.details && <div className="err-box" style={{ marginTop: 8, textAlign: 'left' }}>{String(this.state.error?.stack || this.state.error)}</div>}
+        </div>
+      </div>
+    );
+  }
+}
 
 export async function openProjectFromFile(path) {
   const s = useStore.getState();
@@ -35,6 +75,14 @@ export default function App() {
     const off1 = window.api.onProxyProgress(({ jobId, pct }) => useStore.getState().setMeta(jobId, { progress: pct }));
     const off2 = window.api.onOpenFile((f) => openProjectFromFile(f));
     window.api.pendingFile().then((f) => { if (f) openProjectFromFile(f); });
+    // Reabre o projeto se a interface foi reiniciada depois de uma falha.
+    const reopen = new URLSearchParams(window.location.search).get('reopen');
+    if (reopen) {
+      window.api.loadDraft(reopen).then((p) => {
+        useStore.getState().openEditor(p);
+        useStore.getState().toastMsg('O editor foi reiniciado depois de um erro e seu projeto foi reaberto.', 'info', 6000);
+      }).catch(() => {});
+    }
     return () => { off1(); off2(); };
   }, []);
 
@@ -106,7 +154,7 @@ export default function App() {
 
   return (
     <div className="app" onContextMenu={(e) => { if (!isTyping(e)) e.preventDefault(); }}>
-      {screen === 'home' ? <Home /> : <Editor />}
+      <ErrorBoundary>{screen === 'home' ? <Home /> : <Editor />}</ErrorBoundary>
       {toast && (
         <div className={`toast ${toast.kind === 'err' ? 'err' : ''}`}>
           {toast.kind === 'err' ? <AlertTriangle size={16} color="#ff8b8b" /> : <Info size={16} color="#19d3df" />}

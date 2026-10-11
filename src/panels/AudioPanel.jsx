@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Mic, Square, Plus, Music, Upload, Info } from 'lucide-react';
+import { Mic, Square, Plus, Music, Upload, Info, Scissors } from 'lucide-react';
 import { useStore } from '../store.js';
 import { fmtTime } from '../shared/timeline.js';
 import { startDrag, endDrag } from '../dnd.js';
@@ -80,11 +80,12 @@ export default function AudioPanel() {
         return (
           <div key={m.id} className="list-item" draggable={ready}
             onDragStart={(e) => startDrag(e, { kind: 'media', id: m.id }, m.name)} onDragEnd={endDrag}
-            onDoubleClick={() => ready && s().addMedia(m.id)}>
+            onClick={() => ready && s().openTrim(m.id)} title="Clique para ouvir e cortar antes de inserir">
             <Music size={15} color="#7fe0b0" />
             <span className="grow" title={m.name}>{m.name}</span>
-            <span style={{ color: 'var(--muted)' }}>{fmtTime(m.duration)}</span>
-            <button className="icon-btn sm" disabled={!ready} title="Adicionar no cursor" onClick={() => s().addMedia(m.id)}><Plus size={14} /></button>
+            <span style={{ color: 'var(--muted)' }}>{m.trim ? `✂ ${fmtTime(m.trim.out - m.trim.in)}` : fmtTime(m.duration)}</span>
+            <button className="icon-btn sm" disabled={!ready} title="Ouvir e cortar" onClick={(e) => { e.stopPropagation(); s().openTrim(m.id); }}><Scissors size={14} /></button>
+            <button className="icon-btn sm" disabled={!ready} title="Adicionar no cursor" onClick={(e) => { e.stopPropagation(); s().addMedia(m.id); }}><Plus size={14} /></button>
           </div>
         );
       })}

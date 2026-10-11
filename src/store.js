@@ -177,6 +177,7 @@ export const useStore = create((set, get) => ({
   leftTab: 'media',
   toast: null,
   modal: null,
+  trimMediaId: null,
   clipboard: null,
   savedAt: 0,
   fullscreen: false,
@@ -327,6 +328,14 @@ export const useStore = create((set, get) => ({
     get().updateMediaSilent(id, { path: p, renderPath: undefined });
     await get().prepareMedia(id, true);
   },
+  openTrim(id) {
+    const m = get().project?.media.find((x) => x.id === id);
+    const meta = get().meta[id];
+    if (!m || (m.type !== 'video' && m.type !== 'audio')) return;
+    if (meta?.status !== 'ready') { get().toastMsg('Aguarde a mídia terminar de carregar.'); return; }
+    get().pause();
+    set({ modal: 'trim', trimMediaId: id });
+  },
   removeMedia(id) {
     const used = get().project.tracks.some((t) => t.clips.some((c) => c.mediaId === id));
     if (used && !window.confirm('Esta mídia está na linha do tempo. Remover a mídia e os clipes que a usam?')) return;
@@ -351,6 +360,11 @@ export const useStore = create((set, get) => ({
     let target = opts.target || 'main';
     if (m.type === 'audio') target = 'audio';
     const clip = newMediaClip(m);
+    // corte feito antes de inserir (janela "Cortar antes de inserir")
+    if (m.trim && (m.type === 'video' || m.type === 'audio')) {
+      clip.in = Math.max(0, m.trim.in);
+      clip.duration = Math.max(MIN_CLIP, Math.min(m.duration, m.trim.out) - clip.in);
+    }
     get().commit((p) => {
       const main = mainTrack(p);
       if (target === 'main') {

@@ -11,6 +11,8 @@ const DEFS = {
     slideRight: { dx: -1 },
     slideUp: { dy: 1 },
     slideDown: { dy: -1 },
+    spin: { rot: -2 * Math.PI, scale: 0.3, alpha: 0 },
+    flip: { rot: -Math.PI / 2, scale: 0.6, alpha: 0 },
   },
   out: {
     fade: { alpha: 0 },
@@ -21,6 +23,8 @@ const DEFS = {
     slideRight: { dx: 1 },
     slideUp: { dy: -1 },
     slideDown: { dy: 1 },
+    spin: { rot: 2 * Math.PI, scale: 0.3, alpha: 0 },
+    flip: { rot: Math.PI / 2, scale: 0.6, alpha: 0 },
   },
 };
 
@@ -45,7 +49,7 @@ export function animDurations(clip) {
 
 // Estado no tempo local lt (segundos desde o início do clipe).
 export function animState(clip, lt) {
-  const st = { alpha: 1, scale: 1, dx: 0, dy: 0 };
+  const st = { alpha: 1, scale: 1, dx: 0, dy: 0, rot: 0 };
   const { di, dout } = animDurations(clip);
   if (di > 0) {
     const d = DEFS.in[clip.animIn.id];
@@ -55,6 +59,7 @@ export function animState(clip, lt) {
     if (d.scale !== undefined) st.scale *= d.scale + (1 - d.scale) * e;
     if (d.dx) st.dx += d.dx * (1 - e);
     if (d.dy) st.dy += d.dy * (1 - e);
+    if (d.rot) st.rot += d.rot * (1 - e);
   }
   if (dout > 0) {
     const d = DEFS.out[clip.animOut.id];
@@ -64,6 +69,7 @@ export function animState(clip, lt) {
     if (d.scale !== undefined) st.scale *= 1 + (d.scale - 1) * e;
     if (d.dx) st.dx += d.dx * e;
     if (d.dy) st.dy += d.dy * e;
+    if (d.rot) st.rot += d.rot * e;
   }
   st.scale = Math.max(0, st.scale);
   st.alpha = clamp(st.alpha);
@@ -108,6 +114,21 @@ export function animOffsetExprs(clip, t0) {
     if (d.dy) dy.push(`${n4(d.dy)}*${e}`);
   }
   return { dx: dx.join('+'), dy: dy.join('+') };
+}
+
+// Giro animado (radianos) — usado no filtro rotate da exportação.
+export function animRotExpr(clip, t0) {
+  const { di, dout } = animDurations(clip);
+  const terms = [];
+  if (di > 0) {
+    const d = DEFS.in[clip.animIn.id];
+    if (d.rot) terms.push(`${n4(d.rot)}*(1-${eOut(inP(t0, di), d.back)})`);
+  }
+  if (dout > 0) {
+    const d = DEFS.out[clip.animOut.id];
+    if (d.rot) terms.push(`${n4(d.rot)}*${eIn(outQ(t0, clip.duration, dout), d.back)}`);
+  }
+  return terms.join('+');
 }
 
 export function animFades(clip, t0) {

@@ -1,5 +1,6 @@
 // Transições na prévia — reproduzem (de perto) o xfade do FFmpeg usado na exportação.
-import { clamp, smoothstep } from './util.js';
+import { clamp, smoothstep, makeCanvas } from './util.js';
+import { isCamTransition, drawCamTransition } from '../shared/camtrans.js';
 
 function masked(ctx, src, tmp, W, H, paintMask) {
   // desenha src através de uma máscara (alfa) pintada por paintMask(ctx)
@@ -25,8 +26,9 @@ function smoothStops(g, from, to, invert = false) {
   }
 }
 
-export function drawTransition(ctx, id, A, B, p, W, H, tmp, pixelate) {
+export function drawTransition(ctx, id, A, B, p, W, H, tmp, pixelate, tmpFn) {
   p = clamp(p);
+  if (isCamTransition(id) && tmpFn) { drawCamTransition(ctx, id, A, B, p, W, H, tmpFn); return; }
   ctx.save();
   switch (id) {
     case 'fadeblack':
@@ -155,10 +157,17 @@ export function drawTransitionThumb(ctx, id, p, W, H, tmp) {
   }
   const { A, B } = drawTransitionThumb.cache;
   ctx.clearRect(0, 0, W, H);
+  const pool = drawTransitionThumb.pool || (drawTransitionThumb.pool = {});
+  const tmpFn = (i) => {
+    let t = pool[i];
+    if (!t || t.canvas.width !== W) { const c = makeCanvas(W, H); t = pool[i] = { canvas: c, ctx: c.getContext('2d') }; }
+    t.ctx.setTransform(1, 0, 0, 1, 0, 0); t.ctx.globalAlpha = 1; t.ctx.filter = 'none'; t.ctx.clearRect(0, 0, W, H);
+    return t;
+  };
   drawTransition(ctx, id, A, B, p, W, H, tmp, (c, w, h, b) => {
     const s = document.createElement('canvas');
     s.width = Math.max(1, Math.ceil(w / b)); s.height = Math.max(1, Math.ceil(h / b));
     s.getContext('2d').drawImage(c.canvas, 0, 0, s.width, s.height);
     c.imageSmoothingEnabled = false; c.drawImage(s, 0, 0, w, h); c.imageSmoothingEnabled = true;
-  });
+  }, tmpFn);
 }

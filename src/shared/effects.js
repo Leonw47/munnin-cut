@@ -8,6 +8,9 @@
 //           prévia e gera os quadros PNG da exportação, então o resultado é idêntico.
 // Tudo usa unidades relativas (fração da largura/altura), valendo em qualquer resolução.
 
+import { CAM_TRANSITIONS, camAt, drawCamFrame, perspectiveFor } from './camtrans.js';
+import { evalExpr, substVar } from './expr.js';
+
 const n4 = (x) => String(Math.round(x * 10000) / 10000);
 const clamp01 = (x) => (x < 0 ? 0 : x > 1 ? 1 : x);
 const ease = (p) => p * p * (3 - 2 * p);
@@ -33,6 +36,9 @@ export const FX_CATS = [
   { id: 'camera', name: 'Câmera' },
   { id: 'retro', name: 'Retrô' },
   { id: 'glitch', name: 'Glitch' },
+  { id: 'lighting', name: 'Iluminação' },
+  { id: 'aura', name: 'Aura' },
+  { id: 'transfx', name: 'Transição criativa' },
   { id: 'light', name: 'Luz e cor' },
   { id: 'split', name: 'Divisão' },
   { id: 'party', name: 'Partículas' },
@@ -58,7 +64,7 @@ function camera(js, ff) {
     },
     ff({ inL, outL, W, H, FPS, D, k }) {
       const e = ff(D, k, W, H);
-      const sub = (s) => `(${String(s ?? '0').replace(/T/g, `(in/${FPS})`)})`;
+      const sub = (s) => `(${String(s ?? '0').replace(/T/g, `((in-1)/${FPS})`)})`;
       const Z = sub(e.Z ?? '1'), tx = sub(e.tx), ty = sub(e.ty), th = sub(e.th);
       const corner = (cx, cy) => {
         const dx = `(${cx}-W/2-${tx}*W)`, dy = `(${cy}-H/2-${ty}*H)`;
@@ -214,12 +220,12 @@ export const EFFECTS = [
     ff: (a) => barsFF(a, (D) => `(main_h/2)*pow(clip(t/${n4(D)},0,1),3)`),
   },
   {
-    id: 'fadeBlack', name: 'Escurecer', cat: 'basic',
+    id: 'fadeBlack', name: 'Fade out (preto)', cat: 'basic',
     prev(env) { const { ctx, W, H, t, D } = env; ctx.save(); ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.globalAlpha = clamp01(t / D); ctx.fillStyle = '#000'; ctx.fillRect(0, 0, W, H); ctx.restore(); },
     ff: ({ inL, outL, D }) => `[${inL}]fade=t=out:st=0:d=${n4(D)}:color=black[${outL}]`,
   },
   {
-    id: 'fadeWhite', name: 'Clarear', cat: 'basic',
+    id: 'fadeWhite', name: 'Fade out (branco)', cat: 'basic',
     prev(env) { const { ctx, W, H, t, D } = env; ctx.save(); ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.globalAlpha = clamp01(t / D); ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, W, H); ctx.restore(); },
     ff: ({ inL, outL, D }) => `[${inL}]fade=t=out:st=0:d=${n4(D)}:color=white[${outL}]`,
   },
@@ -778,3 +784,327 @@ for (const def of EFFECTS) {
       `[${d}][${a}]blend=all_mode=normal:all_opacity=${n4(k)}[${outL}]`;
   };
 }
+
+
+// =====================================================================================
+// v1.2 — fades, iluminação, aura e transições criativas
+// =====================================================================================
+const fill = (env, color, a) => {
+  const { ctx, W, H } = env;
+  if (a <= 0.001) return;
+  ctx.save(); ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.globalAlpha = Math.min(1, a); ctx.fillStyle = color; ctx.fillRect(0, 0, W, H); ctx.restore();
+};
+function radial(ctx, x, y, r, stops) {
+  const g = ctx.createRadialGradient(x, y, 0, x, y, Math.max(1, r));
+  for (const [o, c] of stops) g.addColorStop(o, c);
+  return g;
+}
+
+// Versão "efeito" (um só fluxo) das transições de câmera: metade A, metade B, desfoque de movimento.
+function camTransEffect(id) {
+  const def = CAM_TRANSITIONS[id];
+  const keys = ['Z', 'tx', 'ty', 'th'];
+  const dflt = { Z: '1', tx: '0', ty: '0', th: '0' };
+  const merged = {};
+  for (const k of keys) merged[k] = `if(lt(P,0.5),${def.A?.[k] ?? dflt[k]},${def.B?.[k] ?? dflt[k]})`;
+  return {
+    dur: 1,
+    prev(env) {
+      const { ctx, W, H, t, D, k } = env;
+      const P = clamp01(t / D);
+      const R = Math.max(W, H) / Math.min(W, H);
+      const src = env.snapshot();
+      drawCamFrame(ctx, src, camAt(P < 0.5 ? def.A : def.B, P, R), W, H);
+      const K = Math.min(1, Math.max(0, evalExpr(def.K || '0', { P, R })) * k);
+      if (K > 0.01) {
+        const b = env.blurred(0.025 * H);
+        ctx.save(); ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.globalAlpha = K; ctx.drawImage(b, 0, 0); ctx.restore();
+      }
+    },
+    ff({ inL, outL, H, FPS, D, k, L }) {
+      const persp = perspectiveFor(merged, `clip(((in-1)/${FPS})/${n4(D)},0,1)`);
+      if (!def.K) return `[${inL}]${persp}[${outL}]`;
+      const K = `clip(${n4(k)}*(${substVar(def.K, 'P', `clip(T/${n4(D)},0,1)`)}),0,1)`;
+      const a = L('ta'), b = L('tb'), c = L('tc');
+      return `[${inL}]${persp},format=gbrp,split[${a}][${b}];[${b}]gblur=sigma=${n4(0.025 * H)}[${c}];[${a}][${c}]blend=all_expr='A*(1-${K})+B*${K}'[${outL}]`;
+    },
+  };
+}
+
+EFFECTS.push(
+  // ---- Fades ----
+  {
+    id: 'fadeInBlack', name: 'Fade in (preto)', cat: 'basic', dur: 1.5,
+    prev: (env) => fill(env, '#000', 1 - clamp01(env.t / env.D)),
+    ff: ({ inL, outL, D }) => `[${inL}]fade=t=in:st=0:d=${n4(D)}:color=black[${outL}]`,
+  },
+  {
+    id: 'fadeInWhite', name: 'Fade in (branco)', cat: 'basic', dur: 1.5,
+    prev: (env) => fill(env, '#fff', 1 - clamp01(env.t / env.D)),
+    ff: ({ inL, outL, D }) => `[${inL}]fade=t=in:st=0:d=${n4(D)}:color=white[${outL}]`,
+  },
+  {
+    id: 'fadeInOut', name: 'Fade in + out', cat: 'basic',
+    prev(env) {
+      const { t, D } = env;
+      const d = Math.min(1, D / 3);
+      fill(env, '#000', t < d ? 1 - t / d : t > D - d ? (t - (D - d)) / d : 0);
+    },
+    ff: ({ inL, outL, D }) => {
+      const d = Math.min(1, D / 3);
+      return `[${inL}]fade=t=in:st=0:d=${n4(d)}:color=black,fade=t=out:st=${n4(D - d)}:d=${n4(d)}:color=black[${outL}]`;
+    },
+  },
+
+  // ---- Iluminação ----
+  {
+    id: 'rays', name: 'Raios de luz', cat: 'lighting',
+    layer: {
+      blend: 'screen',
+      draw(ctx, W, H, t, D, k) {
+        const m = Math.max(W, H), ox = -0.05 * W, oy = -0.08 * H, len = m * 1.6;
+        for (let i = 0; i < 7; i++) {
+          const a = 0.25 + i * 0.17 + 0.05 * Math.sin(t * 0.6 + i * 1.7);
+          const w = 0.04 + 0.025 * Math.sin(t * 1.3 + i * 2.3) + 0.02;
+          const al = (0.2 + 0.1 * Math.sin(t * 1.7 + i)) * k;
+          const g = ctx.createLinearGradient(ox, oy, ox + Math.cos(a) * len, oy + Math.sin(a) * len);
+          g.addColorStop(0, `rgba(255,236,190,${al})`);
+          g.addColorStop(0.6, `rgba(255,220,160,${al * 0.35})`);
+          g.addColorStop(1, 'rgba(255,220,160,0)');
+          ctx.fillStyle = g;
+          ctx.beginPath();
+          ctx.moveTo(ox, oy);
+          ctx.lineTo(ox + Math.cos(a - w) * len, oy + Math.sin(a - w) * len);
+          ctx.lineTo(ox + Math.cos(a + w) * len, oy + Math.sin(a + w) * len);
+          ctx.closePath();
+          ctx.fill();
+        }
+        ctx.fillStyle = radial(ctx, ox, oy, m * 0.45, [[0, `rgba(255,240,200,${0.7 * k})`], [1, 'rgba(255,240,200,0)']]);
+        ctx.fillRect(0, 0, W, H);
+      },
+    },
+  },
+  {
+    id: 'spotlight', name: 'Holofote', cat: 'lighting',
+    layer: {
+      blend: 'normal',
+      draw(ctx, W, H, t, D, k) {
+        const m = Math.min(W, H);
+        const cx = W * (0.5 + 0.28 * Math.sin(t * 0.7)), cy = H * (0.45 + 0.18 * Math.sin(t * 1.1 + 1)), r = m * 0.42;
+        ctx.fillStyle = `rgba(0,0,0,${0.8 * k})`;
+        ctx.fillRect(0, 0, W, H);
+        ctx.globalCompositeOperation = 'destination-out';
+        const g = ctx.createRadialGradient(cx, cy, r * 0.35, cx, cy, r);
+        g.addColorStop(0, 'rgba(0,0,0,1)');
+        g.addColorStop(1, 'rgba(0,0,0,0)');
+        ctx.fillStyle = g;
+        ctx.beginPath(); ctx.arc(cx, cy, r, 0, TAU); ctx.fill();
+        ctx.globalCompositeOperation = 'source-over';
+      },
+    },
+  },
+  {
+    id: 'flare', name: 'Lens flare', cat: 'lighting', dur: 4,
+    layer: {
+      blend: 'screen',
+      draw(ctx, W, H, t, D, k) {
+        const m = Math.min(W, H), u = D > 0 ? Math.min(1, t / D) : 0;
+        const sx = W * (0.12 + 0.76 * u), sy = H * (0.22 - 0.08 * Math.sin(Math.PI * u)), cx = W / 2, cy = H / 2;
+        const glow = (x, y, r, rgb, a) => {
+          ctx.fillStyle = radial(ctx, x, y, r, [[0, `rgba(${rgb},${a * k})`], [0.4, `rgba(${rgb},${a * 0.4 * k})`], [1, `rgba(${rgb},0)`]]);
+          ctx.fillRect(x - r, y - r, r * 2, r * 2);
+        };
+        glow(sx, sy, m * 0.5, '255,190,120', 0.55);
+        glow(sx, sy, m * 0.12, '255,255,240', 1);
+        ctx.save();
+        ctx.translate(sx, sy);
+        ctx.scale(1, 0.02);
+        ctx.fillStyle = radial(ctx, 0, 0, W * 0.6, [[0, `rgba(150,200,255,${0.8 * k})`], [1, 'rgba(150,200,255,0)']]);
+        ctx.beginPath(); ctx.arc(0, 0, W * 0.6, 0, TAU); ctx.fill();
+        ctx.restore();
+        for (const [f, r, rgb, a] of [[0.55, 0.05, '120,255,200', 0.25], [0.8, 0.09, '255,140,90', 0.18], [1.25, 0.04, '180,120,255', 0.3], [1.6, 0.12, '120,180,255', 0.12], [2.0, 0.07, '255,220,120', 0.2]]) {
+          glow(sx + (cx - sx) * f, sy + (cy - sy) * f, m * r, rgb, a);
+        }
+      },
+    },
+  },
+  {
+    id: 'bokeh', name: 'Bokeh', cat: 'lighting',
+    layer: {
+      blend: 'screen',
+      draw(ctx, W, H, t, D, k, seed) {
+        const n = Math.round(12 + 14 * k), m = Math.min(W, H);
+        const pal = ['255,190,90', '255,120,160', '120,200,255', '180,140,255', '255,240,180'];
+        for (let i = 0; i < n; i++) {
+          const r = m * (0.03 + 0.07 * rnd(seed, i, 1)) * (0.85 + 0.15 * Math.sin(t * (0.8 + rnd(seed, i, 6)) + i));
+          const span = H + r * 2;
+          const x = W * rnd(seed, i, 2) + Math.sin(t * 0.3 * (1 + rnd(seed, i, 3)) + i) * m * 0.06;
+          const y = ((((H * rnd(seed, i, 4) - t * H * 0.03 * (1 + rnd(seed, i, 5))) % span) + span) % span) - r;
+          const c = pal[i % pal.length];
+          ctx.fillStyle = radial(ctx, x, y, r, [[0, `rgba(${c},${0.32 * k})`], [0.8, `rgba(${c},${0.27 * k})`], [1, `rgba(${c},0)`]]);
+          ctx.beginPath(); ctx.arc(x, y, r, 0, TAU); ctx.fill();
+        }
+      },
+    },
+  },
+  {
+    id: 'neonBorder', name: 'Borda neon', cat: 'lighting',
+    layer: {
+      blend: 'screen',
+      draw(ctx, W, H, t, D, k) {
+        const m = Math.min(W, H), ins = m * 0.045, hue = (t * 70) % 360;
+        ctx.lineWidth = m * 0.012;
+        ctx.strokeStyle = `hsl(${hue},100%,60%)`;
+        ctx.shadowColor = `hsl(${hue},100%,60%)`;
+        ctx.shadowBlur = m * 0.05;
+        ctx.globalAlpha = k * (0.75 + 0.25 * Math.sin(t * 4));
+        for (let i = 0; i < 2; i++) { ctx.beginPath(); ctx.roundRect(ins, ins, W - ins * 2, H - ins * 2, m * 0.04); ctx.stroke(); }
+      },
+    },
+  },
+  {
+    id: 'disco', name: 'Luz de festa', cat: 'lighting',
+    layer: {
+      blend: 'screen',
+      draw(ctx, W, H, t, D, k) {
+        const m = Math.max(W, H);
+        ['255,40,80', '40,120,255', '40,255,140', '220,60,255'].forEach((c, i) => {
+          const x = W * (0.5 + 0.45 * Math.sin(t * (1.3 + i * 0.37) + i * 1.7));
+          const y = H * (0.5 + 0.45 * Math.cos(t * (1.1 + i * 0.29) + i));
+          ctx.fillStyle = radial(ctx, x, y, m * 0.35, [[0, `rgba(${c},${0.5 * k})`], [1, `rgba(${c},0)`]]);
+          ctx.fillRect(0, 0, W, H);
+        });
+      },
+    },
+  },
+  {
+    id: 'sunlight', name: 'Luz do sol', cat: 'lighting',
+    ops: [{ op: 'tint', r: 1.06, g: 1.0, b: 0.9 }],
+    layer: {
+      blend: 'screen',
+      draw(ctx, W, H, t, D, k) {
+        const m = Math.max(W, H);
+        ctx.fillStyle = radial(ctx, W * 1.0, -0.1 * H, m * 0.9, [[0, `rgba(255,214,140,${(0.6 + 0.08 * Math.sin(t * 1.5)) * k})`], [0.5, `rgba(255,190,110,${0.22 * k})`], [1, 'rgba(255,190,110,0)']]);
+        ctx.fillRect(0, 0, W, H);
+      },
+    },
+  },
+  {
+    id: 'lightSweep', name: 'Varredura de luz', cat: 'lighting', dur: 1.5,
+    layer: {
+      blend: 'screen',
+      draw(ctx, W, H, t, D, k) {
+        const u = D > 0 ? Math.min(1, t / D) : 0;
+        const diag = Math.hypot(W, H);
+        ctx.save();
+        ctx.translate(W / 2, H / 2);
+        ctx.rotate(-0.45);
+        const x = diag * (-0.75 + 1.5 * u), bw = W * 0.22;
+        const g = ctx.createLinearGradient(x - bw, 0, x + bw, 0);
+        g.addColorStop(0, 'rgba(255,255,255,0)');
+        g.addColorStop(0.5, `rgba(255,255,255,${0.6 * k})`);
+        g.addColorStop(1, 'rgba(255,255,255,0)');
+        ctx.fillStyle = g;
+        ctx.fillRect(-diag, -diag, diag * 2, diag * 2);
+        ctx.restore();
+      },
+    },
+  },
+  {
+    id: 'glowPulse', name: 'Brilho pulsante', cat: 'lighting',
+    prev(env) {
+      const { ctx, H, t, k } = env;
+      const K = 0.6 * k * (0.5 + 0.5 * Math.sin(TAU * 1.2 * t));
+      const b = env.blurred(0.025 * H);
+      ctx.save(); ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.globalCompositeOperation = 'screen'; ctx.globalAlpha = K; ctx.drawImage(b, 0, 0); ctx.restore();
+    },
+    ff: ({ inL, outL, H, k, L }) => {
+      const a = L('pa'), b = L('pb'), c = L('pc');
+      const K = `${n4(0.6 * k)}*(0.5+0.5*sin(${n4(TAU * 1.2)}*T))`;
+      return `[${inL}]format=gbrp,split[${a}][${b}];[${b}]gblur=sigma=${n4(0.025 * H)}[${c}];[${a}][${c}]blend=all_expr='A+B*${K}*(1-A/255)'[${outL}]`;
+    },
+  },
+
+  // ---- Aura ----
+  {
+    id: 'aura', name: 'Aura circular', cat: 'aura',
+    layer: {
+      blend: 'screen',
+      draw(ctx, W, H, t, D, k) {
+        const m = Math.min(W, H), cx = W / 2, cy = H * 0.46, R = m * 0.3 * (1 + 0.03 * Math.sin(TAU * 0.8 * t));
+        const g = ctx.createRadialGradient(cx, cy, R * 0.6, cx, cy, R * 1.35);
+        g.addColorStop(0, 'rgba(255,214,120,0)'); g.addColorStop(0.45, `rgba(255,214,120,${0.35 * k})`); g.addColorStop(1, 'rgba(255,214,120,0)');
+        ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+        ctx.lineWidth = m * 0.01;
+        ctx.strokeStyle = `rgba(255,236,190,${0.9 * k})`;
+        ctx.shadowColor = 'rgba(255,200,90,1)';
+        ctx.shadowBlur = m * 0.045;
+        ctx.beginPath(); ctx.arc(cx, cy, R, 0, TAU); ctx.stroke(); ctx.stroke();
+        ctx.shadowBlur = m * 0.02;
+        ctx.fillStyle = `rgba(255,250,220,${k})`;
+        for (let i = 0; i < 24; i++) {
+          const a = (i * TAU) / 24 + t * 0.8, rr = R * (1 + 0.04 * Math.sin(t * 3 + i));
+          const s = m * 0.006 * (1 + 0.6 * Math.sin(t * 4 + i * 1.3));
+          ctx.beginPath(); ctx.arc(cx + Math.cos(a) * rr, cy + Math.sin(a) * rr, Math.max(0.5, s), 0, TAU); ctx.fill();
+        }
+      },
+    },
+  },
+  {
+    id: 'auraNeon', name: 'Aura neon', cat: 'aura',
+    layer: {
+      blend: 'screen',
+      draw(ctx, W, H, t, D, k) {
+        const m = Math.min(W, H), cx = W / 2, cy = H * 0.46;
+        [['47,243,255', 0.3, 1], ['255,61,242', 0.34, -1]].forEach(([c, rf, dir]) => {
+          const R = m * rf * (1 + 0.025 * Math.sin(TAU * 0.9 * t + rf * 10));
+          ctx.lineWidth = m * 0.009;
+          ctx.strokeStyle = `rgba(${c},${0.95 * k})`;
+          ctx.shadowColor = `rgba(${c},1)`;
+          ctx.shadowBlur = m * 0.05;
+          ctx.setLineDash([m * 0.06, m * 0.025]);
+          ctx.lineDashOffset = dir * t * m * 0.12;
+          ctx.beginPath(); ctx.arc(cx, cy, R, 0, TAU); ctx.stroke();
+        });
+        ctx.setLineDash([]);
+      },
+    },
+  },
+  {
+    id: 'auraWaves', name: 'Ondas de aura', cat: 'aura',
+    layer: {
+      blend: 'screen',
+      draw(ctx, W, H, t, D, k) {
+        const m = Math.min(W, H), cx = W / 2, cy = H * 0.46;
+        ctx.lineWidth = m * 0.008;
+        ctx.shadowBlur = m * 0.03;
+        ctx.shadowColor = 'rgba(150,230,255,1)';
+        for (let i = 0; i < 4; i++) {
+          const ph = (t * 0.5 + i / 4) % 1;
+          ctx.strokeStyle = `rgba(190,240,255,${(1 - ph) * 0.75 * k})`;
+          ctx.beginPath(); ctx.arc(cx, cy, m * (0.12 + 0.45 * ph), 0, TAU); ctx.stroke();
+        }
+      },
+    },
+  },
+  {
+    id: 'halo', name: 'Halo', cat: 'aura',
+    layer: {
+      blend: 'screen',
+      draw(ctx, W, H, t, D, k) {
+        const m = Math.min(W, H), cx = W / 2, cy = H * 0.46, p = 0.85 + 0.15 * Math.sin(TAU * 0.6 * t);
+        ctx.fillStyle = radial(ctx, cx, cy, m * 0.55, [[0, `rgba(255,245,220,${0.55 * k * p})`], [0.5, `rgba(255,235,200,${0.2 * k * p})`], [1, 'rgba(255,235,200,0)']]);
+        ctx.fillRect(0, 0, W, H);
+      },
+    },
+  },
+
+  // ---- Transição criativa (coloque sobre o corte entre dois clipes ou sobre um elemento) ----
+  { id: 'fxSpin', name: 'Giro de câmera', cat: 'transfx', ...camTransEffect('mc_spin') },
+  { id: 'fxSpinZoom', name: 'Giro com zoom', cat: 'transfx', ...camTransEffect('mc_spinzoom') },
+  { id: 'fxZoom', name: 'Zoom rápido', cat: 'transfx', ...camTransEffect('mc_zoom') },
+  { id: 'fxWhipL', name: 'Chicote ←', cat: 'transfx', ...camTransEffect('mc_whipl') },
+  { id: 'fxWhipR', name: 'Chicote →', cat: 'transfx', ...camTransEffect('mc_whipr') },
+  { id: 'fxRoll', name: 'Rolar', cat: 'transfx', ...camTransEffect('mc_roll') },
+  { id: 'fxImpact', name: 'Impacto', cat: 'transfx', ...camTransEffect('mc_impact') },
+);

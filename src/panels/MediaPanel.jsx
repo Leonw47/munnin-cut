@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from 'react';
-import { Upload, Plus, Film, Image as ImageIcon, Music, Loader2, AlertTriangle, Search, Layers, Trash2, FolderOpen, Link } from 'lucide-react';
+import { Upload, Plus, Film, Image as ImageIcon, Music, Loader2, AlertTriangle, Search, Layers, Trash2, FolderOpen, Link, Scissors } from 'lucide-react';
 import { useStore } from '../store.js';
 import { fmtTime } from '../shared/timeline.js';
 import { mediaUrl } from '../engine/util.js';
@@ -95,15 +95,17 @@ export default function MediaPanel() {
             <div key={m.id} className="media-card" draggable={ready}
               onDragStart={(e) => startDrag(e, { kind: 'media', id: m.id }, m.name)}
               onDragEnd={endDrag}
-              onDoubleClick={() => ready && s().addMedia(m.id)}
+              onClick={() => ready && m.type !== 'image' && s().openTrim(m.id)}
+              onDoubleClick={() => ready && m.type === 'image' && s().addMedia(m.id)}
               onContextMenu={(e) => { e.preventDefault(); setMenu({ x: e.clientX, y: e.clientY, m }); }}
-              title={`${m.name}${m.width ? ` · ${m.width}×${m.height}` : ''}`}>
+              title={`${m.name}${m.width ? ` · ${m.width}×${m.height}` : ''}${m.type !== 'image' ? ' — clique para pré-visualizar e cortar' : ''}`}>
               <div className="thumb">
                 <MediaThumb m={m} meta={mt} />
                 <span className="kind">{m.type === 'video' ? <Film size={12} /> : m.type === 'image' ? <ImageIcon size={12} /> : <Music size={12} />}</span>
-                {m.type !== 'image' && m.duration > 0 && <span className="badge">{fmtTime(m.duration)}</span>}
+                {m.type !== 'image' && m.duration > 0 && !m.trim && <span className="badge">{fmtTime(m.duration)}</span>}
                 {used.has(m.id) && <span className="used" title="Em uso na linha do tempo" />}
                 {ready && <button className="add" title="Adicionar à linha do tempo" onClick={(e) => { e.stopPropagation(); s().addMedia(m.id); }}><Plus size={14} /></button>}
+                {m.trim && <span className="trim-badge" title="Corte definido antes de inserir"><Scissors size={10} /> {fmtTime(m.trim.in)}–{fmtTime(m.trim.out)}</span>}
                 {st && <div className={`status ${mt.status === 'error' || mt.status === 'missing' ? 'err' : ''}`}>{st}</div>}
               </div>
               <div className="name">{m.name}</div>
@@ -116,6 +118,7 @@ export default function MediaPanel() {
           {menu.m.type !== 'audio' && <MenuItem icon={<Plus size={14} />} label="Adicionar à faixa principal" onClick={() => s().addMedia(menu.m.id)} />}
           {menu.m.type !== 'audio' && <MenuItem icon={<Layers size={14} />} label="Adicionar como sobreposição" onClick={() => s().addMedia(menu.m.id, { target: 'overlay' })} />}
           {menu.m.type === 'audio' && <MenuItem icon={<Plus size={14} />} label="Adicionar no cursor" onClick={() => s().addMedia(menu.m.id)} />}
+          {menu.m.type !== 'image' && <MenuItem icon={<Scissors size={14} />} label="Cortar antes de inserir…" onClick={() => s().openTrim(menu.m.id)} />}
           {meta[menu.m.id]?.status === 'missing' && <MenuItem icon={<Link size={14} />} label="Localizar arquivo…" onClick={() => s().relinkMedia(menu.m.id)} />}
           <MenuItem icon={<FolderOpen size={14} />} label="Mostrar no Explorer" onClick={() => window.api.showItem(menu.m.path)} />
           <div className="dd-sep" />

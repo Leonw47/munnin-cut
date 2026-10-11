@@ -90,6 +90,17 @@ function registerMediaProtocol() {
   });
 }
 
+let currentProjectId = null;
+function logError(msg) {
+  try { fs.appendFileSync(path.join(logsDir, 'erros.txt'), `[${new Date().toISOString()}] ${msg}
+
+`); } catch { /* ignore */ }
+}
+
+function loadUi(query) {
+  win.loadFile(path.join(__dirname, '..', 'dist', 'index.html'), query ? { query } : undefined);
+}
+
 function createWindow() {
   win = new BrowserWindow({
     width: 1440,
@@ -140,7 +151,14 @@ ${code}
       if (process.env.MC_TEST_KEEP !== '1') app.exit(0);
     });
   }
-  win.loadFile(path.join(__dirname, '..', 'dist', 'index.html'));
+  // Se o processo da interface cair, recarrega e reabre o projeto aberto.
+  win.webContents.on('render-process-gone', (_e, details) => {
+    logError(`interface encerrada: ${details.reason} (código ${details.exitCode})`);
+    if (details.reason !== 'clean-exit' && !win.isDestroyed()) loadUi(currentProjectId ? { reopen: currentProjectId } : null);
+  });
+  win.on('unresponsive', () => logError('a interface parou de responder'));
+  app.on('child-process-gone', (_e, details) => { if (details.type === 'GPU') logError(`processo da GPU encerrado: ${details.reason}`); });
+  loadUi();
 }
 
 app.whenReady().then(() => {
@@ -172,6 +190,9 @@ ipcMain.handle('app:nvenc', async () => {
   if (nvencCache === null) nvencCache = await media.hasEncoder('h264_nvenc');
   return nvencCache;
 });
+ipcMain.handle('app:currentProject', (_e, id) => { currentProjectId = id || null; return true; });
+ipcMain.handle('app:logError', (_e, msg) => { logError(String(msg).slice(0, 20000)); return true; });
+ipcMain.handle('app:errorLogPath', () => path.join(logsDir, 'erros.txt'));
 ipcMain.handle('app:pendingFile', () => { const f = pendingFile; pendingFile = null; return f; });
 
 ipcMain.handle('dialog:openMedia', async () => {
@@ -313,7 +334,7 @@ ipcMain.handle('export:start', (e, job) => new Promise((resolve) => {
     jobs.delete(jobId);
     fs.appendFileSync(path.join(logsDir, 'ultima-exportacao.txt'), `\n--- saída (código ${code}) ---\n${err}\n`);
     if (!(AUTOTEST && process.env.MC_KEEP_JOB === '1')) fs.rm(dir, { recursive: true, force: true }, () => {});
-    if (code === 0) resolve({ ok: true, outPath: partPath });
+    if (code === 0) { let size = null; try { size = fs.statSync(partPath).size; } catch { /* ignore */ } resolve({ ok: true, outPath: partPath, size }); }
     else {
       fs.rm(partPath, { force: true }, () => {});
       resolve({ ok: false, cancelled, error: err.trim().split('\n').slice(-6).join('\n') || `FFmpeg terminou com código ${code}` });

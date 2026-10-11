@@ -6,6 +6,7 @@ import Player from './Player.jsx';
 import Inspector from './Inspector.jsx';
 import Timeline from './Timeline.jsx';
 import ExportDialog from './ExportDialog.jsx';
+import TrimDialog from './TrimDialog.jsx';
 import { Modal } from './ui.jsx';
 
 const SHORTCUTS = [
@@ -57,6 +58,7 @@ export default function Editor() {
       <div className="hsplit" onPointerDown={startDrag} />
       <Timeline height={tlH} />
       {modal === 'export' && <ExportDialog />}
+      {modal === 'trim' && <TrimDialog />}
       {modal === 'shortcuts' && (
         <Modal title="Atalhos de teclado" onClose={() => useStore.setState({ modal: null })} width={480}>
           <div className="shortcuts">

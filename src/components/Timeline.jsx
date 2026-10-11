@@ -18,7 +18,7 @@ const KIND_ICON = { video: Film, overlay: Layers, text: Type, effect: Sparkles, 
 
 // ---------- Forma de onda (cache por arquivo) ----------
 const waveCache = new Map();
-function useWave(path) {
+export function useWave(path) {
   const [data, setData] = useState(() => (path ? waveCache.get(path) || null : null));
   useEffect(() => {
     if (!path) return;
@@ -553,7 +553,7 @@ export default function Timeline({ height }) {
           </div>
         </div>
         <div className="tl-scroll" ref={scrollRef}
-          onScroll={(e) => setScroll((s) => ({ ...s, left: e.currentTarget.scrollLeft, top: e.currentTarget.scrollTop }))}>
+          onScroll={(e) => { const { scrollLeft, scrollTop } = e.currentTarget; setScroll((s) => ({ ...s, left: scrollLeft, top: scrollTop })); }}>
           <div className="tl-content" ref={contentRef} style={{ width: contentW, height: contentH }}
             onPointerDown={(e) => { if (e.button === 0) { S().select(null); scrub(e); } }}
             onDragOver={onDragOver} onDragLeave={onDragLeave} onDrop={onDrop}>

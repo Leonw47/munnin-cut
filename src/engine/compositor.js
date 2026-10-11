@@ -216,7 +216,7 @@ export class Compositor {
     ctx.save();
     ctx.globalAlpha = alpha;
     ctx.translate(W / 2 + ((tf.x || 0) + a.dx) * W, H / 2 + ((tf.y || 0) + a.dy) * H);
-    ctx.rotate(((tf.rotation || 0) * Math.PI) / 180);
+    ctx.rotate(((tf.rotation || 0) * Math.PI) / 180 + (a.rot || 0));
     ctx.scale(a.scale * (tf.flipH ? -1 : 1), a.scale * (tf.flipV ? -1 : 1));
     ctx.drawImage(L.img, L.sx, L.sy, L.sw, L.sh, -L.w / 2, -L.h / 2, L.w, L.h);
     ctx.restore();
@@ -272,7 +272,7 @@ export class Compositor {
     ctx.save();
     ctx.globalAlpha = alpha;
     ctx.translate(W / 2 + ((tf.x || 0) + a.dx) * W, H / 2 + ((tf.y || 0) + a.dy) * H);
-    ctx.rotate(((tf.rotation || 0) * Math.PI) / 180);
+    ctx.rotate(((tf.rotation || 0) * Math.PI) / 180 + (a.rot || 0));
     const s = a.scale * (tf.scale ?? 1);
     ctx.scale(s, s);
     drawTextBlock(ctx, clip.text, k);
@@ -331,11 +331,22 @@ export class Compositor {
     const seed = seedOf(c.id);
     if (def.prev) def.prev(this.fxEnv(W, H, lt, c.duration, k, seed));
     if (def.layer) {
+      // a camada é desenhada isolada (como na exportação) e depois combinada com o quadro
+      const screen = def.layer.blend === 'screen';
+      const L = this.tmp(14, W, H);
+      if (screen) {
+        L.ctx.fillStyle = '#000';
+        L.ctx.fillRect(0, 0, W, H);
+        L.ctx.globalCompositeOperation = 'screen';
+      }
+      L.ctx.save();
+      def.layer.draw(L.ctx, W, H, lt, c.duration, k, seed);
+      L.ctx.restore();
       const ctx = this.ctx;
       ctx.save();
       ctx.setTransform(1, 0, 0, 1, 0, 0);
-      ctx.globalCompositeOperation = def.layer.blend === 'screen' ? 'screen' : 'source-over';
-      def.layer.draw(ctx, W, H, lt, c.duration, k, seed);
+      ctx.globalCompositeOperation = screen ? 'screen' : 'source-over';
+      ctx.drawImage(L.canvas, 0, 0);
       ctx.restore();
     }
   }
@@ -380,7 +391,7 @@ export class Compositor {
         const ta = this.tmp(0, W, H), tb = this.tmp(1, W, H);
         this.drawMainClip(ta.ctx, env, A, t - A.start, W, H);
         this.drawMainClip(tb.ctx, env, B, t - B.start, W, H);
-        drawTransition(ctx, A.transition?.id || 'fade', ta.canvas, tb.canvas, p, W, H, this.tmp(2, W, H), (c, w, h, b) => this.pixelate(c, w, h, b));
+        drawTransition(ctx, A.transition?.id || 'fade', ta.canvas, tb.canvas, p, W, H, this.tmp(2, W, H), (c, w, h, b) => this.pixelate(c, w, h, b), (i) => this.tmp(i, W, H));
       }
     } else { ctx.fillStyle = bgc; ctx.fillRect(0, 0, W, H); }
 

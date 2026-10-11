@@ -1,6 +1,6 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { useStore } from '../store.js';
-import { TRANSITIONS } from '../shared/defs.js';
+import { TRANSITIONS, TRANSITION_CATS } from '../shared/defs.js';
 import { mainTrack, findClip } from '../shared/timeline.js';
 import { drawTransitionThumb } from '../engine/transitions.js';
 import { makeCanvas } from '../engine/util.js';
@@ -49,6 +49,8 @@ export function junctionAt(project, t) {
 export default function TransitionsPanel() {
   const sel = useStore((s) => s.selection);
   const current = useStore((s) => (s.selection?.type === 'transition' ? findClip(s.project, s.selection.id)?.clip?.transition?.id : null));
+  const [cat, setCat] = useState(() => { try { return localStorage.getItem('mc.trcat') || 'basic'; } catch { return 'basic'; } });
+  useEffect(() => { try { localStorage.setItem('mc.trcat', cat); } catch { /* ignore */ } }, [cat]);
   const pick = (id) => {
     const s = useStore.getState();
     const target = s.selection?.type === 'transition' ? s.selection.id : junctionAt(s.project, s.time);
@@ -60,8 +62,12 @@ export default function TransitionsPanel() {
       <div className="hint" style={{ marginBottom: 10 }}>
         {sel?.type === 'transition' ? 'Trocando a transição selecionada.' : 'Clique para aplicar na junção mais próxima do cursor, ou arraste até a junção entre dois clipes.'}
       </div>
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 10 }}>
+        {TRANSITION_CATS.map((c) => <button key={c.id} className={`btn small ${cat === c.id ? 'primary' : ''}`} onClick={() => setCat(c.id)}>{c.name}</button>)}
+      </div>
+      {cat === 'camera' && <div className="hint" style={{ marginBottom: 10 }}>Movimentos de câmera com desfoque de movimento. Use durações curtas (0,5 a 1 s) para ficar no ritmo.</div>}
       <div className="grid small">
-        {TRANSITIONS.map((t) => (
+        {TRANSITIONS.filter((t) => (t.cat || 'basic') === cat).map((t) => (
           <div key={t.id} className={`fx-card ${current === t.id ? 'active' : ''}`} title={t.name}
             draggable onDragStart={(e) => startDrag(e, { kind: 'transition', id: t.id }, t.name)} onDragEnd={endDrag}
             onClick={() => pick(t.id)}>

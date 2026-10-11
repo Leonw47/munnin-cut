@@ -6,12 +6,12 @@ import { EXPORT_FORMATS } from './shared/defs.js';
 import { uid } from './shared/timeline.js';
 
 /**
- * opts: { project, meta, format, res, fps, quality, hw, outPath, onProgress(pct, speed, label) }
+ * opts: { project, meta, format, res, fps, quality, vKbps, aKbps, hw, outPath, onProgress(pct, speed, label) }
  * Retorna { jobId, promise, cancel } — promise resolve com { ok, outPath, cancelled, error }.
  */
 export function startExport(opts) {
   const jobId = uid('job');
-  const { project, meta, format, res, fps, quality, hw, outPath, onProgress } = opts;
+  const { project, meta, format, res, fps, quality, vKbps, aKbps, hw, outPath, onProgress } = opts;
   const promise = (async () => {
     const fmt = EXPORT_FORMATS.find((f) => f.id === format) || EXPORT_FORMATS[0];
     const size = exportSize(project, res);
@@ -70,7 +70,7 @@ export function startExport(opts) {
     for (const m of project.media) mediaMap[m.id] = { ...m, missing: meta[m.id]?.status === 'missing' };
     const { args, graph, duration } = buildExport({
       project, mediaMap,
-      out: { format, width: size.width, height: size.height, fps, quality, hw },
+      out: { format, width: size.width, height: size.height, fps, quality, vKbps, aKbps, hw },
       textAssets, fxAssets, outPath, graphPath: '__GRAPH__',
     });
     const off = window.api.onExportProgress((p) => { if (p.jobId === jobId && onProgress) onProgress(p.pct, p.speed); });
