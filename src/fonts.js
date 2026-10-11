@@ -1,0 +1,21 @@
+// Fontes embutidas (funcionam offline e saem idênticas na exportação).
+import '@fontsource/montserrat/400.css';
+import '@fontsource/montserrat/700.css';
+import '@fontsource/montserrat/900.css';
+import '@fontsource/poppins/400.css';
+import '@fontsource/poppins/700.css';
+import '@fontsource/roboto/400.css';
+import '@fontsource/roboto/700.css';
+import '@fontsource/oswald/400.css';
+import '@fontsource/oswald/700.css';
+import '@fontsource/bebas-neue/400.css';
+import '@fontsource/anton/400.css';
+import '@fontsource/bangers/400.css';
+import '@fontsource/playfair-display/400.css';
+import '@fontsource/playfair-display/700.css';
+import '@fontsource/playfair-display/700-italic.css';
+import '@fontsource/lobster/400.css';
+import '@fontsource/pacifico/400.css';
+import '@fontsource/dancing-script/400.css';
+import '@fontsource/dancing-script/700.css';
+import '@fontsource/permanent-marker/400.css';
