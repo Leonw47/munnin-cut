@@ -175,8 +175,21 @@ function BasicTab({ clip, isMain }) {
 function AudioTab({ clip }) {
   const id = clip.id;
   const s = useStore.getState;
+  const sp = clip.speed || 1;
+  const fmtP = (t) => { t = Math.max(0, t || 0); const m = Math.floor(t / 60); return `${String(m).padStart(2, '0')}:${(t - m * 60).toFixed(2).padStart(5, '0')}`; };
   return (
     <>
+      {clip.type === 'audio' && (
+        <Section title="Trecho usado">
+          <div className="kv" style={{ marginBottom: 10 }}>
+            <span>Início no arquivo</span><span>{fmtP(clip.in || 0)}</span>
+            <span>Fim no arquivo</span><span>{fmtP((clip.in || 0) + clip.duration * sp)}</span>
+            <span>Duração</span><span><b>{fmtP(clip.duration)}</b></span>
+          </div>
+          <button className="btn" onClick={() => { s().select({ type: 'clip', id }); s().setTime(clip.start); s().play(); }}>▶ Ouvir este trecho</button>
+          <div className="hint" style={{ marginTop: 8 }}>Puxe as bordas do bloco na linha do tempo para escolher o trecho; com o áudio selecionado, o play toca do início ao fim dele.</div>
+        </Section>
+      )}
       <Section title="Som">
         <Field label="Volume"><Slider value={Math.round((clip.volume ?? 1) * 100)} min={0} max={200} onChange={(v) => editClip(id, (c) => { c.volume = v / 100; })} /></Field>
         <Field label="Entrada suave"><Slider value={clip.fadeIn || 0} min={0} max={Math.min(10, Number(clip.duration.toFixed(1)))} step={0.1} onChange={(v) => editClip(id, (c) => { c.fadeIn = v; })} /></Field>

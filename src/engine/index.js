@@ -79,9 +79,10 @@ class Engine {
     if (s.playing && s.anchor) {
       const dur = projectDuration(project);
       t = s.anchor.t + (performance.now() - s.anchor.now) / 1000;
-      if (t >= dur) {
-        t = dur;
-        useStore.setState({ playing: false, anchor: null, time: dur });
+      const end = s.stopAt != null ? Math.min(dur, s.stopAt) : dur;
+      if (t >= end) {
+        t = end;
+        useStore.setState({ playing: false, anchor: null, time: end, stopAt: null });
       } else useStore.setState({ time: t });
     }
     const mediaMap = this.mediaMap(project);

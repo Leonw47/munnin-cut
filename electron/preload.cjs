@@ -28,12 +28,23 @@ contextBridge.exposeInMainWorld('api', {
 
   writeFile: (scope, name, bytes) => ipcRenderer.invoke('fs:write', scope, name, bytes),
   exists: (paths) => ipcRenderer.invoke('fs:exists', paths),
+  statFiles: (paths) => ipcRenderer.invoke('media:stat', paths),
+  findByName: (name, hints) => ipcRenderer.invoke('media:findByName', name, hints),
+  replaceDialog: (name) => ipcRenderer.invoke('dialog:replace', name),
+  captionModels: () => ipcRenderer.invoke('captions:models'),
+  captionDownload: (id) => ipcRenderer.invoke('captions:download', id),
+  captionTranscribe: (opts) => ipcRenderer.invoke('captions:transcribe', opts),
+  captionCancel: () => ipcRenderer.invoke('captions:cancel'),
+  onCaptionProgress: on('captions:progress'),
+  fxCacheStatus: (key) => ipcRenderer.invoke('fxcache:status', key),
+  fxCacheDone: (key) => ipcRenderer.invoke('fxcache:done', key),
 
   listDrafts: () => ipcRenderer.invoke('drafts:list'),
   loadDraft: (id) => ipcRenderer.invoke('drafts:load', id),
   saveDraft: (id, json, meta, cover) => ipcRenderer.invoke('drafts:save', id, json, meta, cover),
   deleteDraft: (id) => ipcRenderer.invoke('drafts:delete', id),
   renameDraft: (id, name) => ipcRenderer.invoke('drafts:rename', id, name),
+  duplicateDraft: (id) => ipcRenderer.invoke('drafts:duplicate', id),
   saveProjectFile: (json, name) => ipcRenderer.invoke('project:saveFile', json, name),
   openProjectFile: (p) => ipcRenderer.invoke('project:openFile', p),
 
@@ -48,4 +59,5 @@ contextBridge.exposeInMainWorld('api', {
 
   testCapture: (name) => ipcRenderer.invoke('test:capture', name),
   testLog: (msg) => ipcRenderer.invoke('test:log', msg),
+  testFs: (op, a, b) => ipcRenderer.invoke('test:fs', op, a, b),
 });

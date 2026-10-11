@@ -3,6 +3,35 @@
 Formato baseado em [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/) e versões no padrão
 [SemVer](https://semver.org/lang/pt-BR/): MAJOR.MINOR.PATCH — correções sobem o PATCH, recursos novos o MINOR.
 
+## [1.3.0] — 2026-10-11
+### Adicionado
+- **Resiliência das mídias:** cada mídia guarda o caminho e uma "impressão" do arquivo (tamanho e data).
+  - Se o arquivo for trocado por outro **com o mesmo nome**, o projeto relê e mantém efeitos, filtros e transições
+    (ideal para posts rotineiros: baixe o arquivo novo com o mesmo nome e reabra o projeto).
+  - Se o arquivo sumir, o app procura um com o mesmo nome perto da pasta original e em Downloads (com subpastas),
+    Área de Trabalho, Documentos, Vídeos, Imagens e Músicas, e religa sozinho.
+  - O que não for encontrado aparece numa barra de aviso, com **Localizar…** e **Substituir por outro…**.
+  - A conferência se repete ao voltar para a janela do app (ex.: depois de baixar um arquivo).
+  - **Substituir por outro arquivo…** no menu da mídia; **Duplicar projeto** na tela inicial (usar como modelo).
+- **Legendas automáticas** (aba Legendas): transcrição offline com whisper.cpp, em português ou outros idiomas,
+  para o projeto inteiro ou só o clipe selecionado; 5 estilos; 1 ou 2 linhas; palavras-chave para nomes próprios;
+  lista para revisar o texto de cada legenda. O modelo (57 MB a 548 MB) é baixado na primeira vez.
+- **Luz suave** (11 efeitos discretos): brilho difuso, respiração de luz, luz dourada, luz celestial, luz de janela,
+  vazamento suave, bokeh suave, névoa luminosa, luz nas bordas, amanhecer e brilhos suaves (94 efeitos no total).
+- Exportação: opção de **terminar no fim das imagens** quando só o áudio continua depois.
+
+### Alterado
+- **Cortar o áudio direto no bloco:** o clique na biblioteca não abre mais a janela de corte (ela continua no menu do
+  botão direito). Na linha do tempo, ao puxar as bordas aparece a duração e o ponto do arquivo; clicar num bloco de
+  áudio leva o cursor ao início dele e o **play toca do início ao fim do bloco**. O painel do áudio mostra o trecho usado.
+
+### Desempenho
+- Exportação muito mais rápida: camadas de luz geradas em resolução reduzida, codificação dos quadros em paralelo e
+  **cache entre exportações** (trocar só as fotos não refaz os efeitos); fotos e textos decodificados uma única vez;
+  desfoque de fundo calculado em tamanho reduzido; misturas de brilho/desfoque de movimento sem cálculo por pixel;
+  presets mais ágeis do x264. Ex.: projeto de 30 s com "Luz de festa" contínua passou de 40 s para 8 s
+  (5 s ao reexportar).
+
 ## [1.2.0] — 2026-10-11
 ### Corrigido
 - **Tela preta durante a edição:** a rolagem automática da linha do tempo (ao tocar além da área visível)
@@ -47,6 +76,7 @@ Formato baseado em [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/) e
 - Exportação em MP4 (H.264/H.265), MOV (H.264/ProRes), WebM, MKV, AVI, GIF, MP3, WAV, M4A e FLAC, de 480p a 4K.
 - Rascunhos salvos automaticamente e arquivo de projeto `.mcut`; instalador NSIS.
 
+[1.3.0]: https://github.com/Leonw47/munnin-cut/compare/v1.2.0...v1.3.0
 [1.2.0]: https://github.com/Leonw47/munnin-cut/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/Leonw47/munnin-cut/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/Leonw47/munnin-cut/releases/tag/v1.0.0

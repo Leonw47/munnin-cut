@@ -178,6 +178,9 @@ export const useStore = create((set, get) => ({
   toast: null,
   modal: null,
   trimMediaId: null,
+  mediaNotices: [],
+  stopAt: null,
+  captionBusy: null,
   clipboard: null,
   savedAt: 0,
   fullscreen: false,
@@ -245,10 +248,17 @@ export const useStore = create((set, get) => ({
     const d = projectDuration(s.project);
     if (d <= 0) return;
     let t = s.time;
-    if (t >= d - 1e-3) t = 0;
-    set({ playing: true, time: t, anchor: { t, now: performance.now() } });
+    let stopAt = null;
+    // Com um áudio selecionado, o play toca só o trecho dele (do início ao fim do bloco).
+    const sel = s.selection?.type === 'clip' ? findClip(s.project, s.selection.id)?.clip : null;
+    if (sel && sel.type === 'audio') {
+      const end = sel.start + sel.duration;
+      if (t < sel.start || t >= end - 0.05) t = sel.start;
+      stopAt = end;
+    } else if (t >= d - 1e-3) t = 0;
+    set({ playing: true, time: t, anchor: { t, now: performance.now() }, stopAt });
   },
-  pause() { set({ playing: false, anchor: null }); },
+  pause() { set({ playing: false, anchor: null, stopAt: null }); },
   togglePlay() { if (get().playing) get().pause(); else get().play(); },
   stepFrames(n) {
     const fps = get().project?.fps || 30;
@@ -256,7 +266,13 @@ export const useStore = create((set, get) => ({
     get().setTime(Math.round(get().time * fps + n) / fps);
   },
 
-  select(sel) { set({ selection: sel }); },
+  select(sel) {
+    set({ selection: sel });
+    // clicar num bloco de áudio leva o cursor ao início dele (para ouvir com o play)
+    const s = get();
+    const c = sel?.type === 'clip' ? findClip(s.project, sel.id)?.clip : null;
+    if (c && c.type === 'audio' && !s.playing && (s.time < c.start || s.time >= c.start + c.duration)) s.setTime(c.start);
+  },
 
   // ---------- Mídia ----------
   setMeta(id, patch) { set((s) => ({ meta: { ...s.meta, [id]: { ...(s.meta[id] || {}), ...patch } } })); },
@@ -280,17 +296,76 @@ export const useStore = create((set, get) => ({
     await Promise.all(ids.map((id) => get().prepareMedia(id, true)));
     return ids.filter((id) => get().project?.media.some((m) => m.id === id));
   },
+  noteMedia(kind, m, extra = {}) {
+    set((s) => ({ mediaNotices: [...s.mediaNotices.filter((n) => !(n.id === m.id)), { id: m.id, kind, name: m.name, path: extra.path || m.path, ts: Date.now() }] }));
+  },
+  dismissNotices(kind) {
+    set((s) => ({ mediaNotices: kind ? s.mediaNotices.filter((n) => n.kind !== kind) : s.mediaNotices.filter((n) => n.kind === 'missing') }));
+  },
+  // Ajusta os clipes de uma mídia que mudou (outra duração/tipo), mantendo efeitos e transições.
+  adjustClipsForMedia(id) {
+    const m = get().project?.media.find((x) => x.id === id);
+    if (!m) return;
+    get().commit((p) => {
+      let any = false;
+      for (const tr of p.tracks) for (const c of tr.clips) {
+        if (c.mediaId !== id) continue;
+        any = true;
+        if (c.type !== 'audio' && (m.type === 'video' || m.type === 'image') && c.type !== m.type) {
+          c.type = m.type;
+          if (m.type === 'video') c.in = 0;
+        }
+        clampClip(c, m);
+      }
+      return any;
+    }, { silent: true, keepTracks: true });
+  },
+  /**
+   * Prepara uma mídia: confere se o arquivo existe e se mudou desde a última vez.
+   * - sumiu → procura um arquivo com o mesmo nome em outras pastas (e religa sozinho);
+   * - mesmo caminho com arquivo novo (tamanho/data diferentes) → relê e ajusta os clipes;
+   * - não achou → marca como ausente e avisa.
+   */
   async prepareMedia(id, doProbe = false) {
     let m = get().project?.media.find((x) => x.id === id);
     if (!m) return;
     try {
-      const [exists] = await api.exists([m.path]);
-      if (!exists) { get().setMeta(id, { status: 'missing' }); return; }
+      let [st] = await api.statFiles([m.path]);
+      let changed = false;
+      if (!st.exists) {
+        get().setMeta(id, { status: 'probing' });
+        const hints = [...new Set(get().project.media.map((x) => x.path.replace(/[\\/][^\\/]*$/, '')))];
+        const found = await api.findByName(m.name, hints).catch(() => []);
+        if (!found.length) {
+          get().setMeta(id, { status: 'missing' });
+          get().noteMedia('missing', m);
+          return;
+        }
+        const f = found[0];
+        get().updateMediaSilent(id, { path: f.path, renderPath: undefined });
+        get().noteMedia('relocated', m, { path: f.path });
+        st = { exists: true, size: f.size, mtimeMs: f.mtimeMs };
+        m = get().project.media.find((x) => x.id === id);
+        doProbe = true;
+        changed = !m.fp || m.fp.size !== f.size;
+      } else if (m.fp && (m.fp.size !== st.size || Math.abs(m.fp.mtimeMs - st.mtimeMs) > 2000)) {
+        doProbe = true;
+        changed = true;
+      }
+      if (get().mediaNotices.some((n) => n.id === id && n.kind === 'missing')) {
+        set((s) => ({ mediaNotices: s.mediaNotices.filter((n) => !(n.id === id && n.kind === 'missing')) }));
+      }
       if (doProbe || (!m.width && m.type !== 'audio') || (!m.duration && m.type !== 'image')) {
         get().setMeta(id, { status: 'probing' });
         const info = await api.probe(m.path);
-        get().updateMediaSilent(id, info);
+        get().updateMediaSilent(id, { ...info, fp: { size: st.size, mtimeMs: st.mtimeMs } });
         m = get().project.media.find((x) => x.id === id);
+        if (changed) {
+          get().adjustClipsForMedia(id);
+          if (!get().mediaNotices.some((n) => n.id === id && n.kind === 'relocated')) get().noteMedia('updated', m);
+        }
+      } else if (!m.fp) {
+        get().updateMediaSilent(id, { fp: { size: st.size, mtimeMs: st.mtimeMs } });
       }
       get().setMeta(id, { status: 'checking' });
       const res = await canPlay(m);
@@ -304,10 +379,11 @@ export const useStore = create((set, get) => ({
         const c = makeCanvas(res.w, res.h);
         c.getContext('2d').drawImage(res.img, 0, 0);
         const blob = await new Promise((r) => c.toBlob(r, 'image/png'));
-        const file = await api.writeFile('cache', `${id}_orient.png`, new Uint8Array(await blob.arrayBuffer()));
+        const file = await api.writeFile('cache', `${id}_orient_${st.mtimeMs}.png`, new Uint8Array(await blob.arrayBuffer()));
         get().updateMediaSilent(id, { renderPath: file, width: res.w, height: res.h });
       }
-      get().setMeta(id, { status: 'ready', proxy, error: null });
+      // ver: muda quando o arquivo muda, para a prévia recarregar (o caminho pode ser o mesmo)
+      get().setMeta(id, { status: 'ready', proxy, error: null, ver: st.mtimeMs });
       m = get().project.media.find((x) => x.id === id);
       const [thumbs, waveform] = await Promise.all([
         m.type === 'video' ? api.thumbs(m.path, m).catch(() => null) : null,
@@ -315,18 +391,57 @@ export const useStore = create((set, get) => ({
       ]);
       get().setMeta(id, { thumbs, waveform });
     } catch (e) {
-      get().setMeta(id, { status: 'error', error: String(e.message || e).replace(/^Error invoking remote method '[^']+': (Error: )?/, '') });
+      const msg = String(e.message || e).replace(/^Error invoking remote method '[^']+': (Error: )?/, '');
+      // o arquivo sumiu no meio da leitura → trata como ausente (com aviso), não como erro
+      if (/ENOENT|No such file|não encontrado/i.test(msg)) {
+        const mm = get().project?.media.find((x) => x.id === id);
+        get().setMeta(id, { status: 'missing' });
+        if (mm) get().noteMedia('missing', mm);
+      } else get().setMeta(id, { status: 'error', error: msg });
     }
   },
   prepareAll() {
+    set({ mediaNotices: [] });
     for (const m of get().project?.media || []) get().prepareMedia(m.id, false);
+  },
+  // Confere de novo os arquivos (ao voltar para a janela): achou o que faltava? algo mudou?
+  async recheckMedia() {
+    const s = get();
+    if (!s.project || s.screen !== 'editor') return;
+    const media = s.project.media;
+    if (!media.length) return;
+    const stats = await api.statFiles(media.map((m) => m.path));
+    const jobs = [];
+    media.forEach((m, i) => {
+      const st = stats[i];
+      const status = get().meta[m.id]?.status;
+      if (['probing', 'checking', 'proxy'].includes(status)) return;
+      if (status === 'missing' || !st.exists) { jobs.push(get().prepareMedia(m.id, false)); return; }
+      if (m.fp && (m.fp.size !== st.size || Math.abs(m.fp.mtimeMs - st.mtimeMs) > 2000)) jobs.push(get().prepareMedia(m.id, true));
+    });
+    await Promise.all(jobs);
   },
   async relinkMedia(id) {
     const m = get().project.media.find((x) => x.id === id);
     const p = await api.relinkDialog(m?.name || 'mídia');
     if (!p) return;
-    get().updateMediaSilent(id, { path: p, renderPath: undefined });
+    get().updateMediaSilent(id, { path: p, renderPath: undefined, fp: undefined });
+    set((s) => ({ mediaNotices: s.mediaNotices.filter((n) => n.id !== id) }));
     await get().prepareMedia(id, true);
+    get().adjustClipsForMedia(id);
+  },
+  // Troca o arquivo de uma mídia por outro (qualquer nome): os clipes mantêm efeitos e transições.
+  async replaceMedia(id) {
+    const m = get().project.media.find((x) => x.id === id);
+    const p = await api.replaceDialog(m?.name || 'mídia');
+    if (!p) return;
+    const name = p.split(/[\\/]/).pop();
+    get().checkpoint();
+    get().updateMediaSilent(id, { path: p, name, renderPath: undefined, fp: undefined, trim: undefined });
+    set((s) => ({ mediaNotices: s.mediaNotices.filter((n) => n.id !== id) }));
+    await get().prepareMedia(id, true);
+    get().adjustClipsForMedia(id);
+    get().toastMsg(`"${m.name}" foi substituída por "${name}". Efeitos e transições mantidos.`);
   },
   openTrim(id) {
     const m = get().project?.media.find((x) => x.id === id);
@@ -401,6 +516,25 @@ export const useStore = create((set, get) => ({
     const clip = newEffectClip(kind, id, { start: Math.max(0, opts.time ?? get().time), duration: dur });
     get().commit((p) => placeInTrack(p, clip, opts.trackId, opts.newTrackPos ?? null));
     set({ selection: { type: 'clip', id: clip.id } });
+  },
+  // Legendas automáticas: substitui as anteriores (se pedido) e cria uma faixa só para elas.
+  applyCaptions(caps, style, { replace = true, y = 0.32 } = {}) {
+    let n = 0;
+    get().commit((p) => {
+      if (replace) for (const t of p.tracks) t.clips = t.clips.filter((c) => !c.caption);
+      if (!caps.length) return;
+      const tr = newTrack('text');
+      tr.captions = true;
+      p.tracks.unshift(tr);
+      for (const c of caps) {
+        const clip = newTextClip(style, { start: c.start, duration: Math.max(MIN_CLIP, c.end - c.start), caption: true });
+        clip.text.content = c.text;
+        clip.transform.y = y;
+        tr.clips.push(clip);
+        n++;
+      }
+    });
+    return n;
   },
   applyFilter(clipId, filterId) {
     get().updateClip(clipId, (c) => { c.filter = { id: filterId, intensity: c.filter?.intensity ?? 100 }; });

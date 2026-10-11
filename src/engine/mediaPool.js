@@ -22,7 +22,8 @@ export class MediaPool {
   }
 
   srcFor(media, meta) {
-    return meta?.proxy || media.renderPath || media.path;
+    const p = meta?.proxy || media.renderPath || media.path;
+    return meta?.ver ? `${p}|${meta.ver}` : p;
   }
 
   image(media, meta) {
@@ -33,7 +34,7 @@ export class MediaPool {
       img.crossOrigin = 'anonymous';
       img.decoding = 'async';
       img.onload = () => this.onNeedRender();
-      img.src = mediaUrl(src);
+      img.src = mediaUrl(src.split('|')[0]) + (src.includes('|') ? `?v=${src.split('|')[1]}` : '');
       this.imgs.set(src, img);
     }
     return img.complete && img.naturalWidth ? img : null;
@@ -50,7 +51,7 @@ export class MediaPool {
       el.crossOrigin = 'anonymous';
       el.playsInline = true;
       el.disablePictureInPicture = true;
-      el.src = mediaUrl(src);
+      el.src = mediaUrl(src.split('|')[0]) + (src.includes('|') ? `?v=${src.split('|')[1]}` : '');
       const rerender = () => this.onNeedRender();
       el.addEventListener('seeked', rerender);
       el.addEventListener('loadeddata', rerender);

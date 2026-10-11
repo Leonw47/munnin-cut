@@ -23,6 +23,8 @@ const exe = (n) => {
   return fs.existsSync(p) ? p : n;
 };
 const FFMPEG = exe('ffmpeg');
+const whisperDir = app.isPackaged ? path.join(process.resourcesPath, 'whisper') : path.join(__dirname, '..', 'resources', 'whisper');
+const WHISPER = path.join(whisperDir, 'whisper-cli.exe');
 const FFPROBE = exe('ffprobe');
 const userDir = app.getPath('userData');
 const cacheDir = path.join(userDir, 'cache');
@@ -32,7 +34,8 @@ const docsRoot = AUTOTEST ? path.join(os.tmpdir(), 'munnin-cut-testdocs') : path
 const draftsDir = path.join(docsRoot, 'Projetos');
 const recordingsDir = path.join(docsRoot, 'Gravações');
 const jobsRoot = path.join(os.tmpdir(), 'munnin-cut-jobs');
-for (const d of [cacheDir, logsDir, draftsDir, recordingsDir, jobsRoot]) fs.mkdirSync(d, { recursive: true });
+const modelsDir = path.join(userDir, 'models');
+for (const d of [cacheDir, logsDir, draftsDir, recordingsDir, jobsRoot, modelsDir]) fs.mkdirSync(d, { recursive: true });
 
 const media = createMedia({ ffmpeg: FFMPEG, ffprobe: FFPROBE, cacheDir });
 
@@ -183,6 +186,7 @@ ipcMain.handle('app:info', async () => ({
   documentsDir: app.getPath('documents'),
   draftsDir,
   recordingsDir,
+  tempDir: jobsRoot,
 }));
 
 let nvencCache = null;
@@ -210,8 +214,14 @@ ipcMain.handle('media:waveform', (_e, p) => media.waveform(p));
 ipcMain.handle('media:proxy', (e, p, kind, jobId) =>
   media.proxy(p, kind, (pct) => { if (!e.sender.isDestroyed()) e.sender.send('media:proxyProgress', { jobId, pct }); }));
 
+const fxCacheRoot = path.join(cacheDir, 'fx');
 function scopeDir(scope) {
   if (scope === 'cache') return cacheDir;
+  if (typeof scope === 'string' && scope.startsWith('fxcache:')) {
+    const d = path.join(fxCacheRoot, scope.slice(8).replace(/[^a-z0-9_-]/gi, ''));
+    fs.mkdirSync(d, { recursive: true });
+    return d;
+  }
   if (scope === 'recordings') return recordingsDir;
   if (typeof scope === 'string' && scope.startsWith('job:')) {
     const id = scope.slice(4).replace(/[^a-z0-9_-]/gi, '');
@@ -227,7 +237,156 @@ ipcMain.handle('fs:write', async (_e, scope, name, bytes) => {
   await fsp.writeFile(file, Buffer.from(bytes));
   return file;
 });
+// Cache dos quadros das camadas de efeito: reaproveitado quando o efeito não muda entre exportações.
+ipcMain.handle('fxcache:status', (_e, key) => {
+  const dir = scopeDir(`fxcache:${key}`);
+  return { dir, done: fs.existsSync(path.join(dir, 'done')) };
+});
+ipcMain.handle('fxcache:done', (_e, key) => {
+  const dir = scopeDir(`fxcache:${key}`);
+  fs.writeFileSync(path.join(dir, 'done'), String(Date.now()));
+  // mantém só os 40 conjuntos mais recentes
+  try {
+    const all = fs.readdirSync(fxCacheRoot).map((d) => ({ d, t: fs.statSync(path.join(fxCacheRoot, d)).mtimeMs })).sort((a, b) => b.t - a.t);
+    for (const x of all.slice(40)) fs.rmSync(path.join(fxCacheRoot, x.d), { recursive: true, force: true });
+  } catch { /* ignore */ }
+  return true;
+});
 ipcMain.handle('fs:exists', (_e, paths) => (paths || []).map((p) => { try { return fs.existsSync(p); } catch { return false; } }));
+
+
+// ---------- Resiliência das mídias ----------
+ipcMain.handle('media:stat', (_e, paths) => (paths || []).map((p) => {
+  try { const st = fs.statSync(p); return { exists: st.isFile(), size: st.size, mtimeMs: Math.round(st.mtimeMs) }; }
+  catch { return { exists: false }; }
+}));
+
+// Procura um arquivo com o mesmo nome (sem diferenciar maiúsculas) em pastas prováveis.
+const SKIP_DIRS = new Set(['node_modules', '.git', 'appdata', '$recycle.bin', 'windows', 'program files', 'program files (x86)', '.cache']);
+ipcMain.handle('media:findByName', async (_e, name, hints = []) => {
+  const target = String(name || '').toLowerCase();
+  if (!target) return [];
+  const home = app.getPath('home');
+  // 1º perto das pastas que o projeto já usa (rápido); só depois nas pastas do usuário
+  const near = [];
+  for (const h of hints) if (h) near.push([h, 2], [path.dirname(h), 2]);
+  const wide = [[app.getPath('downloads'), 4], [app.getPath('desktop'), 3], [app.getPath('documents'), 3],
+    [app.getPath('videos'), 3], [app.getPath('pictures'), 3], [app.getPath('music'), 3], [path.join(home, 'OneDrive'), 3]];
+  const seen = new Set();
+  const found = new Map();
+  const t0 = Date.now();
+  let scanned = 0;
+  const scan = async (roots) => { for (const [root, depth] of roots) {
+    const queue = [[root, 0]];
+    while (queue.length) {
+      if (Date.now() - t0 > 5000 || scanned > 120000) break;
+      const [dir, d] = queue.shift();
+      const key = dir.toLowerCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      let entries;
+      try { entries = await fsp.readdir(dir, { withFileTypes: true }); } catch { continue; }
+      for (const ent of entries) {
+        scanned++;
+        const full = path.join(dir, ent.name);
+        if (ent.isFile() && ent.name.toLowerCase() === target && !found.has(full.toLowerCase())) {
+          try { const st = fs.statSync(full); found.set(full.toLowerCase(), { path: full, size: st.size, mtimeMs: Math.round(st.mtimeMs) }); } catch { /* ignore */ }
+        } else if (ent.isDirectory() && d < depth && !SKIP_DIRS.has(ent.name.toLowerCase()) && !ent.name.startsWith('.')) {
+          queue.push([full, d + 1]);
+        }
+      }
+    }
+  } };
+  await scan(near);
+  if (!found.size) await scan(wide);
+  return [...found.values()].sort((a, b) => b.mtimeMs - a.mtimeMs);
+});
+
+ipcMain.handle('dialog:replace', async (_e, name) => {
+  const r = await dialog.showOpenDialog(win, { title: `Substituir "${name}" por…`, properties: ['openFile'], filters: MEDIA_FILTER });
+  return r.canceled ? null : r.filePaths[0];
+});
+
+// ---------- Legendas automáticas (whisper.cpp) ----------
+const CAPTION_MODELS = [
+  { id: 'base', file: 'ggml-base-q5_1.bin', size: 59707625, name: 'Rápido' },
+  { id: 'small', file: 'ggml-small-q5_1.bin', size: 190085487, name: 'Equilibrado' },
+  { id: 'turbo', file: 'ggml-large-v3-turbo-q5_0.bin', size: 574041195, name: 'Máxima precisão' },
+];
+const modelPath = (m) => path.join(modelsDir, m.file);
+ipcMain.handle('captions:models', () => CAPTION_MODELS.map((m) => ({ ...m, downloaded: fs.existsSync(modelPath(m)), available: fs.existsSync(WHISPER) })));
+
+let captionAbort = null;
+ipcMain.handle('captions:download', async (e, id) => {
+  const m = CAPTION_MODELS.find((x) => x.id === id);
+  if (!m) throw new Error('modelo desconhecido');
+  if (fs.existsSync(modelPath(m))) return true;
+  const url = `https://huggingface.co/ggerganov/whisper.cpp/resolve/main/${m.file}`;
+  const part = `${modelPath(m)}.part`;
+  captionAbort = new AbortController();
+  const res = await fetch(url, { signal: captionAbort.signal });
+  if (!res.ok || !res.body) throw new Error(`falha ao baixar o modelo (HTTP ${res.status})`);
+  const total = Number(res.headers.get('content-length')) || m.size;
+  const out = fs.createWriteStream(part);
+  let got = 0, last = 0;
+  try {
+    for await (const chunk of Readable.fromWeb(res.body)) {
+      got += chunk.length;
+      if (!out.write(chunk)) await new Promise((r) => out.once('drain', r));
+      const now = Date.now();
+      if (now - last > 200) { last = now; if (!e.sender.isDestroyed()) e.sender.send('captions:progress', { stage: 'download', pct: got / total }); }
+    }
+    await new Promise((r, j) => out.end((err) => (err ? j(err) : r())));
+  } catch (err) {
+    out.destroy();
+    fs.rm(part, { force: true }, () => {});
+    throw err;
+  } finally { captionAbort = null; }
+  fs.renameSync(part, modelPath(m));
+  return true;
+});
+
+let captionProc = null;
+ipcMain.handle('captions:cancel', () => {
+  captionAbort?.abort();
+  if (captionProc) { captionProc.kill('SIGKILL'); captionProc = null; }
+  return true;
+});
+
+ipcMain.handle('captions:transcribe', async (e, { audioPath, model, language, prompt, duration }) => {
+  const m = CAPTION_MODELS.find((x) => x.id === model) || CAPTION_MODELS[1];
+  if (!fs.existsSync(WHISPER)) throw new Error('componente de legendas não encontrado (whisper-cli.exe)');
+  if (!fs.existsSync(modelPath(m))) throw new Error('modelo de legendas não baixado');
+  const dir = path.join(jobsRoot, `cap_${Date.now()}`);
+  fs.mkdirSync(dir, { recursive: true });
+  const wav = path.join(dir, 'audio16k.wav');
+  await media.run(FFMPEG, ['-v', 'error', '-y', '-i', audioPath, '-ar', '16000', '-ac', '1', '-c:a', 'pcm_s16le', wav]);
+  const outBase = path.join(dir, 'legendas');
+  const threads = String(Math.max(2, Math.min(16, os.cpus().length - 2)));
+  const args = ['-m', modelPath(m), '-f', wav, '-l', language || 'pt', '-t', threads, '-ml', '1', '-sow', '-oj', '-of', outBase, '-pp', '-np'];
+  if (prompt) args.push('--prompt', String(prompt).slice(0, 400));
+  await new Promise((resolve, reject) => {
+    const p = spawn(WHISPER, args, { windowsHide: true, cwd: whisperDir });
+    captionProc = p;
+    let err = '';
+    const onData = (d) => {
+      const txt = d.toString();
+      err += txt;
+      if (err.length > 20000) err = err.slice(-20000);
+      const mm = /progress\s*=\s*(\d+)%/g;
+      let x, pct = null;
+      while ((x = mm.exec(txt))) pct = Number(x[1]);
+      if (pct !== null && !e.sender.isDestroyed()) e.sender.send('captions:progress', { stage: 'transcribe', pct: pct / 100 });
+    };
+    p.stdout.on('data', onData);
+    p.stderr.on('data', onData);
+    p.on('error', reject);
+    p.on('close', (code) => { captionProc = null; code === 0 ? resolve() : reject(new Error(err.trim().split('\n').slice(-3).join('\n') || `whisper terminou com código ${code}`)); });
+  });
+  const j = JSON.parse(fs.readFileSync(`${outBase}.json`, 'utf8'));
+  fs.rm(dir, { recursive: true, force: true }, () => {});
+  return (j.transcription || []).map((sg) => ({ t0: sg.offsets.from / 1000, t1: sg.offsets.to / 1000, text: sg.text }));
+});
 
 // ---------- Rascunhos (projetos salvos automaticamente) ----------
 const draftPath = (id, f) => path.join(draftsDir, String(id).replace(/[^a-z0-9_-]/gi, ''), f);
@@ -257,6 +416,20 @@ ipcMain.handle('drafts:save', async (_e, id, json, meta, coverBytes) => {
 ipcMain.handle('drafts:delete', async (_e, id) => {
   await fsp.rm(path.dirname(draftPath(id, 'x')), { recursive: true, force: true });
   return true;
+});
+ipcMain.handle('drafts:duplicate', async (_e, id) => {
+  const src = path.dirname(draftPath(id, 'x'));
+  const nid = `p_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
+  const dst = path.join(draftsDir, nid);
+  await fsp.cp(src, dst, { recursive: true });
+  const proj = JSON.parse(await fsp.readFile(path.join(dst, 'project.json'), 'utf8'));
+  const meta = JSON.parse(await fsp.readFile(path.join(dst, 'meta.json'), 'utf8'));
+  proj.id = nid; meta.id = nid;
+  proj.name = meta.name = `${proj.name} (cópia)`;
+  meta.updatedAt = Date.now();
+  await fsp.writeFile(path.join(dst, 'project.json'), JSON.stringify(proj));
+  await fsp.writeFile(path.join(dst, 'meta.json'), JSON.stringify(meta));
+  return nid;
 });
 ipcMain.handle('drafts:rename', async (_e, id, name) => {
   const mp = draftPath(id, 'meta.json'), pp = draftPath(id, 'project.json');
@@ -355,6 +528,15 @@ ipcMain.handle('test:capture', async (_e, name) => {
   const p = path.join(TEST_OUT, `${name}.png`);
   fs.writeFileSync(p, img.toPNG());
   return p;
+});
+// Operações de arquivo só para os testes automáticos (MC_AUTOTEST).
+ipcMain.handle('test:fs', async (_e, op, a, b) => {
+  if (!AUTOTEST) return false;
+  if (op === 'copy') fs.copyFileSync(a, b);
+  else if (op === 'move') fs.renameSync(a, b);
+  else if (op === 'delete') fs.rmSync(a, { force: true });
+  else if (op === 'replaceWithVideoFrame') await media.run(FFMPEG, ['-v', 'error', '-y', '-ss', '1', '-i', a, '-frames:v', '1', b]);
+  return true;
 });
 ipcMain.handle('test:log', (_e, msg) => { if (AUTOTEST) console.log('[teste]', msg); return true; });
 

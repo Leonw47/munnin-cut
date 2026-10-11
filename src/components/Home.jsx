@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Plus, FolderOpen, Trash2, Pencil, Film } from 'lucide-react';
+import { Plus, FolderOpen, Trash2, Pencil, Film, Copy } from 'lucide-react';
 import { useStore } from '../store.js';
 import { RATIOS } from '../shared/defs.js';
 import { fmtTime } from '../shared/timeline.js';
@@ -72,6 +72,7 @@ export default function Home() {
               </div>
               <div className="dactions">
                 <button className="icon-btn sm" title="Renomear" onClick={(e) => { e.stopPropagation(); setRenaming(d.id); }}><Pencil size={13} /></button>
+                <button className="icon-btn sm" title="Duplicar (usar como modelo)" onClick={async (e) => { e.stopPropagation(); await window.api.duplicateDraft(d.id); load(); }}><Copy size={13} /></button>
                 <button className="icon-btn sm" title="Excluir" onClick={(e) => { e.stopPropagation(); remove(d); }}><Trash2 size={13} /></button>
               </div>
               {renaming === d.id ? (

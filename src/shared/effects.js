@@ -10,6 +10,7 @@
 
 import { CAM_TRANSITIONS, camAt, drawCamFrame, perspectiveFor } from './camtrans.js';
 import { evalExpr, substVar } from './expr.js';
+import { steppedBlend } from './stepblend.js';
 
 const n4 = (x) => String(Math.round(x * 10000) / 10000);
 const clamp01 = (x) => (x < 0 ? 0 : x > 1 ? 1 : x);
@@ -36,6 +37,7 @@ export const FX_CATS = [
   { id: 'camera', name: 'Câmera' },
   { id: 'retro', name: 'Retrô' },
   { id: 'glitch', name: 'Glitch' },
+  { id: 'softlight', name: 'Luz suave' },
   { id: 'lighting', name: 'Iluminação' },
   { id: 'aura', name: 'Aura' },
   { id: 'transfx', name: 'Transição criativa' },
@@ -194,9 +196,10 @@ export const EFFECTS = [
       const b = env.blurred(0.014 * H);
       ctx.save(); ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.globalAlpha = K; ctx.drawImage(b, 0, 0); ctx.restore();
     },
-    ff: ({ inL, outL, H, k, L }) => {
+    ff: ({ inL, outL, H, k, D, L }) => {
       const a = L('ba'), b = L('bb'), c = L('bc');
-      return `[${inL}]format=gbrp,split[${a}][${b}];[${b}]gblur=sigma=${n4(0.014 * H)}[${c}];[${a}][${c}]blend=all_expr='A*(1-${n4(k)}*abs(sin(PI*1.2*T)))+B*${n4(k)}*abs(sin(PI*1.2*T))'[${outL}]`;
+      return [`[${inL}]format=gbrp,split[${a}][${b}];[${b}]gblur=sigma=${n4(0.014 * H)}[${c}]`,
+        ...steppedBlend({ aL: a, bL: c, outL, mode: 'mix', Kfn: (t) => k * Math.abs(Math.sin(Math.PI * 1.2 * t)), t0: 0, t1: D, rate: 12, L })].join(';');
     },
   },
   {
@@ -824,9 +827,9 @@ function camTransEffect(id) {
     ff({ inL, outL, H, FPS, D, k, L }) {
       const persp = perspectiveFor(merged, `clip(((in-1)/${FPS})/${n4(D)},0,1)`);
       if (!def.K) return `[${inL}]${persp}[${outL}]`;
-      const K = `clip(${n4(k)}*(${substVar(def.K, 'P', `clip(T/${n4(D)},0,1)`)}),0,1)`;
       const a = L('ta'), b = L('tb'), c = L('tc');
-      return `[${inL}]${persp},format=gbrp,split[${a}][${b}];[${b}]gblur=sigma=${n4(0.025 * H)}[${c}];[${a}][${c}]blend=all_expr='A*(1-${K})+B*${K}'[${outL}]`;
+      return [`[${inL}]${persp},format=gbrp,split[${a}][${b}];[${b}]gblur=sigma=${n4(0.025 * H)}[${c}]`,
+        ...steppedBlend({ aL: a, bL: c, outL, mode: 'mix', Kfn: (t) => k * Math.max(0, evalExpr(def.K, { P: Math.min(1, Math.max(0, t / D)), R: 1 })), t0: 0, t1: D, rate: FPS, L })].join(';');
     },
   };
 }
@@ -1018,10 +1021,11 @@ EFFECTS.push(
       const b = env.blurred(0.025 * H);
       ctx.save(); ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.globalCompositeOperation = 'screen'; ctx.globalAlpha = K; ctx.drawImage(b, 0, 0); ctx.restore();
     },
-    ff: ({ inL, outL, H, k, L }) => {
+    ff: ({ inL, outL, W, H, k, D, L }) => {
       const a = L('pa'), b = L('pb'), c = L('pc');
-      const K = `${n4(0.6 * k)}*(0.5+0.5*sin(${n4(TAU * 1.2)}*T))`;
-      return `[${inL}]format=gbrp,split[${a}][${b}];[${b}]gblur=sigma=${n4(0.025 * H)}[${c}];[${a}][${c}]blend=all_expr='A+B*${K}*(1-A/255)'[${outL}]`;
+      const bw = Math.max(2, Math.round(W / 8) * 2), bh = Math.max(2, Math.round(H / 8) * 2);
+      return [`[${inL}]format=gbrp,split[${a}][${b}];[${b}]scale=${bw}:${bh},gblur=sigma=${n4((0.025 * H) / 4)},scale=${W}:${H}:flags=bicubic[${c}]`,
+        ...steppedBlend({ aL: a, bL: c, outL, mode: 'screen', Kfn: (t) => 0.6 * k * (0.5 + 0.5 * Math.sin(TAU * 1.2 * t)), t0: 0, t1: D, rate: 12, L })].join(';');
     },
   },
 
@@ -1108,3 +1112,197 @@ EFFECTS.push(
   { id: 'fxRoll', name: 'Rolar', cat: 'transfx', ...camTransEffect('mc_roll') },
   { id: 'fxImpact', name: 'Impacto', cat: 'transfx', ...camTransEffect('mc_impact') },
 );
+
+// Camadas suaves (luz, brilho, bokeh) são geradas em resolução menor na exportação e ampliadas
+// pelo FFmpeg: o visual é o mesmo e a preparação fica muitas vezes mais rápida.
+const LAYER_RES = {
+  disco: 0.25, lightLeak: 0.25, sunlight: 0.25, halo: 0.25, bokeh: 0.35, rays: 0.5, flare: 0.5,
+  spotlight: 0.35, lightSweep: 0.35, auraWaves: 0.5, neonBorder: 0.5, aura: 0.6, auraNeon: 0.6,
+};
+export function setLayerRes(map) {
+  for (const d of EFFECTS) if (d.layer && map[d.id]) d.layer.res = map[d.id];
+}
+setLayerRes(LAYER_RES);
+
+
+// =====================================================================================
+// v1.3 — Luz suave (efeitos de iluminação discretos, para uso contínuo)
+// =====================================================================================
+const evenPx = (x) => Math.max(2, Math.round(x / 2) * 2);
+function softBloomFF({ inL, outL, W, H, D, L }, sigmaRel, K) {
+  const a = L('sa'), b = L('sb'), c = L('sc');
+  const bw = evenPx(W / 4), bh = evenPx(H / 4);
+  const head = `[${inL}]format=gbrp,split[${a}][${b}];[${b}]scale=${bw}:${bh},gblur=sigma=${n4((sigmaRel * H) / 4)},scale=${W}:${H}:flags=bicubic[${c}]`;
+  if (typeof K === 'number') return `${head};[${a}][${c}]blend=all_mode=screen:all_opacity=${n4(Math.min(1, K))}[${outL}]`;
+  return [head, ...steppedBlend({ aL: a, bL: c, outL, mode: 'screen', Kfn: K, t0: 0, t1: D, rate: 8, L })].join(';');
+}
+function softBloomPrev(env, sigmaRel, K) {
+  const { ctx, H } = env;
+  const b = env.blurred(sigmaRel * H);
+  ctx.save(); ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.globalCompositeOperation = 'screen'; ctx.globalAlpha = Math.max(0, Math.min(1, K)); ctx.drawImage(b, 0, 0); ctx.restore();
+}
+
+EFFECTS.push(
+  {
+    id: 'softGlow', name: 'Brilho difuso', cat: 'softlight',
+    prev: (env) => softBloomPrev(env, 0.04, 0.3 * env.k),
+    ff: (a) => softBloomFF(a, 0.04, 0.3 * a.k),
+  },
+  {
+    id: 'breath', name: 'Respiração de luz', cat: 'softlight',
+    prev: (env) => softBloomPrev(env, 0.035, env.k * (0.12 + 0.18 * (0.5 + 0.5 * Math.sin(TAU * 0.25 * env.t)))),
+    ff: (a) => softBloomFF(a, 0.035, (t) => a.k * (0.12 + 0.18 * (0.5 + 0.5 * Math.sin(TAU * 0.25 * t)))),
+  },
+  {
+    id: 'goldenHour', name: 'Luz dourada', cat: 'softlight',
+    ops: [{ op: 'tint', r: 1.05, g: 1.0, b: 0.88 }, { op: 'saturate', v: 1.05 }],
+    layer: {
+      blend: 'screen',
+      draw(ctx, W, H, t, D, k) {
+        const m = Math.max(W, H);
+        const cx = W * (0.15 + 0.05 * Math.sin(t * 0.2)), cy = H * 0.1;
+        ctx.fillStyle = radial(ctx, cx, cy, m * 0.9, [[0, `rgba(255,190,110,${0.35 * k})`], [0.6, `rgba(255,170,90,${0.12 * k})`], [1, 'rgba(255,170,90,0)']]);
+        ctx.fillRect(0, 0, W, H);
+      },
+    },
+  },
+  {
+    id: 'heavenly', name: 'Luz celestial', cat: 'softlight',
+    layer: {
+      blend: 'screen',
+      draw(ctx, W, H, t, D, k) {
+        const m = Math.max(W, H), ox = W / 2, oy = -0.15 * H, len = H * 1.35;
+        ctx.fillStyle = radial(ctx, W / 2, -0.1 * H, m * 0.7, [[0, `rgba(255,250,235,${0.45 * k})`], [1, 'rgba(255,250,235,0)']]);
+        ctx.fillRect(0, 0, W, H);
+        for (let i = 0; i < 5; i++) {
+          const a = Math.PI / 2 + (i - 2) * 0.17 + 0.03 * Math.sin(t * 0.3 + i);
+          const w = 0.06;
+          const g = ctx.createLinearGradient(ox, oy, ox + Math.cos(a) * len, oy + Math.sin(a) * len);
+          g.addColorStop(0, `rgba(255,248,230,${0.12 * k})`);
+          g.addColorStop(1, 'rgba(255,248,230,0)');
+          ctx.fillStyle = g;
+          ctx.beginPath();
+          ctx.moveTo(ox, oy);
+          ctx.lineTo(ox + Math.cos(a - w) * len, oy + Math.sin(a - w) * len);
+          ctx.lineTo(ox + Math.cos(a + w) * len, oy + Math.sin(a + w) * len);
+          ctx.closePath();
+          ctx.fill();
+        }
+      },
+    },
+  },
+  {
+    id: 'windowLight', name: 'Luz de janela', cat: 'softlight',
+    layer: {
+      blend: 'screen',
+      draw(ctx, W, H, t, D, k) {
+        const diag = Math.hypot(W, H);
+        ctx.save();
+        ctx.translate(W / 2, H / 2);
+        ctx.rotate(-0.6);
+        for (let i = 0; i < 3; i++) {
+          const x = diag * (-0.3 + i * 0.3 + 0.04 * Math.sin(0.2 * t + i)), bw = diag * 0.07;
+          const g = ctx.createLinearGradient(x - bw, 0, x + bw, 0);
+          g.addColorStop(0, 'rgba(255,240,210,0)');
+          g.addColorStop(0.5, `rgba(255,240,210,${0.16 * k})`);
+          g.addColorStop(1, 'rgba(255,240,210,0)');
+          ctx.fillStyle = g;
+          ctx.fillRect(x - bw, -diag, bw * 2, diag * 2);
+        }
+        ctx.restore();
+      },
+    },
+  },
+  {
+    id: 'softLeak', name: 'Vazamento suave', cat: 'softlight',
+    layer: {
+      blend: 'screen',
+      draw(ctx, W, H, t, D, k) {
+        const m = Math.max(W, H);
+        const blobs = [
+          [W * (0.0 + 0.15 * Math.sin(0.25 * t)), H * (0.3 + 0.2 * Math.sin(0.18 * t)), '255,170,120'],
+          [W * (1.0 - 0.15 * Math.sin(0.22 * t + 1)), H * (0.75 + 0.15 * Math.sin(0.2 * t + 2)), '255,140,170'],
+        ];
+        for (const [x, y, c] of blobs) {
+          ctx.fillStyle = radial(ctx, x, y, m * 0.55, [[0, `rgba(${c},${0.3 * k})`], [1, `rgba(${c},0)`]]);
+          ctx.fillRect(0, 0, W, H);
+        }
+      },
+    },
+  },
+  {
+    id: 'softBokeh', name: 'Bokeh suave', cat: 'softlight',
+    layer: {
+      blend: 'screen',
+      draw(ctx, W, H, t, D, k, seed) {
+        const m = Math.min(W, H);
+        const pal = ['255,220,170', '255,200,210', '210,230,255'];
+        for (let i = 0; i < 8; i++) {
+          const r = m * (0.08 + 0.08 * rnd(seed, i, 1));
+          const span = H + r * 2;
+          const x = W * rnd(seed, i, 2) + Math.sin(t * 0.15 + i) * m * 0.04;
+          const y = ((((H * rnd(seed, i, 3) - t * H * 0.01 * (1 + rnd(seed, i, 4))) % span) + span) % span) - r;
+          const c = pal[i % pal.length];
+          ctx.fillStyle = radial(ctx, x, y, r, [[0, `rgba(${c},${0.12 * k})`], [0.75, `rgba(${c},${0.1 * k})`], [1, `rgba(${c},0)`]]);
+          ctx.beginPath(); ctx.arc(x, y, r, 0, TAU); ctx.fill();
+        }
+      },
+    },
+  },
+  {
+    id: 'haze', name: 'Névoa luminosa', cat: 'softlight',
+    ops: [{ op: 'contrast', v: 0.92 }, { op: 'brightness', v: 1.04 }],
+    layer: {
+      blend: 'screen',
+      draw(ctx, W, H, t, D, k) {
+        const g = ctx.createLinearGradient(0, 0, 0, H * 0.65);
+        g.addColorStop(0, `rgba(255,250,240,${0.22 * k * (0.9 + 0.1 * Math.sin(0.5 * t))})`);
+        g.addColorStop(1, 'rgba(255,250,240,0)');
+        ctx.fillStyle = g;
+        ctx.fillRect(0, 0, W, H);
+      },
+    },
+  },
+  {
+    id: 'edgeGlow', name: 'Luz nas bordas', cat: 'softlight',
+    layer: {
+      blend: 'screen',
+      draw(ctx, W, H, t, D, k) {
+        const R = Math.hypot(W / 2, H / 2), a = 0.22 * k * (0.85 + 0.15 * Math.sin(0.8 * t));
+        ctx.fillStyle = radial(ctx, W / 2, H / 2, R, [[0, 'rgba(255,248,235,0)'], [0.55, 'rgba(255,248,235,0)'], [1, `rgba(255,248,235,${a})`]]);
+        ctx.fillRect(0, 0, W, H);
+      },
+    },
+  },
+  {
+    id: 'dawn', name: 'Amanhecer', cat: 'softlight',
+    layer: {
+      blend: 'screen',
+      draw(ctx, W, H, t, D, k) {
+        const a = 0.3 * k * Math.min(1, 0.4 + (D > 0 ? t / D : 0));
+        const g = ctx.createLinearGradient(0, H, 0, H * 0.3);
+        g.addColorStop(0, `rgba(255,170,90,${a})`);
+        g.addColorStop(1, 'rgba(255,170,90,0)');
+        ctx.fillStyle = g;
+        ctx.fillRect(0, 0, W, H);
+      },
+    },
+  },
+  {
+    id: 'sparkSoft', name: 'Brilhos suaves', cat: 'softlight',
+    layer: {
+      blend: 'screen',
+      draw(ctx, W, H, t, D, k, seed) {
+        const m = Math.min(W, H);
+        for (let i = 0; i < 10; i++) {
+          const tw = 0.5 + 0.5 * Math.sin(t * (0.8 + 1.2 * rnd(seed, i, 1)) + TAU * rnd(seed, i, 2));
+          const r = m * (0.012 + 0.02 * rnd(seed, i, 3)) * (0.6 + 0.4 * tw);
+          const x = rnd(seed, i, 4) * W, y = rnd(seed, i, 5) * H;
+          ctx.fillStyle = radial(ctx, x, y, r * 3, [[0, `rgba(255,255,245,${0.6 * k * tw})`], [0.3, `rgba(255,245,220,${0.2 * k * tw})`], [1, 'rgba(255,245,220,0)']]);
+          ctx.fillRect(x - r * 3, y - r * 3, r * 6, r * 6);
+        }
+      },
+    },
+  },
+);
+setLayerRes({ goldenHour: 0.25, heavenly: 0.35, windowLight: 0.35, softLeak: 0.25, softBokeh: 0.3, haze: 0.25, edgeGlow: 0.25, dawn: 0.25, sparkSoft: 0.5 });

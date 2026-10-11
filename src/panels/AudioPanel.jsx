@@ -80,7 +80,7 @@ export default function AudioPanel() {
         return (
           <div key={m.id} className="list-item" draggable={ready}
             onDragStart={(e) => startDrag(e, { kind: 'media', id: m.id }, m.name)} onDragEnd={endDrag}
-            onClick={() => ready && s().openTrim(m.id)} title="Clique para ouvir e cortar antes de inserir">
+            onDoubleClick={() => ready && s().addMedia(m.id)} title="Clique duplo para adicionar no cursor">
             <Music size={15} color="#7fe0b0" />
             <span className="grow" title={m.name}>{m.name}</span>
             <span style={{ color: 'var(--muted)' }}>{m.trim ? `✂ ${fmtTime(m.trim.out - m.trim.in)}` : fmtTime(m.duration)}</span>

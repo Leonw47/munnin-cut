@@ -83,7 +83,11 @@ export default function App() {
         useStore.getState().toastMsg('O editor foi reiniciado depois de um erro e seu projeto foi reaberto.', 'info', 6000);
       }).catch(() => {});
     }
-    return () => { off1(); off2(); };
+    // ao voltar para a janela (ex.: depois de baixar um arquivo novo), confere as mídias
+    let tm = null;
+    const onFocus = () => { clearTimeout(tm); tm = setTimeout(() => useStore.getState().recheckMedia(), 400); };
+    window.addEventListener('focus', onFocus);
+    return () => { off1(); off2(); window.removeEventListener('focus', onFocus); };
   }, []);
 
   // Atalhos de teclado do editor

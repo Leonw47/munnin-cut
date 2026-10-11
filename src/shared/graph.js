@@ -53,7 +53,7 @@ export function buildExport({ project: src, mediaMap, out, textAssets = {}, fxAs
   const wantVideo = fmt.kind !== 'audio';
   const wantAudio = fmt.kind !== 'gif';
   const W = even(out.width), H = even(out.height), FPS = out.fps || 30;
-  const T = Math.max(1 / FPS, projectDuration(project));
+  const T = Math.max(1 / FPS, out.endAt ? Math.min(out.endAt, projectDuration(project)) : projectDuration(project));
   const bgDefault = project.background || { type: 'color', color: '#000000' };
   const q = (x) => Math.max(1, Math.round(x * FPS)) / FPS; // duração em quadros inteiros
 
@@ -73,21 +73,26 @@ export function buildExport({ project: src, mediaMap, out, textAssets = {}, fxAs
     if (inputCache.has(c.id)) return inputCache.get(c.id);
     const p = m.renderPath || m.path;
     const idx = m.type === 'image'
-      ? addInput(['-loop', '1', '-framerate', String(FPS), '-t', r3(c.duration + 0.5), '-i', p])
+      ? addInput(['-i', p])
       : addInput(['-ss', r3(c.in || 0), '-t', r3(c.duration * (c.speed || 1) + 0.25), '-i', p]);
     inputCache.set(c.id, idx);
     return idx;
   }
 
+  // Laço que transforma o quadro único de uma imagem num trecho de vídeo (sem decodificar de novo).
+  const loopFor = (dur) => ['loop=loop=-1:size=1:start=0', `setpts=N/(${FPS}*TB)`, `trim=duration=${r3(dur)}`, 'setpts=PTS-STARTPTS'];
+
   // Fonte → recorte → escala da camada → cor/efeitos do clipe.
+  // Para imagens, tudo isso é estático: roda uma vez e o laço (loopFor) entra depois (veja o "static").
   function preChain(c, m) {
-    const f = ['setpts=PTS-STARTPTS'];
+    const f = [];
     const sp = c.speed || 1;
     if (m.type === 'video') {
+      f.push('setpts=PTS-STARTPTS');
       if (Math.abs(sp - 1) > 1e-3) f.push(`setpts=PTS/${n4(sp)}`);
       f.push(`fps=${FPS}`, 'tpad=stop_mode=clone:stop_duration=1');
-    } else f.push(`fps=${FPS}`);
-    f.push(`trim=duration=${r3(c.duration)}`, 'setpts=PTS-STARTPTS');
+      f.push(`trim=duration=${r3(c.duration)}`, 'setpts=PTS-STARTPTS');
+    }
     const cr = c.crop || {};
     if (cr.l || cr.r || cr.t || cr.b) {
       f.push(`crop=w=iw*${n4(1 - (cr.l || 0) - (cr.r || 0))}:h=ih*${n4(1 - (cr.t || 0) - (cr.b || 0))}:x=iw*${n4(cr.l || 0)}:y=ih*${n4(cr.t || 0)}`);
@@ -99,7 +104,8 @@ export function buildExport({ project: src, mediaMap, out, textAssets = {}, fxAs
     const fx = ffFilters(clipOps(c), { w, h, alpha: !!m.hasAlpha });
     // alguns filtros (vinheta, eq) descartam o alfa; a rotação e as animações precisam dele
     if (fx.length) f.push(...fx, 'format=rgba');
-    return { f, w, h };
+    const isStatic = m.type === 'image';
+    return { f: isStatic ? [...f, ...loopFor(c.duration)] : f, stat: isStatic ? f : null, loop: isStatic ? loopFor(c.duration) : null, w, h };
   }
 
   // Espelhar → girar → opacidade → (deslocar no tempo) → animações.
@@ -174,16 +180,19 @@ export function buildExport({ project: src, mediaMap, out, textAssets = {}, fxAs
         F.push(`color=c=${hex(bgDefault.color)}:s=${W}x${H}:r=${FPS}:d=${r3(dur)},format=yuv420p,setsar=1,settb=AVTB[${lab}]`);
       } else {
         const idx = inputFor(c, m);
-        const { f: pre } = preChain(c, m);
+        const { f: pre, stat, loop } = preChain(c, m);
         const pl = placeChain(c, 0);
         const bg = c.bg || bgDefault;
         const bgL = L('bg'), fgL = L('fg');
         if (bg.type === 'blur') {
           const a = L('s'), b = L('s');
-          F.push(`[${idx}:v]${pre.join(',')},split=2[${a}][${b}]`);
+          // imagem: separa antes do laço, assim o desfoque é calculado uma única vez
+          F.push(`[${idx}:v]${(stat || pre).join(',') || 'null'},split=2[${a}][${b}]`);
+          // o desfoque é de baixa frequência: calcular em 1/4 do tamanho e ampliar dá o mesmo resultado
           const sigma = Math.max(1, (bg.blur ?? 0.03) * H);
-          F.push(`[${b}]scale=${W}:${H}:force_original_aspect_ratio=increase,crop=${W}:${H},gblur=sigma=${sigma.toFixed(1)}[${bgL}]`);
-          F.push(`[${a}]${pl.f.length ? pl.f.join(',') : 'null'}[${fgL}]`);
+          const bw = even(W / 4), bh = even(H / 4);
+          F.push(`[${b}]scale=${bw}:${bh}:force_original_aspect_ratio=increase,crop=${bw}:${bh},gblur=sigma=${(sigma / 4).toFixed(2)},scale=${W}:${H}:flags=bicubic${loop ? `,${loop.join(',')}` : ''}[${bgL}]`);
+          F.push(`[${a}]${[...(loop || []), ...pl.f].join(',') || 'null'}[${fgL}]`);
         } else {
           F.push(`color=c=${hex(bg.color)}:s=${W}x${H}:r=${FPS}:d=${r3(dur)}[${bgL}]`);
           F.push(`[${idx}:v]${[...pre, ...pl.f].join(',')}[${fgL}]`);
@@ -274,11 +283,12 @@ export function buildExport({ project: src, mediaMap, out, textAssets = {}, fxAs
           if (def.layer && asset) {
             const idx = addInput(['-framerate', String(FPS), '-start_number', '0', '-i', asset.pattern]);
             const o = L('fl'), y = L('ly');
+            const up = asset.scaled ? `scale=${W}:${H}:flags=bicubic,` : '';
             if (def.layer.blend === 'screen') {
               const x = L('lx');
-              F.push(`[${m}]format=gbrp[${x}];[${idx}:v]format=gbrp,setpts=PTS-STARTPTS[${y}];[${x}][${y}]blend=all_mode=screen[${o}]`);
+              F.push(`[${m}]format=gbrp[${x}];[${idx}:v]${up}format=gbrp,setpts=PTS-STARTPTS[${y}];[${x}][${y}]blend=all_mode=screen[${o}]`);
             } else {
-              F.push(`[${idx}:v]format=rgba,setpts=PTS-STARTPTS[${y}];[${m}][${y}]overlay=eof_action=pass:format=auto[${o}]`);
+              F.push(`[${idx}:v]${up}format=rgba,setpts=PTS-STARTPTS[${y}];[${m}][${y}]overlay=eof_action=pass:format=auto[${o}]`);
             }
             m = o;
           }
@@ -292,8 +302,8 @@ export function buildExport({ project: src, mediaMap, out, textAssets = {}, fxAs
         } else if (c.type === 'text') {
           const a = textAssets[c.id];
           if (!a) continue;
-          const idx = addInput(['-loop', '1', '-framerate', String(FPS), '-t', r3(c.duration + 0.1), '-i', a.path]);
-          const f = ['format=rgba', `setpts=PTS-STARTPTS+${r3(s)}/TB`];
+          const idx = addInput(['-i', a.path]);
+          const f = ['format=rgba', ...loopFor(c.duration + 0.05), `setpts=PTS-STARTPTS+${r3(s)}/TB`];
           const rx = animRotExpr(c, s);
           if (rx) f.push(`rotate=a='${rx}':c=none:ow='hypot(iw,ih)':oh='ow'`);
           const sx = animScaleExpr(c, s);
@@ -353,13 +363,13 @@ export function buildExport({ project: src, mediaMap, out, textAssets = {}, fxAs
   switch (fmt.id) {
     case 'mp4': case 'mov': case 'mkv':
       if (nv) v.push('-c:v', 'h264_nvenc', '-preset', 'p5', '-rc', 'vbr', ...(rate || ['-cq', String(crf + 2), '-b:v', '0']), '-pix_fmt', 'yuv420p');
-      else v.push('-c:v', 'libx264', '-preset', out.quality === 'high' ? 'slow' : 'medium', ...(rate || ['-crf', String(crf)]), '-pix_fmt', 'yuv420p');
+      else v.push('-c:v', 'libx264', '-preset', { high: 'medium', small: 'veryfast' }[out.quality] || 'faster', ...(rate || ['-crf', String(crf)]), '-pix_fmt', 'yuv420p');
       if (fmt.id !== 'mkv') v.push('-movflags', '+faststart');
       a.push('-c:a', 'aac', '-b:a', ak || '192k');
       break;
     case 'mp4_hevc': case 'mov_hevc':
       if (nv) v.push('-c:v', 'hevc_nvenc', '-preset', 'p5', '-rc', 'vbr', ...(rate || ['-cq', String(crf + 4), '-b:v', '0']), '-pix_fmt', 'yuv420p');
-      else v.push('-c:v', 'libx265', '-preset', 'medium', ...(rate || ['-crf', String(crf + 5)]), '-pix_fmt', 'yuv420p');
+      else v.push('-c:v', 'libx265', '-preset', { high: 'medium', small: 'veryfast' }[out.quality] || 'faster', ...(rate || ['-crf', String(crf + 5)]), '-pix_fmt', 'yuv420p');
       v.push('-tag:v', 'hvc1', '-movflags', '+faststart');
       a.push('-c:a', 'aac', '-b:a', ak || '192k');
       break;

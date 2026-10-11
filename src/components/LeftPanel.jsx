@@ -1,5 +1,5 @@
 import React from 'react';
-import { Clapperboard, Music, Type, Smile, Sparkles, ArrowLeftRight, Palette } from 'lucide-react';
+import { Clapperboard, Music, Type, Smile, Sparkles, ArrowLeftRight, Palette, Captions } from 'lucide-react';
 import { useStore } from '../store.js';
 import MediaPanel from '../panels/MediaPanel.jsx';
 import AudioPanel from '../panels/AudioPanel.jsx';
@@ -7,11 +7,13 @@ import TextPanel from '../panels/TextPanel.jsx';
 import StickersPanel from '../panels/StickersPanel.jsx';
 import { EffectsPanel, FiltersPanel } from '../panels/FxPanels.jsx';
 import TransitionsPanel from '../panels/TransitionsPanel.jsx';
+import CaptionsPanel from '../panels/CaptionsPanel.jsx';
 
 const TABS = [
   { id: 'media', name: 'Mídia', icon: Clapperboard, C: MediaPanel },
   { id: 'audio', name: 'Áudio', icon: Music, C: AudioPanel },
   { id: 'text', name: 'Texto', icon: Type, C: TextPanel },
+  { id: 'captions', name: 'Legendas', icon: Captions, C: CaptionsPanel },
   { id: 'stickers', name: 'Stickers', icon: Smile, C: StickersPanel },
   { id: 'effects', name: 'Efeitos', icon: Sparkles, C: EffectsPanel },
   { id: 'transitions', name: 'Transições', icon: ArrowLeftRight, C: TransitionsPanel },

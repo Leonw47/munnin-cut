@@ -16,7 +16,7 @@ for (let i = 0; i < 100 && !ids.every((x) => S().meta[x]?.status === 'ready' && 
 const [a, c, mu] = ids;
 
 // ---- 1) cortar antes de inserir (áudio) ----
-document.querySelector(`.media-card[title^="m.mp3"]`)?.click();
+S().openTrim(mu); // (o clique no cartão não abre mais a janela; ela fica no menu do botão direito)
 await sleep(600);
 check('janela_corte_abre', S().modal === 'trim' && S().trimMediaId === mu, S().modal);
 // marca 2 s → 6,5 s pelos campos de texto

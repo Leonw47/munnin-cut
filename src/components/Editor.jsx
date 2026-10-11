@@ -7,6 +7,7 @@ import Inspector from './Inspector.jsx';
 import Timeline from './Timeline.jsx';
 import ExportDialog from './ExportDialog.jsx';
 import TrimDialog from './TrimDialog.jsx';
+import MediaStatusBar from './MediaStatusBar.jsx';
 import { Modal } from './ui.jsx';
 
 const SHORTCUTS = [
@@ -50,6 +51,7 @@ export default function Editor() {
   return (
     <>
       <TopBar />
+      <MediaStatusBar />
       <div className="workspace">
         <LeftPanel />
         <Player />

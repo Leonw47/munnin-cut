@@ -26,6 +26,7 @@ export default function ExportDialog() {
   const [nvenc, setNvenc] = useState(false);
   const [hw, setHw] = useState(() => ls('mc.hw', '0') === '1');
   const [st, setSt] = useState({ phase: 'setup' });
+  const [cutTail, setCutTail] = useState(true);
   const [cover, setCover] = useState(null);
   const job = useRef(null);
 
@@ -45,7 +46,12 @@ export default function ExportDialog() {
   const codecDef = codecs.find((c) => c.id === codec) || codecs[0];
   const format = container === 'other' ? other : codecDef.format;
   const fmt = EXPORT_FORMATS.find((f) => f.id === format) || EXPORT_FORMATS[0];
-  const duration = projectDuration(project);
+  const fullDuration = projectDuration(project);
+  // fim da última imagem/vídeo/texto: se só o áudio continua depois, oferecemos encerrar ali
+  const visualEnd = project.tracks.filter((t) => t.kind !== 'audio').reduce((m, t) => Math.max(m, ...t.clips.filter((c) => c.type !== 'effect').map((c) => c.start + c.duration), 0), 0);
+  const tail = fullDuration - visualEnd;
+  const offerCut = visualEnd > 0 && tail > 1;
+  const duration = offerCut && cutTail ? visualEnd : fullDuration;
   const size = exportSize(project, res);
   const hwUsable = nvenc && ['mp4', 'mov', 'mkv', 'mp4_hevc', 'mov_hevc'].includes(format);
   const hasQuality = !['prores', 'gif', 'wav', 'flac'].includes(format);
@@ -62,7 +68,7 @@ export default function ExportDialog() {
     setSt({ phase: 'running', pct: 0, label: 'Preparando…', t0 });
     try {
       const run = startExport({
-        project, meta, format, res, fps, quality,
+        project, meta, format, res, fps, quality, endAt: offerCut && cutTail ? visualEnd : undefined,
         vKbps: hasQuality && fmt.kind === 'video' ? vK : 0,
         aKbps: hasQuality ? aK : 0,
         hw: hw && hwUsable ? 'nvenc' : null, outPath,
@@ -161,6 +167,14 @@ export default function ExportDialog() {
               <div className="hint" style={{ marginTop: 4 }}>
                 {fmt.kind === 'video' ? `Vídeo ${(vK / 1000).toFixed(1).replace('.', ',')} Mbps · áudio ${aK} kbps` : `Áudio ${aK} kbps`}
               </div>
+            </div>
+          </>}
+
+          {offerCut && fmt.kind !== 'audio' && <>
+            <label>Duração</label>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <Toggle on={cutTail} onChange={setCutTail} />
+              <span className="hint">Terminar no fim das imagens ({fmtTime(visualEnd)}) — o áudio continua até {fmtTime(fullDuration)} sobre tela preta</span>
             </div>
           </>}
 

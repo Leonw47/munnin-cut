@@ -7,8 +7,9 @@ import { useStore } from './store.js';
 import { engine } from './engine/index.js';
 import { startExport } from './exporter.js';
 import * as effects from './shared/effects.js';
+import { generateCaptions } from './captions.js';
 
 // Ganchos usados pelos testes automáticos (MC_AUTOTEST).
-window.__mc = { useStore, engine, startExport, effects };
+window.__mc = { useStore, engine, startExport, effects, generateCaptions };
 
 createRoot(document.getElementById('root')).render(<App />);

@@ -4,6 +4,7 @@
 // movimento K (0..1) e o peso de B na mistura (Wb). As curvas são expressões FFmpeg (variáveis P e R,
 // R = lado maior / lado menor) avaliadas pelo mesmo texto na prévia (expr.js).
 import { evalExpr, substVar } from './expr.js';
+import { steppedBlend } from './stepblend.js';
 
 const S = '(P*P*(3-2*P))';
 const P1 = 'clip(2*P,0,1)';
@@ -125,30 +126,28 @@ export function perspectiveFor(cam, progExpr) {
 export function camClipChain({ inL, outL, inc, out, dur, FPS, H, L }) {
   const parts = [];
   let cur = inL;
-  const blurTerms = [];
+  const kTerms = []; // [início, fim, função K(t)]
   const step = (filter) => { const o = L('ct'); parts.push(`[${cur}]${filter}[${o}]`); cur = o; };
   if (out && isCamTransition(out.id)) {
     const def = CAM_TRANSITIONS[out.id];
     const t0 = dur - out.d;
     const prog = `clip(((in-1)/${FPS}-${n4(t0)})/${n4(out.d)},0,1)`;
     step(`${perspectiveFor(def.A, prog)}:enable='gte(t,${n4(t0 - 0.5 / FPS)})'`);
-    if (def.K) blurTerms.push(`if(gte(T,${n4(t0 - 0.5 / FPS)}),${substVar(def.K, 'P', `clip((T-${n4(t0)})/${n4(out.d)},0,1)`)},0)`);
+    if (def.K) kTerms.push([t0, dur, (t) => evalExpr(def.K, { P: Math.min(1, Math.max(0, (t - t0) / out.d)), R: 1 })]);
   }
   if (inc && isCamTransition(inc.id)) {
     const def = CAM_TRANSITIONS[inc.id];
     const prog = `clip(((in-1)/${FPS})/${n4(inc.d)},0,1)`;
     step(`${perspectiveFor(def.B, prog)}:enable='lte(t,${n4(inc.d + 0.5 / FPS)})'`);
-    if (def.K) blurTerms.push(`if(lte(T,${n4(inc.d + 0.5 / FPS)}),${substVar(def.K, 'P', `clip(T/${n4(inc.d)},0,1)`)},0)`);
+    if (def.K) kTerms.push([0, inc.d, (t) => evalExpr(def.K, { P: Math.min(1, Math.max(0, t / inc.d)), R: 1 })]);
   }
-  if (blurTerms.length) {
-    const a = L('cb'), b = L('cb'), c = L('cb');
-    const K = `clip(${blurTerms.join('+')},0,1)`;
-    const en = [];
-    if (out && isCamTransition(out.id)) en.push(`gte(t,${n4(dur - out.d - 0.5 / FPS)})`);
-    if (inc && isCamTransition(inc.id)) en.push(`lte(t,${n4(inc.d + 0.5 / FPS)})`);
-    parts.push(`[${cur}]format=gbrp,split[${a}][${b}];[${b}]gblur=sigma=${n4(0.025 * H)}:enable='${en.join('+')}'[${c}]`);
-    const o = L('ct');
-    parts.push(`[${a}][${c}]blend=all_expr='A*(1-${K})+B*${K}':enable='${en.join('+')}',format=yuv420p[${o}]`);
+  for (const [s0, s1, Kfn] of kTerms) {
+    // desfoque de movimento: mistura com uma cópia desfocada, quadro a quadro (sem expressão por pixel)
+    const a = L('cb'), b = L('cb'), c = L('cb'), o = L('ct');
+    parts.push(`[${cur}]format=gbrp,split[${a}][${b}];[${b}]gblur=sigma=${n4(0.025 * H)}:enable='between(t,${n4(s0 - 0.5 / FPS)},${n4(s1 + 0.5 / FPS)})'[${c}]`);
+    const m = L('cm');
+    parts.push(...steppedBlend({ aL: a, bL: c, outL: m, mode: 'mix', Kfn, t0: s0, t1: s1, rate: FPS, L }));
+    parts.push(`[${m}]format=yuv420p[${o}]`);
     cur = o;
   }
   parts.push(`[${cur}]null[${outL}]`);

@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from 'react';
-import { Upload, Plus, Film, Image as ImageIcon, Music, Loader2, AlertTriangle, Search, Layers, Trash2, FolderOpen, Link, Scissors } from 'lucide-react';
+import { Upload, Plus, Film, Image as ImageIcon, Music, Loader2, AlertTriangle, Search, Layers, Trash2, FolderOpen, Link, Scissors, Replace } from 'lucide-react';
 import { useStore } from '../store.js';
 import { fmtTime } from '../shared/timeline.js';
 import { mediaUrl } from '../engine/util.js';
@@ -9,7 +9,7 @@ import { ContextMenu, MenuItem, Seg } from '../components/ui.jsx';
 export function MediaThumb({ m, meta }) {
   if (m.type === 'image') {
     const src = meta?.proxy || m.renderPath || m.path;
-    return meta?.status === 'ready' ? <img src={mediaUrl(src)} alt="" draggable={false} /> : null;
+    return meta?.status === 'ready' ? <img src={mediaUrl(src) + (meta.ver ? `?v=${meta.ver}` : '')} alt="" draggable={false} /> : null;
   }
   if (m.type === 'video' && meta?.thumbs) {
     const t = meta.thumbs;
@@ -95,10 +95,9 @@ export default function MediaPanel() {
             <div key={m.id} className="media-card" draggable={ready}
               onDragStart={(e) => startDrag(e, { kind: 'media', id: m.id }, m.name)}
               onDragEnd={endDrag}
-              onClick={() => ready && m.type !== 'image' && s().openTrim(m.id)}
-              onDoubleClick={() => ready && m.type === 'image' && s().addMedia(m.id)}
+              onDoubleClick={() => ready && s().addMedia(m.id)}
               onContextMenu={(e) => { e.preventDefault(); setMenu({ x: e.clientX, y: e.clientY, m }); }}
-              title={`${m.name}${m.width ? ` · ${m.width}×${m.height}` : ''}${m.type !== 'image' ? ' — clique para pré-visualizar e cortar' : ''}`}>
+              title={`${m.name}${m.width ? ` · ${m.width}×${m.height}` : ''} — clique duplo para adicionar`}>
               <div className="thumb">
                 <MediaThumb m={m} meta={mt} />
                 <span className="kind">{m.type === 'video' ? <Film size={12} /> : m.type === 'image' ? <ImageIcon size={12} /> : <Music size={12} />}</span>
@@ -120,6 +119,7 @@ export default function MediaPanel() {
           {menu.m.type === 'audio' && <MenuItem icon={<Plus size={14} />} label="Adicionar no cursor" onClick={() => s().addMedia(menu.m.id)} />}
           {menu.m.type !== 'image' && <MenuItem icon={<Scissors size={14} />} label="Cortar antes de inserir…" onClick={() => s().openTrim(menu.m.id)} />}
           {meta[menu.m.id]?.status === 'missing' && <MenuItem icon={<Link size={14} />} label="Localizar arquivo…" onClick={() => s().relinkMedia(menu.m.id)} />}
+          <MenuItem icon={<Replace size={14} />} label="Substituir por outro arquivo…" onClick={() => s().replaceMedia(menu.m.id)} />
           <MenuItem icon={<FolderOpen size={14} />} label="Mostrar no Explorer" onClick={() => window.api.showItem(menu.m.path)} />
           <div className="dd-sep" />
           <MenuItem icon={<Trash2 size={14} />} label="Remover do projeto" onClick={() => s().removeMedia(menu.m.id)} />

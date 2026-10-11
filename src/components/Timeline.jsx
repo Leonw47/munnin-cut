@@ -11,6 +11,13 @@ import { mediaUrl } from '../engine/util.js';
 import { dnd } from '../dnd.js';
 import { ContextMenu, MenuItem } from './ui.jsx';
 
+
+const fmtPrec = (t) => {
+  t = Math.max(0, t || 0);
+  const m = Math.floor(t / 60), s = t - m * 60;
+  return `${String(m).padStart(2, '0')}:${s.toFixed(2).padStart(5, '0')}`;
+};
+
 const PAD = 14;
 const RULER = 26;
 const ROW_H = { video: 66, overlay: 50, text: 34, effect: 30, audio: 48 };
@@ -65,7 +72,7 @@ function Wave({ path, clip, width, height, color = '#7ff0bf' }) {
 function Thumbs({ clip, media, meta, width, height, zoom }) {
   if (!media) return null;
   if (media.type === 'image') {
-    const src = mediaUrl(meta?.proxy || media.renderPath || media.path);
+    const src = mediaUrl(meta?.proxy || media.renderPath || media.path) + (meta?.ver ? `?v=${meta.ver}` : '');
     const tileW = Math.max(20, height * ((media.width || 16) / (media.height || 9)));
     const n = Math.min(120, Math.ceil(width / tileW));
     return (
@@ -186,6 +193,7 @@ export default function Timeline({ height }) {
   const [snapLine, setSnapLine] = useState(null);
   const [dropHint, setDropHint] = useState(null);
   const [menu, setMenu] = useState(null);
+  const [trimTip, setTrimTip] = useState(null);
   const S = useStore.getState;
 
   const mediaMap = useMemo(() => Object.fromEntries(project.media.map((m) => [m.id, m])), [project.media]);
@@ -312,6 +320,10 @@ export default function Timeline({ height }) {
         const d = Math.max(MIN_CLIP, Math.min(maxD, end - orig.start));
         setSnapLine(sn.line);
         S().setClipTiming(clip.id, { duration: d });
+        const row = rows.find((r) => r.track.id === track.id);
+        const isMedia = clip.type === 'video' || clip.type === 'audio';
+        setTrimTip({ x: (S().project.tracks.flatMap((t) => t.clips).find((x) => x.id === clip.id)?.start ?? orig.start) * zoom + PAD + d * zoom, y: (row?.top ?? 0) - 2,
+          text: `Duração ${fmtPrec(d)}${isMedia ? ` · fim no arquivo ${fmtPrec(orig.in + d * orig.speed)}` : ''}` });
       } else if (mode === 'trim-l') {
         const isMedia = clip.type === 'video' || clip.type === 'audio';
         let newStart = orig.start + dt;
@@ -327,6 +339,10 @@ export default function Timeline({ height }) {
           in: isMedia ? orig.in + delta * orig.speed : undefined,
           duration: orig.duration - delta,
         });
+        const row = rows.find((r) => r.track.id === track.id);
+        const cs = track.main ? orig.start : orig.start + delta;
+        setTrimTip({ x: cs * zoom + PAD, y: (row?.top ?? 0) - 2,
+          text: `Duração ${fmtPrec(orig.duration - delta)}${isMedia ? ` · início no arquivo ${fmtPrec(orig.in + delta * orig.speed)}` : ''}` });
       } else {
         // mover: fantasma que segue o ponteiro
         const hit = yToRow(ev.clientY);
@@ -374,6 +390,7 @@ export default function Timeline({ height }) {
       window.removeEventListener('pointerup', up);
       setSnapLine(null);
       setGhost(null);
+      setTrimTip(null);
       if (!moved) return;
       if (mode !== 'move') { S().commit(() => {}, { silent: true }); return; }
       if (!result) return;
@@ -636,6 +653,7 @@ export default function Timeline({ height }) {
               ? <div className="insert-line" style={{ left: dropHint.insertX - 1, top: dropHint.top, height: dropHint.h }} />
               : <div className="marquee" style={{ left: 0, right: 0, top: dropHint.rowTop, height: dropHint.h }} />)}
             {snapLine !== null && <div className="snapline" style={{ left: snapLine * zoom + PAD }} />}
+            {trimTip && <div className="trim-tip" style={{ left: trimTip.x, top: trimTip.y }}>{trimTip.text}</div>}
             <Playhead zoom={zoom} scrollRef={scrollRef} follow />
           </div>
         </div>
