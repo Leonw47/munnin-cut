@@ -53,7 +53,7 @@ const r = await evaluate(`
   S().setTransition(S().project.tracks.find((t) => t.main).clips[0].id, 'slideleft', 0.6);
   S().addMedia(ids[2], { target: 'audio', time: 0 });
   S().setTime(0.5); S().addText('neon');
-  S().addEffect('effect', 'hearts', { time: 0 }); S().addEffect('effect', 'glitch', { time: 1 }); S().addEffect('effect', 'zoomSlow', { time: 2 });
+  S().addEffect('effect', 'hearts', { time: 0 }); S().addEffect('effect', 'glitch', { time: 1 }); S().addEffect('effect', 'zoomSlow', { time: 2 }); S().addEffect('effect', 'softGlow', { time: 3 });
   S().setTime(2);
   await sleep(1200);
   const pid = S().project.id;
@@ -61,7 +61,13 @@ const r = await evaluate(`
   const res = await run.promise;
   const info = await window.api.info();
   const nv = await window.api.nvenc();
-  return { meta: Object.values(S().meta).map((m) => m.status), size: [S().project.width, S().project.height], res, nvenc: nv, pid, drafts: info.draftsDir };
+  let legendas;
+  try {
+    const t = await window.api.captionTranscribe({ audioPath: '${DIR}/fala.wav', model: 'base', language: 'pt' });
+    const w = t.words || t.segments || t;
+    legendas = Array.isArray(w) ? w.slice(0, 12).map((x) => x.text).join('').trim() : JSON.stringify(t).slice(0, 200);
+  } catch (e) { legendas = 'ERRO: ' + e.message; }
+  return { meta: Object.values(S().meta).map((m) => m.status), size: [S().project.width, S().project.height], res, nvenc: nv, legendas, pid, drafts: info.draftsDir };
 `);
 console.log(JSON.stringify(r, null, 1));
 await shot('p2_editor');
