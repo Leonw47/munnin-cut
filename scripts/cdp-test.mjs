@@ -53,6 +53,7 @@ const r = await evaluate(`
   S().setTransition(S().project.tracks.find((t) => t.main).clips[0].id, 'slideleft', 0.6);
   S().addMedia(ids[2], { target: 'audio', time: 0 });
   S().setTime(0.5); S().addText('neon');
+  S().addEffect('effect', 'hearts', { time: 0 }); S().addEffect('effect', 'glitch', { time: 1 }); S().addEffect('effect', 'zoomSlow', { time: 2 });
   S().setTime(2);
   await sleep(1200);
   const pid = S().project.id;

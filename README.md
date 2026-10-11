@@ -3,7 +3,7 @@
 Editor de vídeo para Windows com interface no estilo CapCut, sem recursos pagos e sem marca d'água.
 
 ## Instalar
-Rode `release/MunninCut-Setup-<versão>.exe`. O Windows pode avisar que o app não é assinado:
+Baixe o instalador da versão mais recente em **Releases** (`MunninCut-Setup-<versão>.exe`) e execute. O Windows pode avisar que o app não é assinado:
 clique em **Mais informações → Executar assim mesmo**.
 
 ## O que tem
@@ -36,10 +36,11 @@ clique em **Mais informações → Executar assim mesmo**.
 ## Desenvolvimento
 ```bash
 npm install
+npm run ffmpeg            # baixa ffmpeg.exe/ffprobe.exe para resources/bin (não versionados: >100 MB)
 npm start                 # compila a interface e abre o app
 npm run dist              # gera o instalador em release/
 node scripts/test-graph.mjs mp4 webm gif mp3 prores   # testa o montador de exportação
 node scripts/test-effects.mjs                         # exporta cada efeito animado e gera uma folha de amostras
 ```
 Testes de interface: `MC_AUTOTEST=scripts/autotest-ui.js npx electron .` (também `autotest-interact.js` e `autotest-fx.js`).
-O FFmpeg usado fica em `resources/bin/` (não versionado).
+O FFmpeg fica em `resources/bin/` (não versionado). Histórico de versões em [CHANGELOG.md](CHANGELOG.md).

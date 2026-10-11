@@ -9,6 +9,7 @@
   "type": "module",
   "main": "electron/main.js",
   "scripts": {
+    "ffmpeg": "powershell -ExecutionPolicy Bypass -File scripts/fetch-ffmpeg.ps1",
     "build": "vite build",
     "start": "vite build && electron .",
     "electron": "electron .",
@@ -90,5 +91,9 @@
     "react-dom": "^19.3.0",
     "vite": "^8.3.4",
     "zustand": "^5.0.15"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Leonw47/munnin-cut.git"
   }
 }
