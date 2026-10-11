@@ -38,6 +38,18 @@ export class SvgFilters {
     });
   }
 
+  // após grayscale(1) (R=G=B=Y): R' = c1 + (c2 - c1)·Y em cada canal
+  duotone(c1, c2) {
+    const k = (x) => Math.round(x * 1000);
+    return this.add(`duo_${c1.map(k).join('_')}_${c2.map(k).join('_')}`, (f) => {
+      const m = document.createElementNS(NS, 'feColorMatrix');
+      m.setAttribute('type', 'matrix');
+      const row = (i) => `${c2[i] - c1[i]} 0 0 0 ${c1[i]}`;
+      m.setAttribute('values', `${row(0)}  ${row(1)}  ${row(2)}  0 0 0 1 0`);
+      f.appendChild(m);
+    });
+  }
+
   kernel(a) {
     const v = Math.round(a * 100) / 100;
     return this.add(`sh_${Math.round(v * 100)}`, (f) => {

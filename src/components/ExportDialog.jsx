@@ -49,7 +49,7 @@ export default function ExportDialog() {
     try {
       const run = startExport({
         project, meta, format, res, fps, quality, hw: hw && hwUsable ? 'nvenc' : null, outPath,
-        onProgress: (pct, speed) => setSt((s) => (s.phase === 'running' ? { ...s, pct, speed, label: 'Exportando…' } : s)),
+        onProgress: (pct, speed, label) => setSt((s) => (s.phase === 'running' ? { ...s, pct, speed, label: label || 'Exportando…' } : s)),
       });
       job.current = run;
       const r = await run.promise;

@@ -5,6 +5,7 @@ import { EXPORT_FORMATS } from './defs.js';
 import { layoutProject, mainTrack, transitionDuration, projectDuration, cropDims, fitScale } from './timeline.js';
 import { clipOps, effectClipOps, ffFilters } from './ops.js';
 import { animScaleExpr, animOffsetExprs, animFades } from './anim.js';
+import { effectDef, isSegmentEffect, seedOf } from './effects.js';
 
 const r3 = (x) => String(Math.round(x * 1000) / 1000);
 const n4 = (x) => String(Math.round(x * 10000) / 10000);
@@ -16,12 +17,36 @@ export function exportSize(project, shortSide) {
   return { width: even(project.width * s), height: even(project.height * s) };
 }
 
+// Trecho (em quadros) de cada clipe de efeito — usado pelo montador e pelo
+// exportador (que precisa gerar exatamente esse número de quadros das camadas).
+export function effectSegments(src, FPS) {
+  const project = layoutProject(structuredClone(src));
+  const T = Math.max(1 / FPS, projectDuration(project));
+  const TF = Math.round(T * FPS);
+  const out = [];
+  const main = mainTrack(project);
+  const mi = main ? project.tracks.indexOf(main) : project.tracks.length;
+  for (let ti = mi - 1; ti >= 0; ti--) {
+    const tr = project.tracks[ti];
+    if (tr.hidden || tr.kind !== 'effect') continue;
+    for (const c of tr.clips) {
+      if (c.type !== 'effect' || c.effect?.kind === 'filter') continue;
+      const def = effectDef(c.effect?.id);
+      if (!isSegmentEffect(def)) continue;
+      const a = Math.max(0, Math.round(c.start * FPS)), b = Math.min(TF, Math.round((c.start + c.duration) * FPS));
+      if (b - a < 1) continue;
+      out.push({ clip: c, def, a, b, frames: b - a, D: (b - a) / FPS, k: (c.effect.intensity ?? 100) / 100, seed: seedOf(c.id) });
+    }
+  }
+  return { segments: out, TF };
+}
+
 /**
  * @param {object} job
  *   project, mediaMap {id: media}, out {format, width, height, fps, quality, hw},
  *   textAssets {clipId: {path, cx, cy}}, outPath, graphPath
  */
-export function buildExport({ project: src, mediaMap, out, textAssets = {}, outPath, graphPath }) {
+export function buildExport({ project: src, mediaMap, out, textAssets = {}, fxAssets = {}, outPath, graphPath }) {
   const project = layoutProject(structuredClone(src));
   const fmt = EXPORT_FORMATS.find((f) => f.id === out.format) || EXPORT_FORMATS[0];
   const wantVideo = fmt.kind !== 'audio';
@@ -201,12 +226,56 @@ export function buildExport({ project: src, mediaMap, out, textAssets = {}, outP
         if (e <= 0 || s >= T) continue;
         const en = `between(t,${r3(s)},${r3(e)})`;
         if (c.type === 'effect') {
-          const fl = ffFilters(effectClipOps(c), { w: W, h: H, enable: en, t0: s });
-          if (!fl.length) continue;
-          const needsRgb = fl.some((x) => x.startsWith('colorchannelmixer') || x.startsWith('lutrgb'));
-          const l = L('b');
-          F.push(`[${base}]${needsRgb ? 'format=gbrp,' : ''}${fl.join(',')}[${l}]`);
-          base = l;
+          const def = c.effect?.kind === 'filter' ? null : effectDef(c.effect?.id);
+          if (!isSegmentEffect(def)) {
+            const fl = ffFilters(effectClipOps(c), { w: W, h: H, enable: en, t0: s });
+            if (!fl.length) continue;
+            const needsRgb = fl.some((x) => x.startsWith('colorchannelmixer') || x.startsWith('lutrgb'));
+            const l = L('b');
+            F.push(`[${base}]${needsRgb ? 'format=gbrp,' : ''}${fl.join(',')}[${l}]`);
+            base = l;
+            continue;
+          }
+          // Efeito animado: isola o trecho do clipe (split/trim), processa e junta de volta (concat).
+          const TF = Math.round(T * FPS);
+          const a = Math.max(0, Math.round(s * FPS)), b = Math.min(TF, Math.round(e * FPS));
+          if (b - a < 1) continue;
+          const k = (c.effect.intensity ?? 100) / 100;
+          const D = (b - a) / FPS;
+          const pre = a > 0, post = b < TF;
+          const lp = L('p'), lm = L('p'), lq = L('p');
+          const outs = [pre ? lp : null, lm, post ? lq : null].filter(Boolean);
+          F.push(`[${base}]split=${outs.length}${outs.map((o) => `[${o}]`).join('')}`);
+          const segs = [];
+          if (pre) { const l = L('sg'); F.push(`[${lp}]trim=end_frame=${a},setpts=PTS-STARTPTS,format=yuv420p,setsar=1[${l}]`); segs.push(l); }
+          let m = L('fm');
+          const opsF = ffFilters(effectClipOps(c), { w: W, h: H, t0: 0 });
+          const needsRgb = opsF.some((x) => x.startsWith('colorchannelmixer') || x.startsWith('lutrgb'));
+          F.push(`[${lm}]trim=start_frame=${a}:end_frame=${b},setpts=PTS-STARTPTS${opsF.length ? `,${needsRgb ? 'format=gbrp,' : ''}${opsF.join(',')}` : ''}[${m}]`);
+          if (def.ff) {
+            const o = L('fx');
+            F.push(def.ff({ inL: m, outL: o, W, H, FPS, D, k, seed: seedOf(c.id), L }));
+            m = o;
+          }
+          const asset = fxAssets[c.id];
+          if (def.layer && asset) {
+            const idx = addInput(['-framerate', String(FPS), '-start_number', '0', '-i', asset.pattern]);
+            const o = L('fl'), y = L('ly');
+            if (def.layer.blend === 'screen') {
+              const x = L('lx');
+              F.push(`[${m}]format=gbrp[${x}];[${idx}:v]format=gbrp,setpts=PTS-STARTPTS[${y}];[${x}][${y}]blend=all_mode=screen[${o}]`);
+            } else {
+              F.push(`[${idx}:v]format=rgba,setpts=PTS-STARTPTS[${y}];[${m}][${y}]overlay=eof_action=pass:format=auto[${o}]`);
+            }
+            m = o;
+          }
+          const me = L('sg');
+          F.push(`[${m}]format=yuv420p,setsar=1[${me}]`);
+          segs.push(me);
+          if (post) { const l = L('sg'); F.push(`[${lq}]trim=start_frame=${b},setpts=PTS-STARTPTS,format=yuv420p,setsar=1[${l}]`); segs.push(l); }
+          const nb = L('b');
+          F.push(segs.length > 1 ? `${segs.map((x) => `[${x}]`).join('')}concat=n=${segs.length}:v=1:a=0,settb=AVTB[${nb}]` : `[${segs[0]}]null[${nb}]`);
+          base = nb;
         } else if (c.type === 'text') {
           const a = textAssets[c.id];
           if (!a) continue;

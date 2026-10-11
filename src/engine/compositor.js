@@ -4,6 +4,7 @@ import { clipOps, effectClipOps, cssFilter, postOps, CSS_OPS } from '../shared/o
 import { animState } from '../shared/anim.js';
 import { drawTextBlock, layoutText } from './text.js';
 import { drawTransition } from './transitions.js';
+import { effectDef, seedOf } from '../shared/effects.js';
 import { sharedSvg } from './svgFilters.js';
 import { makeCanvas } from './util.js';
 
@@ -278,6 +279,67 @@ export class Compositor {
     ctx.restore();
   }
 
+  // Desloca os canais vermelho (+dx,+dy) e azul (−dx,−dy), como o rgbashift do FFmpeg.
+  rgbShift(ctx, w, h, dx, dy) {
+    const src = this.tmp(5, w, h);
+    src.ctx.drawImage(ctx.canvas, 0, 0);
+    const ch = (i, color, x, y) => {
+      const t = this.tmp(i, w, h);
+      t.ctx.drawImage(src.canvas, x, y);
+      t.ctx.globalCompositeOperation = 'multiply';
+      t.ctx.fillStyle = color;
+      t.ctx.fillRect(0, 0, w, h);
+      t.ctx.globalCompositeOperation = 'destination-in';
+      t.ctx.drawImage(src.canvas, x, y);
+      return t.canvas;
+    };
+    const R = ch(6, '#ff0000', dx, dy), G = ch(7, '#00ff00', 0, 0), B = ch(8, '#0000ff', -dx, -dy);
+    ctx.save();
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.globalCompositeOperation = 'copy';
+    ctx.drawImage(R, 0, 0);
+    ctx.globalCompositeOperation = 'lighter';
+    ctx.drawImage(G, 0, 0);
+    ctx.drawImage(B, 0, 0);
+    ctx.restore();
+  }
+
+  fxEnv(W, H, t, D, k, seed) {
+    const comp = this;
+    return {
+      ctx: this.ctx, W, H, t, D, k, seed, svg: this.svg,
+      snapshot() { const s = comp.tmp(12, W, H); s.ctx.drawImage(comp.canvas, 0, 0); return s.canvas; },
+      blurred(px) {
+        const s = comp.tmp(13, W, H);
+        s.ctx.filter = `blur(${Math.max(0.3, px).toFixed(2)}px)`;
+        s.ctx.drawImage(comp.canvas, 0, 0);
+        s.ctx.filter = 'none';
+        return s.canvas;
+      },
+      rgbShift(dx, dy) { comp.rgbShift(comp.ctx, W, H, dx, dy); },
+      pixelate(b) { comp.pixelate(comp.ctx, W, H, b); },
+    };
+  }
+
+  // Clipe da faixa de efeitos: ops de cor + transformação (prev) + camada desenhada.
+  applyEffectClip(c, lt, W, H) {
+    this.applyFrameOps(effectClipOps(c), lt, W, H);
+    if (c.effect?.kind === 'filter') return;
+    const def = effectDef(c.effect?.id);
+    if (!def) return;
+    const k = (c.effect.intensity ?? 100) / 100;
+    const seed = seedOf(c.id);
+    if (def.prev) def.prev(this.fxEnv(W, H, lt, c.duration, k, seed));
+    if (def.layer) {
+      const ctx = this.ctx;
+      ctx.save();
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+      ctx.globalCompositeOperation = def.layer.blend === 'screen' ? 'screen' : 'source-over';
+      def.layer.draw(ctx, W, H, lt, c.duration, k, seed);
+      ctx.restore();
+    }
+  }
+
   applyFrameOps(ops, lt, W, H) {
     if (!ops.length) return;
     const css = ops.filter((o) => CSS_OPS.has(o.op));
@@ -329,7 +391,7 @@ export class Compositor {
       for (const c of tr.clips) {
         if (t < c.start || t >= c.start + c.duration) continue;
         const lt = t - c.start;
-        if (c.type === 'effect') this.applyFrameOps(effectClipOps(c), lt, W, H);
+        if (c.type === 'effect') this.applyEffectClip(c, lt, W, H);
         else if (c.type === 'text') this.drawText(ctx, c, lt, W, H, k);
         else if (c.type === 'video' || c.type === 'image') {
           const media = env.mediaMap[c.mediaId];

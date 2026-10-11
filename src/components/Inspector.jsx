@@ -3,9 +3,10 @@ import { FlipHorizontal2, FlipVertical2, RotateCcw, AlignLeft, AlignCenter, Alig
 import { useStore } from '../store.js';
 import { findClip, fmtTime, projectDuration, mainTrack, transitionDuration } from '../shared/timeline.js';
 import { FONTS, RATIOS, FPS_LIST, TEXT_PRESETS, TRANSITIONS, ANIMS_IN, ANIMS_OUT, DEFAULT_TEXT, sizeFromMedia } from '../shared/defs.js';
-import { ADJUST_FIELDS, FILTERS, EFFECTS } from '../shared/ops.js';
+import { ADJUST_FIELDS, FILTERS } from '../shared/ops.js';
+import { EFFECTS, FX_CATS } from '../shared/effects.js';
 import { Slider, Field, Toggle, Seg, ColorInput, editClip, editProject } from './ui.jsx';
-import { FxSample } from '../panels/FxPanels.jsx';
+import { FxSample, EffectThumb } from '../panels/FxPanels.jsx';
 import { presetCss } from '../panels/TextPanel.jsx';
 
 function Tabs({ tabs, value, onChange }) {
@@ -365,18 +366,21 @@ function defaultsFor(style) {
 function EffectTab({ clip }) {
   const id = clip.id;
   const fx = clip.effect;
-  const list = fx.kind === 'filter' ? FILTERS.filter((f) => f.id !== 'none') : EFFECTS;
+  const isFilter = fx.kind === 'filter';
+  const cur = isFilter ? null : EFFECTS.find((e) => e.id === fx.id);
+  const list = isFilter ? FILTERS.filter((f) => f.id !== 'none') : EFFECTS.filter((e) => e.cat === (cur?.cat || 'basic'));
   return (
     <>
-      <Section title={fx.kind === 'filter' ? 'Filtro' : 'Efeito'}>
+      <Section title={isFilter ? 'Filtro' : `Efeito · ${FX_CATS.find((c) => c.id === cur?.cat)?.name || ''}`}>
         <div className="grid small">
           {list.map((x) => (
             <div key={x.id} className={`fx-card ${fx.id === x.id ? 'active' : ''}`} onClick={() => useStore.getState().updateClip(id, (c) => { c.effect.id = x.id; })}>
-              <div className="sw"><FxSample ops={x.ops} /></div>
+              <div className="sw">{isFilter ? <FxSample ops={x.ops} /> : <EffectThumb id={x.id} />}</div>
               <div className="label">{x.name}</div>
             </div>
           ))}
         </div>
+        {!isFilter && <div className="hint" style={{ marginTop: 8 }}>Outras categorias ficam na aba Efeitos, à esquerda.</div>}
       </Section>
       <Field label="Intensidade"><Slider value={fx.intensity ?? 100} min={0} max={100} onChange={(v) => editClip(id, (c) => { c.effect.intensity = v; })} /></Field>
       <div className="hint" style={{ marginTop: 8 }}>Vale para todas as faixas abaixo, de {fmtTime(clip.start, 30, true)} a {fmtTime(clip.start + clip.duration, 30, true)}.</div>

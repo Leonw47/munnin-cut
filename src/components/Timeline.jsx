@@ -5,7 +5,8 @@ import {
 } from 'lucide-react';
 import { useStore, kindFor, placeInTrack } from '../store.js';
 import { mainTrack, findClip, projectDuration, fmtTime, MIN_CLIP, maxDurationFor, transitionDuration } from '../shared/timeline.js';
-import { EFFECTS, FILTERS } from '../shared/ops.js';
+import { FILTERS } from '../shared/ops.js';
+import { EFFECTS } from '../shared/effects.js';
 import { mediaUrl } from '../engine/util.js';
 import { dnd } from '../dnd.js';
 import { ContextMenu, MenuItem } from './ui.jsx';

@@ -312,7 +312,7 @@ ipcMain.handle('export:start', (e, job) => new Promise((resolve) => {
     const cancelled = !jobs.has(jobId) || signal === 'SIGKILL';
     jobs.delete(jobId);
     fs.appendFileSync(path.join(logsDir, 'ultima-exportacao.txt'), `\n--- saída (código ${code}) ---\n${err}\n`);
-    fs.rm(dir, { recursive: true, force: true }, () => {});
+    if (!(AUTOTEST && process.env.MC_KEEP_JOB === '1')) fs.rm(dir, { recursive: true, force: true }, () => {});
     if (code === 0) resolve({ ok: true, outPath: partPath });
     else {
       fs.rm(partPath, { force: true }, () => {});

@@ -3,6 +3,7 @@ import { create } from 'zustand';
 import { RATIOS, sizeFromMedia, DEFAULT_TEXT, TEXT_PRESETS, MEDIA_EXTS } from './shared/defs.js';
 import { layoutProject, mainTrack, findClip, projectDuration, uid, MIN_CLIP, maxDurationFor } from './shared/timeline.js';
 import { mediaUrl, OK_AUDIO, makeCanvas } from './engine/util.js';
+import { effectDef } from './shared/effects.js';
 
 const api = window.api;
 
@@ -382,7 +383,8 @@ export const useStore = create((set, get) => ({
     set({ selection: { type: 'clip', id: clip.id } });
   },
   addEffect(kind, id, opts = {}) {
-    const clip = newEffectClip(kind, id, { start: Math.max(0, opts.time ?? get().time) });
+    const dur = (kind === 'effect' && effectDef(id)?.dur) || 3;
+    const clip = newEffectClip(kind, id, { start: Math.max(0, opts.time ?? get().time), duration: dur });
     get().commit((p) => placeInTrack(p, clip, opts.trackId, opts.newTrackPos ?? null));
     set({ selection: { type: 'clip', id: clip.id } });
   },

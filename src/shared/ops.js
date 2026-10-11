@@ -1,3 +1,5 @@
+import { effectDef } from './effects.js';
+
 // Operações de imagem. Cada filtro, ajuste e efeito vira uma lista de "ops".
 // A mesma lista gera o CSS da prévia (canvas) e os filtros do FFmpeg na exportação,
 // com as mesmas matrizes de cor — por isso o que se vê é o que se exporta.
@@ -88,28 +90,6 @@ export const FILTERS = [
   { id: 'neonf', name: 'Neon', ops: [{ op: 'saturate', v: 2 }, { op: 'contrast', v: 1.15 }, { op: 'hue', v: 10 }] },
 ];
 
-// ---------- Efeitos (faixa de efeitos, aplicam-se a tudo o que está abaixo) ----------
-export const EFFECTS = [
-  { id: 'blur', name: 'Desfoque', ops: [{ op: 'blur', v: 0.012 }] },
-  { id: 'bw', name: 'Preto e branco', ops: [{ op: 'grayscale', v: 1 }] },
-  { id: 'invert', name: 'Negativo', ops: [{ op: 'invert', v: 1 }] },
-  { id: 'sepia', name: 'Sépia', ops: [{ op: 'sepia', v: 1 }] },
-  { id: 'vignette', name: 'Vinheta', ops: [{ op: 'vignette', v: 0.7 }] },
-  { id: 'grain', name: 'Granulado', ops: [{ op: 'noise', v: 0.45 }] },
-  { id: 'oldfilm', name: 'Filme antigo', ops: [{ op: 'sepia', v: 0.6 }, { op: 'contrast', v: 1.1 }, { op: 'noise', v: 0.35 }, { op: 'vignette', v: 0.6 }] },
-  { id: 'vhs', name: 'VHS', ops: [{ op: 'saturate', v: 1.4 }, { op: 'contrast', v: 1.1 }, { op: 'rgbshift', v: 0.006 }, { op: 'noise', v: 0.25 }] },
-  { id: 'rgbsplit', name: 'Aberração RGB', ops: [{ op: 'rgbshift', v: 0.01 }] },
-  { id: 'pixelate', name: 'Pixelizar', ops: [{ op: 'pixelate', v: 0.03 }] },
-  { id: 'flash', name: 'Flash', ops: [{ op: 'flash', v: 0.6, f: 2 }] },
-  { id: 'cinema', name: 'Barras de cinema', ops: [{ op: 'letterbox', v: 0.12 }] },
-  { id: 'darken', name: 'Escurecer', ops: [{ op: 'brightness', v: 0.55 }] },
-  { id: 'glow', name: 'Brilho', ops: [{ op: 'brightness', v: 1.18 }, { op: 'saturate', v: 1.2 }] },
-  { id: 'saturate', name: 'Cores fortes', ops: [{ op: 'saturate', v: 2.4 }, { op: 'contrast', v: 1.15 }] },
-  { id: 'mirror', name: 'Espelhar', ops: [{ op: 'mirror' }] },
-  { id: 'dream', name: 'Sonhador', ops: [{ op: 'blur', v: 0.004 }, { op: 'brightness', v: 1.12 }, { op: 'saturate', v: 1.25 }, { op: 'vignette', v: 0.3 }] },
-  { id: 'horror', name: 'Terror', ops: [{ op: 'grayscale', v: 0.8 }, { op: 'contrast', v: 1.5 }, { op: 'brightness', v: 0.8 }, { op: 'noise', v: 0.4 }, { op: 'vignette', v: 0.9 }] },
-];
-
 export function filterOps(filter) {
   if (!filter || !filter.id || filter.id === 'none') return [];
   const def = FILTERS.find((f) => f.id === filter.id);
@@ -124,9 +104,8 @@ export function clipOps(clip) {
 // Ops de um clipe da faixa de efeitos (efeito ou filtro).
 export function effectClipOps(clip) {
   const fx = clip.effect || {};
-  const list = fx.kind === 'filter' ? FILTERS : EFFECTS;
-  const def = list.find((e) => e.id === fx.id);
-  if (!def) return [];
+  const def = fx.kind === 'filter' ? FILTERS.find((e) => e.id === fx.id) : effectDef(fx.id);
+  if (!def || !def.ops) return [];
   return canonical(scaleOps(def.ops, (fx.intensity ?? 100) / 100));
 }
 
