@@ -54,6 +54,16 @@ const r = await evaluate(`
   S().addMedia(ids[2], { target: 'audio', time: 0 });
   S().setTime(0.5); S().addText('neon');
   S().addEffect('effect', 'hearts', { time: 0 }); S().addEffect('effect', 'glitch', { time: 1 }); S().addEffect('effect', 'zoomSlow', { time: 2 }); S().addEffect('effect', 'softGlow', { time: 3 });
+  // 1.4: forma com pontos de modificação, reverso (FFmpeg empacotado) e voz fina (worklet empacotado)
+  const sh = S().addShape('heart', { time: 0 });
+  S().updateClip(sh, (c) => { c.kf = { rotation: [{ t: 0, v: 0 }, { t: 3, v: 90 }], opacity: [{ t: 0, v: 1 }, { t: 3, v: 0.3 }] }; });
+  const m1 = S().project.tracks.find((t) => t.main).clips[0].id;
+  S().toggleReverse(m1);
+  for (let i = 0; i < 200 && S().meta[ids[0]]?.rev?.video?.status !== 'ready'; i++) await sleep(150);
+  S().updateClip(m1, (c) => { c.audioFx = { id: 'chipmunk', mix: 100 }; });
+  S().setTime(0.2); S().play(); await sleep(1500); S().pause();
+  const fxKey = window.__mc.engine.pool.els.get(m1)?.fxKey || '';
+  const v14 = { reverso: S().meta[ids[0]]?.rev?.video?.status, voz_fina_worklet: fxKey.endsWith('|w') };
   S().setTime(2);
   await sleep(1200);
   const pid = S().project.id;
@@ -67,7 +77,7 @@ const r = await evaluate(`
     const w = t.words || t.segments || t;
     legendas = Array.isArray(w) ? w.slice(0, 12).map((x) => x.text).join('').trim() : JSON.stringify(t).slice(0, 200);
   } catch (e) { legendas = 'ERRO: ' + e.message; }
-  return { meta: Object.values(S().meta).map((m) => m.status), size: [S().project.width, S().project.height], res, nvenc: nv, legendas, pid, drafts: info.draftsDir };
+  return { v14, meta: Object.values(S().meta).map((m) => m.status), size: [S().project.width, S().project.height], res, nvenc: nv, legendas, pid, drafts: info.draftsDir };
 `);
 console.log(JSON.stringify(r, null, 1));
 await shot('p2_editor');
