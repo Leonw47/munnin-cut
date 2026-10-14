@@ -1,5 +1,5 @@
 // Compositor da prévia: desenha um quadro da linha do tempo num canvas.
-import { mainTrack, mediaLayerSize } from '../shared/timeline.js';
+import { mainTrack, mediaLayerSize, overlayTransitionAt } from '../shared/timeline.js';
 import { clipOps, effectClipOps, cssFilter, postOps, CSS_OPS } from '../shared/ops.js';
 import { animState } from '../shared/anim.js';
 import { drawTextBlock, layoutText } from './text.js';
@@ -7,6 +7,9 @@ import { drawTransition } from './transitions.js';
 import { effectDef, seedOf } from '../shared/effects.js';
 import { sharedSvg } from './svgFilters.js';
 import { makeCanvas } from './util.js';
+import { drawShape, shapeSize } from './shapes.js';
+import { keyPixels } from '../shared/chroma.js';
+import { resolveAt } from '../shared/keyframes.js';
 
 const DEF_BG = { type: 'color', color: '#000000', blur: 0.03 };
 
@@ -47,6 +50,8 @@ export function clipBox(project, mediaMap, clip, W, H) {
   if (clip.type === 'text') {
     const L = layoutText(clip.text, k * (tf.scale ?? 1));
     w = L.boxW; h = L.boxH;
+  } else if (clip.type === 'shape') {
+    ({ w, h } = shapeSize(clip.shape, k * (tf.scale ?? 1)));
   } else {
     const m = mediaMap[clip.mediaId];
     if (!m) return null;
@@ -196,12 +201,31 @@ export class Compositor {
     const { w, h } = mediaLayerSize(clip, media, W, H);
     if (w < 0.5 || h < 0.5) return null;
     const ops = clipOps(clip);
-    if (!ops.length) return { img: src.el, sx, sy, sw, sh, w, h };
-    const cap = Math.min(1, 2400 / Math.max(w, h));
+    const chroma = clip.chroma?.on && !this.noChroma?.has(clip.id);
+    if (!ops.length && !chroma) return { img: src.el, sx, sy, sw, sh, w, h };
+    // chroma key mexe pixel a pixel: a camada fica em até 1280 px para a prévia continuar leve
+    const cap = Math.min(1, (chroma ? 1280 : 2400) / Math.max(w, h));
     const ow = Math.max(1, Math.round(w * cap)), oh = Math.max(1, Math.round(h * cap));
     const L = this.layerCanvas(clip.id, ow, oh);
-    L.ctx.filter = cssFilter(ops.filter((o) => CSS_OPS.has(o.op)), oh, this.svg);
-    L.ctx.drawImage(src.el, sx, sy, sw, sh, 0, 0, ow, oh);
+    const css = cssFilter(ops.filter((o) => CSS_OPS.has(o.op)), oh, this.svg);
+    if (chroma) {
+      L.ctx.drawImage(src.el, sx, sy, sw, sh, 0, 0, ow, oh);
+      try {
+        const img = L.ctx.getImageData(0, 0, ow, oh);
+        keyPixels(img.data, clip.chroma);
+        L.ctx.putImageData(img, 0, 0);
+      } catch { /* canvas protegido: segue sem recorte */ }
+      if (css !== 'none') {
+        const T = this.tmp(15, ow, oh);
+        T.ctx.drawImage(L.canvas, 0, 0);
+        L.ctx.clearRect(0, 0, ow, oh);
+        L.ctx.filter = css;
+        L.ctx.drawImage(T.canvas, 0, 0);
+      }
+    } else {
+      L.ctx.filter = css;
+      L.ctx.drawImage(src.el, sx, sy, sw, sh, 0, 0, ow, oh);
+    }
     L.ctx.filter = 'none';
     const post = postOps(ops);
     if (post.length) this.applyPost(L.ctx, ow, oh, post, lt, 'layer');
@@ -236,7 +260,8 @@ export class Compositor {
     }
   }
 
-  drawMainClip(ctx, env, clip, lt, W, H) {
+  drawMainClip(ctx, env, clip0, lt, W, H) {
+    const clip = resolveAt(clip0, lt); // pontos de modificação: valores deste instante
     const media = env.mediaMap[clip.mediaId];
     const bg = clip.bg || env.project.background || DEF_BG;
     const meta = media ? env.metaMap[media.id] : null;
@@ -276,6 +301,21 @@ export class Compositor {
     const s = a.scale * (tf.scale ?? 1);
     ctx.scale(s, s);
     drawTextBlock(ctx, clip.text, k);
+    ctx.restore();
+  }
+
+  drawShapeClip(ctx, clip, lt, W, H, k) {
+    const a = animState(clip, lt);
+    const tf = clip.transform || {};
+    const alpha = (clip.opacity ?? 1) * a.alpha;
+    if (alpha <= 0.002 || a.scale <= 0.0005) return;
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    ctx.translate(W / 2 + ((tf.x || 0) + a.dx) * W, H / 2 + ((tf.y || 0) + a.dy) * H);
+    ctx.rotate(((tf.rotation || 0) * Math.PI) / 180 + (a.rot || 0));
+    const s = a.scale * (tf.scale ?? 1);
+    ctx.scale(s * (tf.flipH ? -1 : 1), s * (tf.flipV ? -1 : 1));
+    drawShape(ctx, clip.shape, k);
     ctx.restore();
   }
 
@@ -399,19 +439,47 @@ export class Compositor {
     for (let i = mi - 1; i >= 0; i--) {
       const tr = project.tracks[i];
       if (tr.hidden || tr.kind === 'audio') continue;
+      const tw = tr.kind === 'effect' ? null : overlayTransitionAt(tr, t);
       for (const c of tr.clips) {
+        if (tw && (c === tw.a || c === tw.b)) continue;
         if (t < c.start || t >= c.start + c.duration) continue;
         const lt = t - c.start;
         if (c.type === 'effect') this.applyEffectClip(c, lt, W, H);
-        else if (c.type === 'text') this.drawText(ctx, c, lt, W, H, k);
-        else if (c.type === 'video' || c.type === 'image') {
-          const media = env.mediaMap[c.mediaId];
-          const src = media ? env.source(c, media) : null;
-          if (!src) continue;
-          const L = this.mediaLayer(c, media, src, W, H, lt);
-          if (L) this.place(ctx, c, L, lt, W, H);
-        }
+        else this.drawClipLayer(ctx, env, c, lt, W, H, k);
       }
+      if (tw) this.drawLayerTransition(ctx, env, tw, t, W, H, k);
     }
+  }
+
+  drawClipLayer(ctx, env, c0, lt, W, H, k) {
+    const c = resolveAt(c0, lt); // pontos de modificação: valores deste instante
+    if (c.type === 'text') this.drawText(ctx, c, lt, W, H, k);
+    else if (c.type === 'shape') this.drawShapeClip(ctx, c, lt, W, H, k);
+    else if (c.type === 'video' || c.type === 'image') {
+      const media = env.mediaMap[c.mediaId];
+      const src = media ? env.source(c, media) : null;
+      if (!src) return;
+      const L = this.mediaLayer(c, media, src, W, H, lt);
+      if (L) this.place(ctx, c, L, lt, W, H);
+    }
+  }
+
+  // Transição entre dois clipes encostados numa faixa de cima. Como na exportação (xfade):
+  // mistura o quadro "fundo + A" com o quadro "fundo + B"; A fica parado no último quadro
+  // depois do corte, e B no primeiro antes do corte.
+  drawLayerTransition(ctx, env, tw, t, W, H, k) {
+    const base = this.tmp(16, W, H);
+    base.ctx.drawImage(this.canvas, 0, 0);
+    const A = this.tmp(17, W, H), B = this.tmp(18, W, H);
+    A.ctx.drawImage(base.canvas, 0, 0);
+    B.ctx.drawImage(base.canvas, 0, 0);
+    this.drawClipLayer(A.ctx, env, tw.a, Math.min(t - tw.a.start, tw.a.duration - 1e-4), W, H, k);
+    this.drawClipLayer(B.ctx, env, tw.b, Math.max(0, t - tw.b.start), W, H, k);
+    ctx.save();
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.globalAlpha = 1;
+    ctx.globalCompositeOperation = 'source-over';
+    drawTransition(ctx, tw.id, A.canvas, B.canvas, tw.p, W, H, this.tmp(19, W, H), (c, w, h, b) => this.pixelate(c, w, h, b), (i) => this.tmp(20 + i, W, H));
+    ctx.restore();
   }
 }

@@ -158,6 +158,55 @@ export function createMedia({ ffmpeg, ffprobe, cacheDir }) {
     return out;
   }
 
+  // Cópia invertida (de trás para frente) para os clipes com "Reverter".
+  // O filtro reverse guarda tudo na memória, então o arquivo é invertido em pedaços e
+  // os pedaços são juntados na ordem contrária. Fica em cache (mesmo arquivo = mesma cópia).
+  const reversing = new Map();
+  function reverse(file, kind, onProgress) {
+    const k = `${file}|${kind}`;
+    if (!reversing.has(k)) reversing.set(k, doReverse(file, kind, onProgress).finally(() => reversing.delete(k)));
+    return reversing.get(k);
+  }
+  async function doReverse(file, kind, onProgress) {
+    const audioOnly = kind === 'audio';
+    const key = await keyFor(file, `rev1-${kind}`);
+    const ext = audioOnly ? 'm4a' : 'mp4';
+    const out = path.join(cacheDir, `${key}_rev.${ext}`);
+    if (fs.existsSync(out)) return { path: out, duration: (await probe(out)).duration };
+    const info = await probe(file);
+    const D = info.duration || 0;
+    if (D <= 0) throw new Error('mídia sem duração');
+    const CH = audioOnly ? 120 : 6;
+    const n = Math.max(1, Math.ceil(D / CH - 1e-6));
+    const dir = path.join(cacheDir, `${key}_rev_parts`);
+    await fsp.rm(dir, { recursive: true, force: true });
+    fs.mkdirSync(dir, { recursive: true });
+    const parts = [];
+    for (let i = n - 1, j = 0; i >= 0; i--, j++) {
+      const st = i * CH, len = Math.min(CH, D - st);
+      if (len <= 0.01) continue;
+      const part = path.join(dir, `p${String(j).padStart(4, '0')}.${ext}`);
+      const args = ['-v', 'error', '-y', '-ss', st.toFixed(3), '-t', len.toFixed(3), '-i', file];
+      if (audioOnly) args.push('-vn', '-af', 'areverse', '-c:a', 'aac', '-b:a', '192k', '-ac', '2', '-ar', '48000', part);
+      else {
+        args.push('-map', '0:v:0', '-vf', 'reverse', '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '17', '-pix_fmt', 'yuv420p');
+        if (info.hasAudio) args.push('-map', '0:a:0', '-af', 'areverse', '-c:a', 'aac', '-b:a', '192k', '-ac', '2', '-ar', '48000');
+        args.push(part);
+      }
+      await enqueue(() => run(ffmpeg, args));
+      parts.push(part);
+      if (onProgress) onProgress(Math.min(0.97, (j + 1) / n));
+    }
+    const list = path.join(dir, 'lista.txt');
+    await fsp.writeFile(list, parts.map((p) => `file '${p.replace(/\\/g, '/').replace(/'/g, "'\\''")}'`).join('\n'));
+    const tmp = `${out}.part.${ext}`;
+    await enqueue(() => run(ffmpeg, ['-v', 'error', '-y', '-f', 'concat', '-safe', '0', '-i', list, '-c', 'copy', ...(audioOnly ? [] : ['-movflags', '+faststart']), tmp]));
+    await fsp.rename(tmp, out);
+    await fsp.rm(dir, { recursive: true, force: true });
+    if (onProgress) onProgress(1);
+    return { path: out, duration: (await probe(out)).duration };
+  }
+
   async function hasEncoder(name) {
     try {
       await run(ffmpeg, ['-v', 'error', '-f', 'lavfi', '-i', 'color=s=256x256:d=0.2', '-c:v', name, '-f', 'null', '-']);
@@ -165,5 +214,5 @@ export function createMedia({ ffmpeg, ffprobe, cacheDir }) {
     } catch { return false; }
   }
 
-  return { probe, thumbs, waveform, proxy, hasEncoder, run };
+  return { probe, thumbs, waveform, proxy, reverse, hasEncoder, run };
 }

@@ -11,6 +11,55 @@ export function transitionDuration(clip, next) {
   return Math.max(0, Math.min(clip.transition.duration || 0.5, clip.duration * 0.5, next.duration * 0.5));
 }
 
+// ---------- Transições entre clipes encostados nas faixas de cima (sobreposição, texto, formas) ----------
+// Só as de mistura/máscara: o quadro inteiro (fundo + clipe) é misturado, e nelas o fundo fica parado.
+export const OVERLAY_TRANSITIONS = new Set(['fade', 'dissolve', 'wipeleft', 'wiperight', 'wipeup', 'wipedown',
+  'smoothleft', 'smoothright', 'circleopen', 'circleclose', 'horzopen', 'vertopen', 'radial']);
+export const ADJ_EPS = 0.04; // folga para considerar dois clipes "encostados" (s)
+const LAYER_TYPES = new Set(['video', 'image', 'text', 'shape']);
+
+// Duração efetiva da transição entre a e b (vizinhos numa faixa de cima); 0 se não houver.
+export function overlayTransDur(a, b) {
+  if (!a?.transition?.id || !b || !OVERLAY_TRANSITIONS.has(a.transition.id)) return 0;
+  if (!LAYER_TYPES.has(a.type) || !LAYER_TYPES.has(b.type)) return 0;
+  if (Math.abs(b.start - (a.start + a.duration)) > ADJ_EPS) return 0;
+  return transitionDuration(a, b);
+}
+
+// Próximo clipe encostado na mesma faixa (para oferecer/aceitar transição).
+export function nextAdjacent(track, clip) {
+  if (!LAYER_TYPES.has(clip.type)) return null;
+  const end = clip.start + clip.duration;
+  return track.clips.find((c) => c.id !== clip.id && LAYER_TYPES.has(c.type) && Math.abs(c.start - end) <= ADJ_EPS) || null;
+}
+
+// Transição em andamento no tempo t numa faixa de cima: janela [corte − d/2, corte + d/2].
+export function overlayTransitionAt(track, t) {
+  const cs = [...track.clips].sort((a, b) => a.start - b.start);
+  for (let i = 0; i < cs.length - 1; i++) {
+    const a = cs[i], b = cs[i + 1];
+    const d = overlayTransDur(a, b);
+    if (d <= 0) continue;
+    const cut = b.start;
+    if (t >= cut - d / 2 && t < cut + d / 2) return { a, b, d, cut, id: a.transition.id, p: (t - (cut - d / 2)) / d };
+  }
+  return null;
+}
+
+// Cadeias de clipes ligados por transições (A→B→C…) numa faixa de cima, em ordem.
+export function overlayChains(track) {
+  const cs = [...track.clips].sort((a, b) => a.start - b.start);
+  const out = [];
+  let cur = null;
+  for (let i = 0; i < cs.length - 1; i++) {
+    if (overlayTransDur(cs[i], cs[i + 1]) > 0) {
+      if (!cur) { cur = [cs[i]]; out.push(cur); }
+      cur.push(cs[i + 1]);
+    } else cur = null;
+  }
+  return out;
+}
+
 // A faixa principal é magnética: clipes encostados, com sobreposição nas transições.
 export function layoutMain(track) {
   let t = 0;

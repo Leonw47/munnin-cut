@@ -1,9 +1,11 @@
 // Estado da aplicação (zustand): projeto, histórico, seleção, reprodução e operações de edição.
 import { create } from 'zustand';
 import { RATIOS, sizeFromMedia, DEFAULT_TEXT, TEXT_PRESETS, MEDIA_EXTS } from './shared/defs.js';
-import { layoutProject, mainTrack, findClip, projectDuration, uid, MIN_CLIP, maxDurationFor } from './shared/timeline.js';
+import { layoutProject, mainTrack, findClip, projectDuration, uid, MIN_CLIP, maxDurationFor, nextAdjacent, OVERLAY_TRANSITIONS } from './shared/timeline.js';
 import { mediaUrl, OK_AUDIO, makeCanvas } from './engine/util.js';
 import { effectDef } from './shared/effects.js';
+import { SHAPES, DEFAULT_SHAPE } from './engine/shapes.js';
+import { sliceKf, kfPropsFor, hasKfAt, removeKfAt, upsertKf, propAt, kfTimes } from './shared/keyframes.js';
 
 const api = window.api;
 
@@ -71,11 +73,19 @@ export function newTextClip(style = {}, extra = {}) {
   };
 }
 
+export function newShapeClip(preset = {}, extra = {}) {
+  const shape = { ...structuredClone(DEFAULT_SHAPE), ...structuredClone(preset) };
+  return { id: uid('c'), type: 'shape', start: 0, duration: 4, ...baseVisual(), shape, ...extra };
+}
+
 export function newEffectClip(kind, id, extra = {}) {
   return { id: uid('c'), type: 'effect', start: 0, duration: 3, effect: { kind, id, intensity: 100 }, ...extra };
 }
 
-export const kindFor = (clip) => (clip.type === 'text' ? 'text' : clip.type === 'effect' ? 'effect' : clip.type === 'audio' ? 'audio' : 'overlay');
+export const kindFor = (clip) => (clip.type === 'text' || clip.type === 'shape' ? 'text' : clip.type === 'effect' ? 'effect' : clip.type === 'audio' ? 'audio' : 'overlay');
+
+// Ids dos clipes selecionados (um ou vários).
+export const selIds = (sel) => (sel?.type === 'clip' ? (sel.ids?.length ? sel.ids : [sel.id]) : []);
 
 function overlaps(tr, clip) {
   return tr.clips.some((c) => c.id !== clip.id && clip.start < c.start + c.duration - 1e-6 && clip.start + clip.duration > c.start + 1e-6);
@@ -184,6 +194,9 @@ export const useStore = create((set, get) => ({
   clipboard: null,
   savedAt: 0,
   fullscreen: false,
+  previewMuted: false,
+  fxPreview: null, // { kind: 'filter' | 'effect', id } — efeito sob o mouse, mostrado sem aplicar
+  pickColor: null, // { clipId } — conta-gotas do chroma key ativo (próximo clique no reprodutor escolhe a cor)
 
   toastMsg(text, kind = 'info', ms = 3500) {
     clearTimeout(toastTimer);
@@ -222,6 +235,12 @@ export const useStore = create((set, get) => ({
   },
   validSelection(project, sel) {
     if (!sel) return null;
+    if (sel.type === 'clip' && sel.ids?.length) {
+      const ids = sel.ids.filter((id) => findClip(project, id));
+      if (!ids.length) return null;
+      if (ids.length === 1) return { type: 'clip', id: ids[0] };
+      return { type: 'clip', id: ids.includes(sel.id) ? sel.id : ids[0], ids };
+    }
     return findClip(project, sel.id) ? sel : null;
   },
   undo() {
@@ -270,8 +289,23 @@ export const useStore = create((set, get) => ({
     set({ selection: sel });
     // clicar num bloco de áudio leva o cursor ao início dele (para ouvir com o play)
     const s = get();
-    const c = sel?.type === 'clip' ? findClip(s.project, sel.id)?.clip : null;
+    const c = sel?.type === 'clip' && !sel.ids ? findClip(s.project, sel.id)?.clip : null;
     if (c && c.type === 'audio' && !s.playing && (s.time < c.start || s.time >= c.start + c.duration)) s.setTime(c.start);
+  },
+  // Seleção de vários clipes (Ctrl+clique, Ctrl+A, arrastar um retângulo na linha do tempo).
+  selectMany(ids, primary = null) {
+    const uniq = [...new Set(ids)].filter((id) => findClip(get().project, id));
+    if (!uniq.length) { set({ selection: null }); return; }
+    if (uniq.length === 1) { set({ selection: { type: 'clip', id: uniq[0] } }); return; }
+    set({ selection: { type: 'clip', id: primary && uniq.includes(primary) ? primary : uniq[0], ids: uniq } });
+  },
+  toggleSelect(id) {
+    const cur = selIds(get().selection);
+    get().selectMany(cur.includes(id) ? cur.filter((x) => x !== id) : [...cur, id], id);
+  },
+  selectAll() {
+    const ids = get().project.tracks.filter((t) => !t.locked).flatMap((t) => t.clips.map((c) => c.id));
+    get().selectMany(ids);
   },
 
   // ---------- Mídia ----------
@@ -390,6 +424,11 @@ export const useStore = create((set, get) => ({
         m.hasAudio ? api.waveform(m.path).catch(() => null) : null,
       ]);
       get().setMeta(id, { thumbs, waveform });
+      // clipes desta mídia marcados com "Reverter": prepara (ou reaproveita do cache) a cópia invertida
+      for (const kind of ['video', 'audio']) {
+        const need = get().project.tracks.some((t) => t.clips.some((c) => c.mediaId === id && c.reverse && (c.type === 'audio' ? 'audio' : 'video') === kind));
+        if (need) get().ensureReverse(id, kind);
+      }
     } catch (e) {
       const msg = String(e.message || e).replace(/^Error invoking remote method '[^']+': (Error: )?/, '');
       // o arquivo sumiu no meio da leitura → trata como ausente (com aviso), não como erro
@@ -442,6 +481,42 @@ export const useStore = create((set, get) => ({
     await get().prepareMedia(id, true);
     get().adjustClipsForMedia(id);
     get().toastMsg(`"${m.name}" foi substituída por "${name}". Efeitos e transições mantidos.`);
+  },
+  // Cópia invertida de uma mídia (para clipes com "Reverter"). kind: 'video' (com o som) ou 'audio'.
+  async ensureReverse(mediaId, kind) {
+    const m = get().project?.media.find((x) => x.id === mediaId);
+    if (!m) return null;
+    const cur = get().meta[mediaId]?.rev?.[kind];
+    if (cur?.status === 'ready') return cur;
+    if (cur?.status === 'working' && cur.promise) return cur.promise;
+    const setRev = (patch) => {
+      const rev = get().meta[mediaId]?.rev || {};
+      get().setMeta(mediaId, { rev: { ...rev, [kind]: { ...(rev[kind] || {}), ...patch } } });
+    };
+    const job = (async () => {
+      try {
+        const r = await api.reverse(m.path, kind, `rev_${kind}_${mediaId}`);
+        setRev({ status: 'ready', path: r.path, duration: r.duration, promise: null, progress: 1 });
+        return get().meta[mediaId].rev[kind];
+      } catch (e) {
+        setRev({ status: 'error', promise: null });
+        get().toastMsg(`Não foi possível inverter "${m.name}": ${String(e.message || e).replace(/^Error invoking remote method '[^']+': (Error: )?/, '')}`, 'err', 6000);
+        return null;
+      }
+    })();
+    setRev({ status: 'working', progress: 0, promise: job });
+    return job;
+  },
+  toggleReverse(clipId) {
+    const f = findClip(get().project, clipId);
+    if (!f || (f.clip.type !== 'video' && f.clip.type !== 'audio')) return;
+    const on = !f.clip.reverse;
+    get().updateClip(clipId, (c) => { c.reverse = on; });
+    if (!on) return;
+    const kind = f.clip.type === 'audio' ? 'audio' : 'video';
+    const ready = get().meta[f.clip.mediaId]?.rev?.[kind]?.status === 'ready';
+    if (!ready) get().toastMsg('Preparando o clipe de trás para frente… a prévia atualiza sozinha quando terminar.', 'info', 5000);
+    get().ensureReverse(f.clip.mediaId, kind).then((r) => { if (r && !ready) get().toastMsg('Clipe invertido pronto.'); });
   },
   openTrim(id) {
     const m = get().project?.media.find((x) => x.id === id);
@@ -511,6 +586,17 @@ export const useStore = create((set, get) => ({
     get().commit((p) => placeInTrack(p, clip, opts.trackId, opts.newTrackPos ?? null));
     set({ selection: { type: 'clip', id: clip.id } });
   },
+  addShape(presetId = 'rect', opts = {}) {
+    const preset = SHAPES.find((x) => x.id === presetId) || SHAPES[0];
+    const p = get().project;
+    // tamanho proporcional ao projeto (os modelos foram pensados para 1080 no lado menor)
+    const k = Math.min(p.width, p.height) / 1080;
+    const sh = { ...preset.shape, w: Math.round(preset.shape.w * k), h: Math.max(4, Math.round(preset.shape.h * k)) };
+    const clip = newShapeClip(sh, { start: Math.max(0, opts.time ?? get().time) });
+    get().commit((d) => placeInTrack(d, clip, opts.trackId, opts.newTrackPos ?? null));
+    set({ selection: { type: 'clip', id: clip.id } });
+    return clip.id;
+  },
   addEffect(kind, id, opts = {}) {
     const dur = (kind === 'effect' && effectDef(id)?.dur) || 3;
     const clip = newEffectClip(kind, id, { start: Math.max(0, opts.time ?? get().time), duration: dur });
@@ -537,15 +623,40 @@ export const useStore = create((set, get) => ({
     return n;
   },
   applyFilter(clipId, filterId) {
-    get().updateClip(clipId, (c) => { c.filter = { id: filterId, intensity: c.filter?.intensity ?? 100 }; });
+    // com vários clipes selecionados, o filtro vale para todos os visuais da seleção
+    const ids = selIds(get().selection);
+    const targets = ids.length > 1 && ids.includes(clipId) ? ids : [clipId];
+    get().commit((p) => {
+      let any = false;
+      for (const id of targets) {
+        const f = findClip(p, id);
+        if (!f || (f.clip.type !== 'video' && f.clip.type !== 'image')) continue;
+        f.clip.filter = { id: filterId, intensity: f.clip.filter?.intensity ?? 100 };
+        any = true;
+      }
+      return any;
+    });
   },
   setTransition(clipId, transId, duration) {
+    let ok = false;
     get().commit((p) => {
       const f = findClip(p, clipId);
-      if (!f || !f.track.main || f.index >= f.track.clips.length - 1) return false;
+      if (!f) return false;
+      if (f.track.main) {
+        if (f.index >= f.track.clips.length - 1) return false;
+      } else {
+        // faixas de cima: precisa de um clipe encostado depois, e só transições de mistura
+        if (!nextAdjacent(f.track, f.clip)) return false;
+        if (transId && transId !== 'none' && !OVERLAY_TRANSITIONS.has(transId)) {
+          get().toastMsg('Nas faixas de cima entram as transições de mistura (dissolver, limpar, círculo, relógio, abrir). Usei "Dissolver".', 'info', 5000);
+          transId = 'fade';
+        }
+      }
       f.clip.transition = transId && transId !== 'none' ? { id: transId, duration: duration ?? f.clip.transition?.duration ?? 0.6 } : null;
+      ok = true;
     });
-    if (transId && transId !== 'none') set({ selection: { type: 'transition', id: clipId } });
+    if (ok && transId && transId !== 'none') set({ selection: { type: 'transition', id: clipId } });
+    return ok;
   },
   applyTransitionAll(transId, duration) {
     get().commit((p) => {
@@ -595,6 +706,10 @@ export const useStore = create((set, get) => ({
         r.start = t;
         r.duration = c.duration - dl;
         r.in = (c.in || 0) + dl * (c.speed || 1);
+        // pontos de modificação: cada parte fica com o seu trecho (valores no corte preservados)
+        if (c.kf) { r.kf = sliceKf(c.kf, dl, c.duration); c.kf = sliceKf(c.kf, 0, dl); }
+        if (!r.kf) delete r.kf;
+        if (!c.kf) delete c.kf;
         if (r.animIn) r.animIn = { id: 'none', duration: 0.5 };
         r.fadeIn = 0;
         c.duration = dl;
@@ -616,50 +731,73 @@ export const useStore = create((set, get) => ({
     if (sel.type === 'transition') {
       get().commit((p) => { const f = findClip(p, sel.id); if (f) f.clip.transition = null; });
     } else {
-      get().commit((p) => { const f = findClip(p, sel.id); if (!f) return false; f.track.clips.splice(f.index, 1); });
+      const ids = new Set(selIds(sel));
+      get().commit((p) => {
+        let any = false;
+        for (const t of p.tracks) {
+          const n = t.clips.length;
+          t.clips = t.clips.filter((c) => !ids.has(c.id));
+          if (t.clips.length !== n) any = true;
+        }
+        return any;
+      });
     }
     set({ selection: null });
   },
 
+  // Duplica a seleção. Vários clipes: as cópias vêm logo depois do grupo, na mesma ordem.
   duplicateSelection() {
-    const sel = get().selection;
-    if (sel?.type !== 'clip') return;
-    let nid = null;
+    const ids = selIds(get().selection);
+    if (!ids.length) return;
+    const found = ids.map((id) => findClip(get().project, id)).filter(Boolean);
+    const free = found.filter((f) => !f.track.main);
+    const g0 = Math.min(...free.map((f) => f.clip.start)), g1 = Math.max(...free.map((f) => f.clip.start + f.clip.duration));
+    const span = free.length > 1 ? g1 - g0 : 0;
+    const nids = [];
     get().commit((p) => {
-      const f = findClip(p, sel.id);
-      if (!f) return false;
-      const c = structuredClone(f.clip);
-      c.id = uid('c');
-      nid = c.id;
-      if (f.track.main) f.track.clips.splice(f.index + 1, 0, c);
-      else { c.start = f.clip.start + f.clip.duration; placeInTrack(p, c, f.track.id); }
+      for (const id of ids) {
+        const f = findClip(p, id);
+        if (!f) continue;
+        const c = structuredClone(f.clip);
+        c.id = uid('c');
+        nids.push(c.id);
+        if (f.track.main) f.track.clips.splice(f.index + 1, 0, c);
+        else { c.start = f.clip.start + (span || f.clip.duration); placeInTrack(p, c, f.track.id); }
+      }
+      return nids.length > 0;
     });
-    if (nid) set({ selection: { type: 'clip', id: nid } });
+    if (nids.length) get().selectMany(nids);
   },
 
   copySelection() {
-    const sel = get().selection;
-    if (sel?.type !== 'clip') return;
-    const f = findClip(get().project, sel.id);
-    if (f) { set({ clipboard: { clip: structuredClone(f.clip), main: !!f.track.main } }); get().toastMsg('Clipe copiado'); }
+    const ids = selIds(get().selection);
+    const found = ids.map((id) => findClip(get().project, id)).filter(Boolean);
+    if (!found.length) return;
+    const free = found.filter((f) => !f.track.main);
+    const base = free.length ? Math.min(...free.map((f) => f.clip.start)) : 0;
+    const items = found.map((f) => ({ clip: structuredClone(f.clip), main: !!f.track.main, offset: f.track.main ? 0 : f.clip.start - base }));
+    set({ clipboard: { items } });
+    get().toastMsg(items.length > 1 ? `${items.length} clipes copiados` : 'Clipe copiado');
   },
   paste() {
     const cb = get().clipboard;
     if (!cb) return;
+    const items = cb.items || [{ clip: cb.clip, main: cb.main, offset: 0 }];
     const t = get().time;
-    let nid = null;
+    const nids = [];
     get().commit((p) => {
-      const c = structuredClone(cb.clip);
-      c.id = uid('c');
-      nid = c.id;
-      if (cb.main) {
-        const main = mainTrack(p);
-        let idx = main.clips.findIndex((x) => t < x.start + x.duration);
-        idx = idx < 0 ? main.clips.length : idx + 1;
-        main.clips.splice(idx, 0, c);
-      } else { c.start = t; placeInTrack(p, c); }
+      const main = mainTrack(p);
+      let idx = main.clips.findIndex((x) => t < x.start + x.duration);
+      idx = idx < 0 ? main.clips.length : idx + 1;
+      for (const it of items) {
+        const c = structuredClone(it.clip);
+        c.id = uid('c');
+        nids.push(c.id);
+        if (it.main) main.clips.splice(idx++, 0, c);
+        else { c.start = t + (it.offset || 0); placeInTrack(p, c); }
+      }
     });
-    set({ selection: { type: 'clip', id: nid } });
+    get().selectMany(nids);
   },
 
   extractAudio(clipId) {
@@ -672,6 +810,8 @@ export const useStore = create((set, get) => ({
       const c = f.clip;
       const a = newMediaClip({ ...m, type: 'audio' }, {
         type: 'audio', start: c.start, in: c.in, duration: c.duration, speed: c.speed, volume: c.volume ?? 1, fadeIn: c.fadeIn, fadeOut: c.fadeOut,
+        ...(c.audioFx ? { audioFx: structuredClone(c.audioFx) } : {}),
+        ...(c.kf?.volume ? { kf: { volume: structuredClone(c.kf.volume) } } : {}),
       });
       nid = a.id;
       c.muted = true;
@@ -681,14 +821,68 @@ export const useStore = create((set, get) => ({
     else get().toastMsg('Este clipe não tem áudio.');
   },
 
+  // ◆ Ponto de modificação: grava (ou tira) os valores atuais do clipe selecionado no cursor.
+  toggleKeyframes() {
+    const s = get();
+    const sel = s.selection;
+    if (sel?.type !== 'clip' || sel.ids?.length > 1) { s.toastMsg('Selecione um clipe para marcar um ponto de modificação.'); return; }
+    const f = findClip(s.project, sel.id);
+    if (!f) return;
+    const c = f.clip;
+    const lt = s.time - c.start;
+    if (lt < -1e-3 || lt > c.duration + 1e-3) { s.toastMsg('Coloque a agulha sobre o clipe selecionado para marcar o ponto.'); return; }
+    const media = s.project.media.find((m) => m.id === c.mediaId);
+    const props = kfPropsFor(c, media);
+    if (!props.length) { s.toastMsg('Este tipo de clipe não tem pontos de modificação.'); return; }
+    const t = Math.max(0, Math.min(c.duration, lt));
+    const allAt = props.every((p) => hasKfAt(c, p, t));
+    s.updateClip(c.id, (cl) => {
+      for (const p of props) {
+        if (allAt) removeKfAt(cl, p, t);
+        else upsertKf(cl, p, t, propAt(cl, p, t));
+      }
+    });
+    s.toastMsg(allAt ? 'Ponto de modificação removido.'
+      : 'Ponto marcado ◆. Agora leve a agulha a outro momento e mude posição, tamanho, luz, cor ou volume: o app cria outro ponto e faz a passagem suave entre eles.', 'info', 6500);
+  },
+  jumpKeyframe(dir) {
+    const s = get();
+    const c = s.selection?.type === 'clip' ? findClip(s.project, s.selection.id)?.clip : null;
+    if (!c?.kf) return;
+    const lt = s.time - c.start;
+    const ts = kfTimes(c);
+    const t = dir > 0 ? ts.find((x) => x > lt + 1e-3) : [...ts].reverse().find((x) => x < lt - 1e-3);
+    if (t !== undefined) { s.pause(); s.setTime(c.start + t); }
+  },
+
+  // Move vários clipes no tempo (mesmo deslocamento); clipes da faixa principal ficam onde estão.
+  moveGroup(ids, dt) {
+    get().commit((p) => {
+      const moving = [];
+      for (const id of ids) {
+        const f = findClip(p, id);
+        if (f && !f.track.main) moving.push({ clip: f.clip, trackId: f.track.id });
+      }
+      if (!moving.length) return false;
+      const d = Math.max(dt, -Math.min(...moving.map((m) => m.clip.start)));
+      const ms = new Set(moving.map((m) => m.clip.id));
+      for (const t of p.tracks) t.clips = t.clips.filter((c) => !ms.has(c.id));
+      for (const m of moving.sort((a, b) => a.clip.start - b.clip.start)) {
+        m.clip.start += d;
+        placeInTrack(p, m.clip, m.trackId);
+      }
+    });
+  },
+
   // Mover/aparar clipes durante um arraste (sem histórico; checkpoint no início).
-  setClipTiming(id, { start, in: inPoint, duration }) {
+  setClipTiming(id, { start, in: inPoint, duration, kf }) {
     get().commit((p) => {
       const f = findClip(p, id);
       if (!f) return false;
       if (start !== undefined) f.clip.start = Math.max(0, start);
       if (inPoint !== undefined) f.clip.in = Math.max(0, inPoint);
       if (duration !== undefined) f.clip.duration = duration;
+      if (kf !== undefined) { if (kf) f.clip.kf = kf; else delete f.clip.kf; }
       clampClip(f.clip, p.media.find((m) => m.id === f.clip.mediaId));
     }, { silent: true, keepTracks: true });
   },

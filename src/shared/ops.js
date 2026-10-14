@@ -193,8 +193,18 @@ export function ffFilters(ops, { w, h, enable = '', t0 = 0, alpha = false } = {}
   let mat = null;
   const flush = () => {
     if (!mat) return;
-    const m = mat.map(n4);
+    // o colorchannelmixer só aceita coeficientes entre −2 e 2: com ajustes fortes combinados,
+    // a matriz é dividida por s e o fator s volta num segundo passo (mesmo resultado, já que
+    // os dois passos limitam a 0–255 do mesmo jeito que a conta única)
+    const big = Math.max(...mat.map(Math.abs));
+    let s = big > 1.99 ? big / 1.99 : 1;
+    const m = mat.map((v) => n4(v / s));
     out.push(`colorchannelmixer=rr=${m[0]}:rg=${m[1]}:rb=${m[2]}:gr=${m[3]}:gg=${m[4]}:gb=${m[5]}:br=${m[6]}:bg=${m[7]}:bb=${m[8]}${en}`);
+    while (s > 1.0001) {
+      const k = Math.min(s, 1.99);
+      out.push(`colorchannelmixer=rr=${n4(k)}:gg=${n4(k)}:bb=${n4(k)}${en}`);
+      s /= k;
+    }
     mat = null;
   };
   for (const o of ops) {

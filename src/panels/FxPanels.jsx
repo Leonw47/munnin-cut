@@ -30,6 +30,25 @@ export function FxSample({ ops }) {
   );
 }
 
+// Passar o mouse num filtro/efeito mostra o resultado no reprodutor, sem aplicar.
+let hoverTimer = null;
+export function clearFxPreview() {
+  clearTimeout(hoverTimer);
+  if (useStore.getState().fxPreview) useStore.setState({ fxPreview: null });
+}
+export function fxHover(kind, id) {
+  return {
+    onMouseEnter: () => {
+      clearTimeout(hoverTimer);
+      hoverTimer = setTimeout(() => useStore.setState({ fxPreview: { kind, id, since: performance.now() } }), 140);
+    },
+    onMouseLeave: clearFxPreview,
+  };
+}
+export function useClearFxPreviewOnUnmount() {
+  useEffect(() => clearFxPreview, []);
+}
+
 function selectedClip() {
   const s = useStore.getState();
   if (s.selection?.type !== 'clip') return null;
@@ -95,6 +114,7 @@ export function EffectsPanel() {
   const sel = useStore((s) => (s.selection?.type === 'clip' ? findClip(s.project, s.selection.id)?.clip : null));
   const [cat, setCat] = useState(() => localStorage.getItem('mc.fxcat') || 'all');
   useEffect(() => { localStorage.setItem('mc.fxcat', cat); }, [cat]);
+  useClearFxPreviewOnUnmount();
   const activeId = sel?.type === 'effect' && sel.effect.kind === 'effect' ? sel.effect.id : null;
   const pick = (id) => {
     const s = useStore.getState();
@@ -110,12 +130,13 @@ export function EffectsPanel() {
           <button key={c.id} className={`btn small ${cat === c.id ? 'primary' : ''}`} onClick={() => setCat(c.id)}>{c.name}</button>
         ))}
       </div>
-      <div className="hint" style={{ marginBottom: 10 }}>Passe o mouse para ver a animação. O efeito entra numa faixa própria no cursor e vale para tudo o que está abaixo; estique o clipe para durar mais.</div>
+      <div className="hint" style={{ marginBottom: 10 }}>Passe o mouse para ver o efeito no reprodutor, sem aplicar. Clique para aplicar: ele entra numa faixa própria no cursor e vale para tudo o que está abaixo; estique o clipe para durar mais.</div>
       <div className="grid small">
         {list.map((e) => (
           <div key={e.id} className={`fx-card ${activeId === e.id ? 'active' : ''}`} title={e.name}
-            draggable onDragStart={(ev) => startDrag(ev, { kind: 'effect', id: e.id }, e.name)} onDragEnd={endDrag}
-            onClick={() => pick(e.id)}>
+            draggable onDragStart={(ev) => { clearFxPreview(); startDrag(ev, { kind: 'effect', id: e.id }, e.name); }} onDragEnd={endDrag}
+            {...fxHover('effect', e.id)}
+            onClick={() => { clearFxPreview(); pick(e.id); }}>
             <div className="sw"><EffectThumb id={e.id} /><span className="plus"><Plus size={13} /></span></div>
             <div className="label">{e.name}</div>
           </div>
@@ -129,6 +150,7 @@ export function FiltersPanel() {
   const sel = useStore((s) => (s.selection?.type === 'clip' ? findClip(s.project, s.selection.id)?.clip : null));
   const visual = sel && (sel.type === 'video' || sel.type === 'image');
   const activeId = visual ? sel.filter?.id || 'none' : sel?.type === 'effect' && sel.effect.kind === 'filter' ? sel.effect.id : null;
+  useClearFxPreviewOnUnmount();
   const pick = (id) => {
     const s = useStore.getState();
     const c = selectedClip();
@@ -139,13 +161,14 @@ export function FiltersPanel() {
   return (
     <div>
       <div className="hint" style={{ marginBottom: 10 }}>
-        {visual ? <>Aplicando no clipe selecionado. Ajuste a intensidade no painel à direita.</> : <>Selecione um clipe para aplicar só nele, ou clique para criar um filtro na linha do tempo (vale para tudo abaixo).</>}
+        {visual ? <>Passe o mouse para ver no reprodutor; clique para aplicar no clipe selecionado. Ajuste a intensidade no painel à direita.</> : <>Passe o mouse para ver no reprodutor. Selecione um clipe para aplicar só nele, ou clique para criar um filtro na linha do tempo (vale para tudo abaixo).</>}
       </div>
       <div className="grid small">
         {FILTERS.map((f) => (
           <div key={f.id} className={`fx-card ${activeId === f.id ? 'active' : ''}`} title={f.name}
-            draggable={f.id !== 'none'} onDragStart={(ev) => startDrag(ev, { kind: 'filter', id: f.id }, f.name)} onDragEnd={endDrag}
-            onClick={() => pick(f.id)}>
+            draggable={f.id !== 'none'} onDragStart={(ev) => { clearFxPreview(); startDrag(ev, { kind: 'filter', id: f.id }, f.name); }} onDragEnd={endDrag}
+            {...fxHover('filter', f.id)}
+            onClick={() => { clearFxPreview(); pick(f.id); }}>
             <div className="sw"><FxSample ops={f.ops} /></div>
             <div className="label">{f.name}</div>
           </div>

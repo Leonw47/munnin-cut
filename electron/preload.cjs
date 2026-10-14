@@ -24,6 +24,7 @@ contextBridge.exposeInMainWorld('api', {
   thumbs: (p, info) => ipcRenderer.invoke('media:thumbs', p, info),
   waveform: (p) => ipcRenderer.invoke('media:waveform', p),
   proxy: (p, kind, jobId) => ipcRenderer.invoke('media:proxy', p, kind, jobId),
+  reverse: (p, kind, jobId) => ipcRenderer.invoke('media:reverse', p, kind, jobId),
   onProxyProgress: on('media:proxyProgress'),
 
   writeFile: (scope, name, bytes) => ipcRenderer.invoke('fs:write', scope, name, bytes),
@@ -60,4 +61,5 @@ contextBridge.exposeInMainWorld('api', {
   testCapture: (name) => ipcRenderer.invoke('test:capture', name),
   testLog: (msg) => ipcRenderer.invoke('test:log', msg),
   testFs: (op, a, b) => ipcRenderer.invoke('test:fs', op, a, b),
+  testGesture: (code) => ipcRenderer.invoke('test:gesture', code),
 });

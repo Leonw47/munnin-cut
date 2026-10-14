@@ -1,13 +1,18 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { FlipHorizontal2, FlipVertical2, RotateCcw, AlignLeft, AlignCenter, AlignRight, Italic, CaseUpper, AudioLines, Trash2, Link } from 'lucide-react';
+import { FlipHorizontal2, FlipVertical2, RotateCcw, AlignLeft, AlignCenter, AlignRight, Italic, CaseUpper, AudioLines, Trash2, Link, Pipette } from 'lucide-react';
+import { DEFAULT_CHROMA } from '../shared/chroma.js';
+import { AUDIO_FX, DEFAULT_AUDIO_FX } from '../shared/audiofx.js';
+import { hasKf, hasKfAt, propAt, upsertKf, removeKfAt, setPropAt, scaleKf } from '../shared/keyframes.js';
 import { useStore } from '../store.js';
-import { findClip, fmtTime, projectDuration, mainTrack, transitionDuration } from '../shared/timeline.js';
+import { findClip, fmtTime, projectDuration, mainTrack, transitionDuration, nextAdjacent, overlayTransDur, OVERLAY_TRANSITIONS } from '../shared/timeline.js';
 import { FONTS, RATIOS, FPS_LIST, TEXT_PRESETS, TRANSITIONS, ANIMS_IN, ANIMS_OUT, DEFAULT_TEXT, sizeFromMedia } from '../shared/defs.js';
 import { ADJUST_FIELDS, FILTERS } from '../shared/ops.js';
 import { EFFECTS, FX_CATS } from '../shared/effects.js';
 import { Slider, Field, Toggle, Seg, ColorInput, editClip, editProject } from './ui.jsx';
-import { FxSample, EffectThumb } from '../panels/FxPanels.jsx';
+import { FxSample, EffectThumb, fxHover, clearFxPreview, useClearFxPreviewOnUnmount } from '../panels/FxPanels.jsx';
 import { presetCss } from '../panels/TextPanel.jsx';
+import { ShapeThumb } from '../panels/ShapesPanel.jsx';
+import { SHAPE_KINDS } from '../engine/shapes.js';
 
 function Tabs({ tabs, value, onChange }) {
   return (
@@ -90,18 +95,22 @@ function TransitionPanel({ clipId }) {
   const found = findClip(project, clipId);
   if (!found || !found.clip.transition) return <div className="empty-insp">Transição removida.</div>;
   const { clip, track, index } = found;
-  const next = track.clips[index + 1];
+  const isMain = !!track.main;
+  const next = isMain ? track.clips[index + 1] : nextAdjacent(track, clip);
   const tr = clip.transition;
   const maxD = Math.max(0.1, Math.min(clip.duration, next?.duration || clip.duration) * 0.5);
   const s = useStore.getState;
+  const list = isMain ? TRANSITIONS : TRANSITIONS.filter((t) => OVERLAY_TRANSITIONS.has(t.id));
   return (
     <>
       <div className="insp-tabs"><button className="insp-tab active">Transição</button></div>
       <div className="insp-body">
         <Section title="Tipo">
           <div className="anim-grid">
-            {TRANSITIONS.map((t) => <button key={t.id} className={tr.id === t.id ? 'on' : ''} onClick={() => s().setTransition(clipId, t.id, tr.duration)}>{t.name}</button>)}
+            {list.map((t) => <button key={t.id} className={tr.id === t.id ? 'on' : ''} onClick={() => s().setTransition(clipId, t.id, tr.duration)}>{t.name}</button>)}
           </div>
+          {!isMain && <div className="hint" style={{ marginTop: 8 }}>Transição entre clipes de uma faixa de cima: durante a mistura, o primeiro fica parado no último quadro e o segundo no primeiro.</div>}
+          {!isMain && next && overlayTransDur(clip, next) === 0 && <div className="err-box" style={{ marginTop: 8, fontFamily: 'inherit' }}>Os clipes não estão mais encostados: a transição só volta a valer quando um começar logo depois do outro.</div>}
         </Section>
         <Section title="Duração">
           <Slider value={Math.min(tr.duration, maxD)} min={0.1} max={Number(maxD.toFixed(2))} step={0.05}
@@ -109,12 +118,50 @@ function TransitionPanel({ clipId }) {
           <div className="hint">Efetiva: {transitionDuration(clip, next).toFixed(2)} s (no máximo metade do clipe mais curto).</div>
         </Section>
         <div style={{ display: 'flex', gap: 8 }}>
-          <button className="btn" onClick={() => { s().applyTransitionAll(tr.id, tr.duration); s().toastMsg('Transição aplicada em todas as junções'); }}>Aplicar a todas</button>
+          {isMain && <button className="btn" onClick={() => { s().applyTransitionAll(tr.id, tr.duration); s().toastMsg('Transição aplicada em todas as junções'); }}>Aplicar a todas</button>}
           <button className="btn danger" onClick={() => s().setTransition(clipId, null)}><Trash2 size={14} /> Remover</button>
         </div>
       </div>
     </>
   );
+}
+
+// ---------- Controle com ponto de modificação (◆) ----------
+// Sem pontos, o controle muda o valor fixo do clipe. Com pontos, mexer no controle cria/atualiza
+// o ponto no instante da agulha — e entre os pontos a mudança é suave.
+function KfSlider({ clip, prop, label, min, max, step = 1, toUi = (v) => v, fromUi = (v) => v }) {
+  const time = useStore((s) => s.time);
+  const lt = time - clip.start;
+  const inside = lt >= -1e-3 && lt <= clip.duration + 1e-3;
+  const tl = Math.max(0, Math.min(clip.duration, lt));
+  const on = hasKf(clip, prop);
+  const at = on && hasKfAt(clip, prop, tl);
+  const v = propAt(clip, prop, tl);
+  const toggle = () => {
+    if (!inside) { useStore.getState().toastMsg('Coloque a agulha sobre o clipe para marcar o ponto.'); return; }
+    useStore.getState().updateClip(clip.id, (c) => {
+      if (hasKfAt(c, prop, tl)) removeKfAt(c, prop, tl);
+      else upsertKf(c, prop, tl, propAt(c, prop, tl));
+    });
+  };
+  return (
+    <div className="field">
+      <label>
+        {label}
+        <button className={`kf-btn ${at ? 'on' : on ? 'has' : ''}`} onClick={toggle}
+          title={at ? 'Tirar o ponto de modificação deste momento' : on ? 'Marcar um ponto neste momento (este valor já muda ao longo do clipe)' : 'Marcar ponto de modificação neste momento'}>◆</button>
+      </label>
+      <div><Slider value={toUi(v)} min={min} max={max} step={step} onChange={(x) => editClip(clip.id, (c) => setPropAt(c, prop, fromUi(x), tl))} /></div>
+    </div>
+  );
+}
+
+const pct = { toUi: (v) => Math.round(v * 1000) / 10, fromUi: (x) => x / 100 };
+
+function clearKf(c, props) {
+  if (!c.kf) return;
+  for (const p of props) delete c.kf[p];
+  if (!Object.keys(c.kf).length) delete c.kf;
 }
 
 // ---------- Abas de clipe ----------
@@ -127,7 +174,7 @@ function BasicTab({ clip, isMain }) {
   return (
     <>
       <Section title="Transformar" right={
-        <button className="btn small ghost" title="Redefinir" onClick={() => useStore.getState().updateClip(id, (c) => { c.transform = { x: 0, y: 0, scale: 1, rotation: 0, flipH: false, flipV: false }; c.opacity = 1; })}><RotateCcw size={13} /> Redefinir</button>
+        <button className="btn small ghost" title="Redefinir" onClick={() => useStore.getState().updateClip(id, (c) => { c.transform = { x: 0, y: 0, scale: 1, rotation: 0, flipH: false, flipV: false }; c.opacity = 1; clearKf(c, ['x', 'y', 'scale', 'rotation', 'opacity']); })}><RotateCcw size={13} /> Redefinir</button>
       }>
         {isMedia && (
           <Field label="Encaixe">
@@ -135,12 +182,13 @@ function BasicTab({ clip, isMain }) {
               options={[{ value: 'contain', label: 'Ajustar' }, { value: 'cover', label: 'Preencher' }]} />
           </Field>
         )}
-        <Field label="Escala"><Slider value={Math.round((tf.scale ?? 1) * 100)} min={1} max={500} onChange={(v) => editClip(id, (c) => { c.transform.scale = v / 100; })} /></Field>
-        <Field label="Posição X"><Slider value={Math.round((tf.x || 0) * 1000) / 10} min={-100} max={100} step={0.1} onChange={(v) => editClip(id, (c) => { c.transform.x = v / 100; })} /></Field>
-        <Field label="Posição Y"><Slider value={Math.round((tf.y || 0) * 1000) / 10} min={-100} max={100} step={0.1} onChange={(v) => editClip(id, (c) => { c.transform.y = v / 100; })} /></Field>
-        <Field label="Rotação"><Slider value={Math.round(tf.rotation || 0)} min={-180} max={180} onChange={(v) => editClip(id, (c) => { c.transform.rotation = v; })} /></Field>
-        <Field label="Opacidade"><Slider value={Math.round((clip.opacity ?? 1) * 100)} min={0} max={100} onChange={(v) => editClip(id, (c) => { c.opacity = v / 100; })} /></Field>
-        {isMedia && (
+        <KfSlider clip={clip} prop="scale" label="Escala" min={1} max={500} toUi={(v) => Math.round(v * 100)} fromUi={(x) => x / 100} />
+        <KfSlider clip={clip} prop="x" label="Posição X" min={-100} max={100} step={0.1} {...pct} />
+        <KfSlider clip={clip} prop="y" label="Posição Y" min={-100} max={100} step={0.1} {...pct} />
+        <KfSlider clip={clip} prop="rotation" label="Rotação" min={-180} max={180} toUi={(v) => Math.round(v)} />
+        <KfSlider clip={clip} prop="opacity" label="Opacidade" min={0} max={100} toUi={(v) => Math.round(v * 100)} fromUi={(x) => x / 100} />
+        <div className="hint" style={{ marginBottom: 8 }}>◆ marca um ponto de modificação no momento da agulha (ou use a tecla K). Com dois pontos ou mais, o valor muda suavemente entre eles.</div>
+        {(isMedia || clip.type === 'shape') && (
           <Field label="Espelhar">
             <div style={{ display: 'flex', gap: 6 }}>
               <button className={`btn small ${tf.flipH ? 'primary' : ''}`} onClick={() => useStore.getState().updateClip(id, (c) => { c.transform.flipH = !c.transform.flipH; })}><FlipHorizontal2 size={14} /> Horizontal</button>
@@ -156,6 +204,7 @@ function BasicTab({ clip, isMain }) {
           ))}
         </Section>
       )}
+      {isMedia && <ChromaSection clip={clip} />}
       {isMedia && isMain && (
         <Section title="Fundo">
           <Field label="Tipo">
@@ -169,6 +218,36 @@ function BasicTab({ clip, isMain }) {
         </Section>
       )}
     </>
+  );
+}
+
+// Chroma key: remove o fundo verde/azul (ou de outra cor) do vídeo ou da foto.
+function ChromaSection({ clip }) {
+  const id = clip.id;
+  const ch = { ...DEFAULT_CHROMA, ...(clip.chroma || {}) };
+  const picking = useStore((s) => s.pickColor?.clipId === id);
+  const set = (fn) => editClip(id, (c) => { c.chroma = { ...DEFAULT_CHROMA, ...(c.chroma || {}) }; fn(c.chroma); });
+  return (
+    <Section title="Remover fundo (chroma key)" right={<Toggle on={ch.on} onChange={(v) => useStore.getState().updateClip(id, (c) => { c.chroma = { ...DEFAULT_CHROMA, ...(c.chroma || {}), on: v }; })} />}>
+      {!ch.on && <div className="hint">Para vídeos gravados com fundo verde ou azul: a cor do fundo fica transparente e aparece o que estiver embaixo.</div>}
+      {ch.on && <>
+        <Field label="Cor do fundo">
+          <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+            <ColorInput value={ch.color} swatches={false} onChange={(v) => set((c) => { c.color = v; })} />
+            <button className={`btn small ${picking ? 'primary' : ''}`} title="Clique e depois clique no fundo do vídeo, no reprodutor"
+              onClick={() => useStore.setState({ pickColor: picking ? null : { clipId: id } })}><Pipette size={13} /> {picking ? 'Clique no vídeo…' : 'Escolher no vídeo'}</button>
+          </div>
+        </Field>
+        <div style={{ display: 'flex', gap: 6, marginBottom: 8 }}>
+          <button className="btn small" onClick={() => set((c) => { c.color = '#00d639'; })}>Verde</button>
+          <button className="btn small" onClick={() => set((c) => { c.color = '#1f5bff'; })}>Azul</button>
+        </div>
+        <Field label="Intensidade"><Slider value={ch.similarity} min={0} max={100} onChange={(v) => set((c) => { c.similarity = v; })} /></Field>
+        <Field label="Bordas suaves"><Slider value={ch.smooth} min={0} max={100} onChange={(v) => set((c) => { c.smooth = v; })} /></Field>
+        <Field label="Tirar reflexo" title="Tira o tom verde/azul que a luz do fundo deixa na pessoa"><Toggle on={!!ch.spill} onChange={(v) => set((c) => { c.spill = v; })} /></Field>
+        <div className="hint">Aumente a intensidade até o fundo sumir todo; se a pessoa começar a ficar transparente, diminua. Coloque um vídeo ou foto na faixa de baixo para aparecer no lugar do fundo.</div>
+      </>}
+    </Section>
   );
 }
 
@@ -191,14 +270,41 @@ function AudioTab({ clip }) {
         </Section>
       )}
       <Section title="Som">
-        <Field label="Volume"><Slider value={Math.round((clip.volume ?? 1) * 100)} min={0} max={200} onChange={(v) => editClip(id, (c) => { c.volume = v / 100; })} /></Field>
+        <KfSlider clip={clip} prop="volume" label="Volume" min={0} max={200} toUi={(v) => Math.round(v * 100)} fromUi={(x) => x / 100} />
         <Field label="Entrada suave"><Slider value={clip.fadeIn || 0} min={0} max={Math.min(10, Number(clip.duration.toFixed(1)))} step={0.1} onChange={(v) => editClip(id, (c) => { c.fadeIn = v; })} /></Field>
         <Field label="Saída suave"><Slider value={clip.fadeOut || 0} min={0} max={Math.min(10, Number(clip.duration.toFixed(1)))} step={0.1} onChange={(v) => editClip(id, (c) => { c.fadeOut = v; })} /></Field>
         <Field label="Sem som"><Toggle on={!!clip.muted} onChange={(v) => s().updateClip(id, { muted: v })} /></Field>
       </Section>
+      <AudioFxSection clip={clip} />
       {clip.type === 'video' && (
         <button className="btn" onClick={() => s().extractAudio(id)}><AudioLines size={14} /> Separar áudio</button>
       )}
+    </>
+  );
+}
+
+function AudioFxSection({ clip }) {
+  const id = clip.id;
+  const fx = { ...DEFAULT_AUDIO_FX, ...(clip.audioFx || {}) };
+  const set = (fn) => editClip(id, (c) => { c.audioFx = { ...DEFAULT_AUDIO_FX, ...(c.audioFx || {}) }; fn(c.audioFx); });
+  const pick = (fid) => useStore.getState().updateClip(id, (c) => { c.audioFx = { ...DEFAULT_AUDIO_FX, ...(c.audioFx || {}), id: fid }; });
+  return (
+    <>
+      <Section title="Efeitos de voz" right={<button className="btn small ghost" title="Redefinir" onClick={() => useStore.getState().updateClip(id, (c) => { c.audioFx = null; })}><RotateCcw size={13} /></button>}>
+        <div className="anim-grid">
+          {AUDIO_FX.map((a) => <button key={a.id} className={fx.id === a.id ? 'on' : ''} onClick={() => pick(a.id)}>{a.name}</button>)}
+        </div>
+        {fx.id !== 'none' && <Field label="Intensidade"><Slider value={fx.mix} min={0} max={100} onChange={(v) => set((a) => { a.mix = v; })} /></Field>}
+        <div className="hint" style={{ marginTop: 6 }}>Dê play para ouvir. Na exportação, a voz fina/grossa usa um processamento de qualidade maior que o da prévia.</div>
+      </Section>
+      <Section title="Equalizador">
+        <Field label="Graves"><Slider value={fx.bass} min={-12} max={12} step={0.5} onChange={(v) => set((a) => { a.bass = v; })} /></Field>
+        <Field label="Agudos"><Slider value={fx.treble} min={-12} max={12} step={0.5} onChange={(v) => set((a) => { a.treble = v; })} /></Field>
+        <Field label="Reduzir ruído" title="Tira chiado e ruído de fundo constante (ventilador, ar-condicionado). Aplicado na exportação.">
+          <Toggle on={!!fx.denoise} onChange={(v) => set((a) => { a.denoise = v; })} />
+        </Field>
+        {fx.denoise && <div className="hint">A redução de ruído é aplicada no arquivo exportado (a prévia toca o som original).</div>}
+      </Section>
     </>
   );
 }
@@ -212,6 +318,7 @@ function SpeedTab({ clip }) {
     const src = c.duration * old;
     c.speed = v;
     c.duration = src / v;
+    if (c.kf) c.kf = scaleKf(c.kf, old / v); // os pontos acompanham o conteúdo
     if (m && m.duration) c.duration = Math.min(c.duration, (m.duration - (c.in || 0)) / v);
   });
   return (
@@ -224,7 +331,24 @@ function SpeedTab({ clip }) {
         {[0.25, 0.5, 0.75, 1, 1.5, 2, 3, 5, 10].map((v) => <button key={v} className={Math.abs(sp - v) < 0.005 ? 'on' : ''} onClick={() => setSpeed(v)}>{v}x</button>)}
       </div>
       <div className="hint" style={{ marginTop: 10 }}>Duração no projeto: {fmtTime(clip.duration, 30, true)}. O som acompanha a velocidade mantendo o tom.</div>
+      <ReverseRow clip={clip} />
     </Section>
+  );
+}
+
+function ReverseRow({ clip }) {
+  const rev = useStore((s) => s.meta[clip.mediaId]?.rev?.[clip.type === 'audio' ? 'audio' : 'video']);
+  const working = clip.reverse && rev?.status === 'working';
+  return (
+    <div style={{ marginTop: 14, paddingTop: 12, borderTop: '1px solid var(--line)' }}>
+      <Field label="Reverter" title="Toca o clipe de trás para frente (imagem e som)">
+        <Toggle on={!!clip.reverse} onChange={() => useStore.getState().toggleReverse(clip.id)} />
+      </Field>
+      <div className="hint">
+        {working ? `Preparando a cópia invertida… ${Math.round((rev.progress || 0) * 100)}%`
+          : clip.reverse ? 'Tocando de trás para frente (imagem e som).' : 'Toca o clipe de trás para frente. Na primeira vez, o app prepara uma cópia invertida (fica guardada).'}
+      </div>
+    </div>
   );
 }
 
@@ -255,10 +379,11 @@ function AdjustTab({ clip }) {
   const id = clip.id;
   const a = clip.adjust || {};
   return (
-    <Section title="Ajustes de cor" right={<button className="btn small ghost" onClick={() => useStore.getState().updateClip(id, (c) => { c.adjust = {}; })}><RotateCcw size={13} /> Redefinir</button>}>
+    <Section title="Ajustes de cor" right={<button className="btn small ghost" onClick={() => useStore.getState().updateClip(id, (c) => { c.adjust = {}; clearKf(c, ADJUST_FIELDS.map((f) => `adjust.${f.key}`)); })}><RotateCcw size={13} /> Redefinir</button>}>
       {ADJUST_FIELDS.map((f) => (
-        <Field key={f.key} label={f.name}><Slider value={a[f.key] || 0} min={f.min} max={f.max} onChange={(v) => editClip(id, (c) => { c.adjust = { ...(c.adjust || {}), [f.key]: v }; })} /></Field>
+        <KfSlider key={f.key} clip={clip} prop={`adjust.${f.key}`} label={f.name} min={f.min} max={f.max} toUi={(v) => Math.round(v)} />
       ))}
+      <div className="hint">◆ marca um ponto neste momento: dá para clarear, escurecer ou mudar a cor aos poucos ao longo do clipe.</div>
     </Section>
   );
 }
@@ -266,19 +391,21 @@ function AdjustTab({ clip }) {
 function FilterTab({ clip }) {
   const id = clip.id;
   const f = clip.filter || { id: 'none', intensity: 100 };
+  useClearFxPreviewOnUnmount();
   return (
     <>
       <Section title="Filtro">
         <div className="grid small">
           {FILTERS.map((x) => (
-            <div key={x.id} className={`fx-card ${f.id === x.id ? 'active' : ''}`} onClick={() => useStore.getState().applyFilter(id, x.id)}>
+            <div key={x.id} className={`fx-card ${f.id === x.id ? 'active' : ''}`} {...fxHover('filter', x.id)}
+              onClick={() => { clearFxPreview(); useStore.getState().applyFilter(id, x.id); }}>
               <div className="sw"><FxSample ops={x.ops} /></div>
               <div className="label">{x.name}</div>
             </div>
           ))}
         </div>
       </Section>
-      {f.id !== 'none' && <Field label="Intensidade"><Slider value={f.intensity ?? 100} min={0} max={100} onChange={(v) => editClip(id, (c) => { c.filter.intensity = v; })} /></Field>}
+      {f.id !== 'none' && <KfSlider clip={clip} prop="filter" label="Intensidade" min={0} max={100} toUi={(v) => Math.round(v)} />}
     </>
   );
 }
@@ -372,6 +499,51 @@ function TextTab({ clip }) {
   );
 }
 
+function ShapeTab({ clip }) {
+  const id = clip.id;
+  const sh = clip.shape;
+  const set = (fn) => editClip(id, (c) => fn(c.shape));
+  const big = Math.max(useStore.getState().project.width, useStore.getState().project.height);
+  return (
+    <>
+      <Section title="Forma">
+        <div className="grid small">
+          {SHAPE_KINDS.map((k) => (
+            <div key={k.id} className={`shape-card ${sh.kind === k.id ? 'active' : ''}`} style={sh.kind === k.id ? { borderColor: 'var(--accent)' } : undefined}
+              title={k.name} onClick={() => useStore.getState().updateClip(id, (c) => { c.shape.kind = k.id; })}>
+              <ShapeThumb shape={{ kind: k.id, w: 100, h: k.id === 'arrow' ? 60 : 100, radius: 18, fill: '#d9d9de' }} size={56} />
+            </div>
+          ))}
+        </div>
+      </Section>
+      <Section title="Tamanho">
+        <Field label="Largura"><Slider value={Math.round(sh.w)} min={4} max={big * 2} onChange={(v) => set((s) => { s.w = v; })} /></Field>
+        <Field label="Altura"><Slider value={Math.round(sh.h)} min={4} max={big * 2} onChange={(v) => set((s) => { s.h = v; })} /></Field>
+        {(sh.kind === 'roundrect' || sh.kind === 'speech') && (
+          <Field label="Cantos"><Slider value={sh.radius || 0} min={0} max={400} onChange={(v) => set((s) => { s.radius = v; })} /></Field>
+        )}
+      </Section>
+      <Section title="Preenchimento" right={<Toggle on={sh.fillOn !== false} onChange={(v) => useStore.getState().updateClip(id, (c) => { c.shape.fillOn = v; })} />}>
+        {sh.fillOn !== false && <Field label="Cor"><ColorInput value={sh.fill} onChange={(v) => set((s) => { s.fill = v; })} /></Field>}
+      </Section>
+      <Section title="Contorno" right={<Toggle on={!!sh.stroke?.enabled} onChange={(v) => useStore.getState().updateClip(id, (c) => { c.shape.stroke = { ...c.shape.stroke, enabled: v }; })} />}>
+        {sh.stroke?.enabled && <>
+          <Field label="Cor"><ColorInput value={sh.stroke.color} onChange={(v) => set((s) => { s.stroke.color = v; })} /></Field>
+          <Field label="Espessura"><Slider value={sh.stroke.width} min={1} max={120} onChange={(v) => set((s) => { s.stroke.width = v; })} /></Field>
+        </>}
+      </Section>
+      <Section title="Sombra" right={<Toggle on={!!sh.shadow?.enabled} onChange={(v) => useStore.getState().updateClip(id, (c) => { c.shape.shadow = { ...c.shape.shadow, enabled: v }; })} />}>
+        {sh.shadow?.enabled && <>
+          <Field label="Cor"><ColorInput value={sh.shadow.color} onChange={(v) => set((s) => { s.shadow.color = v; })} /></Field>
+          <Field label="Opacidade"><Slider value={Math.round((sh.shadow.opacity ?? 1) * 100)} min={0} max={100} onChange={(v) => set((s) => { s.shadow.opacity = v / 100; })} /></Field>
+          <Field label="Desfoque"><Slider value={sh.shadow.blur} min={0} max={120} onChange={(v) => set((s) => { s.shadow.blur = v; })} /></Field>
+          <Field label="Distância Y"><Slider value={sh.shadow.y} min={-80} max={80} onChange={(v) => set((s) => { s.shadow.y = v; })} /></Field>
+        </>}
+      </Section>
+    </>
+  );
+}
+
 function defaultsFor(style) {
   return { ...structuredClone(DEFAULT_TEXT), ...structuredClone(style) };
 }
@@ -382,12 +554,14 @@ function EffectTab({ clip }) {
   const isFilter = fx.kind === 'filter';
   const cur = isFilter ? null : EFFECTS.find((e) => e.id === fx.id);
   const list = isFilter ? FILTERS.filter((f) => f.id !== 'none') : EFFECTS.filter((e) => e.cat === (cur?.cat || 'basic'));
+  useClearFxPreviewOnUnmount();
   return (
     <>
       <Section title={isFilter ? 'Filtro' : `Efeito · ${FX_CATS.find((c) => c.id === cur?.cat)?.name || ''}`}>
         <div className="grid small">
           {list.map((x) => (
-            <div key={x.id} className={`fx-card ${fx.id === x.id ? 'active' : ''}`} onClick={() => useStore.getState().updateClip(id, (c) => { c.effect.id = x.id; })}>
+            <div key={x.id} className={`fx-card ${fx.id === x.id ? 'active' : ''}`} {...fxHover(isFilter ? 'filter' : 'effect', x.id)}
+              onClick={() => { clearFxPreview(); useStore.getState().updateClip(id, (c) => { c.effect.id = x.id; }); }}>
               <div className="sw">{isFilter ? <FxSample ops={x.ops} /> : <EffectThumb id={x.id} />}</div>
               <div className="label">{x.name}</div>
             </div>
@@ -401,7 +575,7 @@ function EffectTab({ clip }) {
   );
 }
 
-const TYPE_NAME = { video: 'Vídeo', image: 'Foto', audio: 'Áudio', text: 'Texto', effect: 'Efeito' };
+const TYPE_NAME = { video: 'Vídeo', image: 'Foto', audio: 'Áudio', text: 'Texto', effect: 'Efeito', shape: 'Forma' };
 
 function ClipPanel({ id }) {
   const project = useStore((s) => s.project);
@@ -419,6 +593,7 @@ function ClipPanel({ id }) {
     if (clip.type === 'video') tabs.push({ id: 'speed', name: 'Velocidade' });
     tabs.push({ id: 'anim', name: 'Animação' }, { id: 'adjust', name: 'Ajuste' }, { id: 'filter', name: 'Filtro' });
   } else if (clip.type === 'text') tabs = [{ id: 'text', name: clip.sticker ? 'Sticker' : 'Texto' }, { id: 'anim', name: 'Animação' }, { id: 'basic', name: 'Posição' }];
+  else if (clip.type === 'shape') tabs = [{ id: 'shape', name: 'Forma' }, { id: 'anim', name: 'Animação' }, { id: 'basic', name: 'Posição' }];
   else if (clip.type === 'audio') tabs = [{ id: 'audio', name: 'Áudio' }, { id: 'speed', name: 'Velocidade' }];
   else if (clip.type === 'effect') tabs = [{ id: 'effect', name: clip.effect.kind === 'filter' ? 'Filtro' : 'Efeito' }];
   const cur = tabs.find((t) => t.id === tab) ? tab : tabs[0].id;
@@ -443,6 +618,42 @@ function ClipPanel({ id }) {
         {cur === 'filter' && <FilterTab clip={clip} />}
         {cur === 'text' && <TextTab clip={clip} />}
         {cur === 'effect' && <EffectTab clip={clip} />}
+        {cur === 'shape' && <ShapeTab clip={clip} />}
+      </div>
+    </>
+  );
+}
+
+// ---------- Vários clipes selecionados ----------
+function MultiPanel({ ids }) {
+  const project = useStore((s) => s.project);
+  const s = useStore.getState;
+  const clips = ids.map((id) => findClip(project, id)?.clip).filter(Boolean);
+  const count = (pred) => clips.filter(pred).length;
+  const sound = clips.filter((c) => c.type === 'video' || c.type === 'audio');
+  const allMuted = sound.length && sound.every((c) => c.muted);
+  const setMuted = (v) => s().commit((p) => { for (const id of ids) { const f = findClip(p, id); if (f && (f.clip.type === 'video' || f.clip.type === 'audio')) f.clip.muted = v; } });
+  return (
+    <>
+      <div className="insp-tabs"><button className="insp-tab active">Seleção</button></div>
+      <div className="insp-body">
+        <Section title={`${clips.length} clipes selecionados`}>
+          <div className="kv" style={{ marginBottom: 12 }}>
+            {count((c) => c.type === 'video') > 0 && <><span>Vídeos</span><span>{count((c) => c.type === 'video')}</span></>}
+            {count((c) => c.type === 'image') > 0 && <><span>Fotos</span><span>{count((c) => c.type === 'image')}</span></>}
+            {count((c) => c.type === 'audio') > 0 && <><span>Áudios</span><span>{count((c) => c.type === 'audio')}</span></>}
+            {count((c) => c.type === 'text') > 0 && <><span>Textos e stickers</span><span>{count((c) => c.type === 'text')}</span></>}
+            {count((c) => c.type === 'shape') > 0 && <><span>Formas</span><span>{count((c) => c.type === 'shape')}</span></>}
+            {count((c) => c.type === 'effect') > 0 && <><span>Efeitos e filtros</span><span>{count((c) => c.type === 'effect')}</span></>}
+          </div>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+            <button className="btn" onClick={() => s().duplicateSelection()}>Duplicar</button>
+            <button className="btn" onClick={() => s().copySelection()}>Copiar</button>
+            {sound.length > 0 && <button className="btn" onClick={() => setMuted(!allMuted)}>{allMuted ? 'Ativar som' : 'Silenciar'}</button>}
+            <button className="btn danger" onClick={() => s().deleteSelection()}><Trash2 size={14} /> Excluir</button>
+          </div>
+        </Section>
+        <div className="hint">Arraste qualquer um deles na linha do tempo para mover todos juntos. Escolher um filtro na aba Filtros aplica em todos os vídeos e fotos da seleção. Ctrl + clique tira ou põe um clipe na seleção.</div>
       </div>
     </>
   );
@@ -454,7 +665,8 @@ export default function Inspector() {
     <div className="panel">
       {!sel && <ProjectPanel />}
       {sel?.type === 'transition' && <TransitionPanel key={sel.id} clipId={sel.id} />}
-      {sel?.type === 'clip' && <ClipPanel key={sel.id} id={sel.id} />}
+      {sel?.type === 'clip' && sel.ids?.length > 1 && <MultiPanel ids={sel.ids} />}
+      {sel?.type === 'clip' && !(sel.ids?.length > 1) && <ClipPanel key={sel.id} id={sel.id} />}
     </div>
   );
 }

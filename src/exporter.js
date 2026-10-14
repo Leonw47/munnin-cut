@@ -1,5 +1,7 @@
 // Pipeline de exportação: gera os PNGs de texto, monta o grafo do FFmpeg e dispara o processo.
 import { renderTextPng } from './engine/text.js';
+import { renderShapePng } from './engine/shapes.js';
+import { splitKf, maxScale } from './shared/keyframes.js';
 import { buildExport, exportSize, effectSegments } from './shared/graph.js';
 import { makeCanvas } from './engine/util.js';
 import { EXPORT_FORMATS } from './shared/defs.js';
@@ -33,13 +35,17 @@ export function startExport(opts) {
       for (const tr of project.tracks) {
         if (tr.hidden) continue;
         for (const c of tr.clips) {
-          if (c.type !== 'text') continue;
-          const bytes = await renderTextPng(c, k);
+          if (c.type !== 'text' && c.type !== 'shape') continue;
+          // pontos de modificação: o que muda (escala, giro, opacidade) não vai "assado" no PNG
+          const { base, dyn } = splitKf(c);
+          const opts = { scale: maxScale(base, dyn), rotate: !dyn.rotation, opacity: !dyn.opacity };
+          const bytes = c.type === 'shape' ? await renderShapePng(base, k, opts) : await renderTextPng(base, k, opts);
           const path = await window.api.writeFile(`job:${jobId}`, `text_${c.id}.png`, bytes);
           textAssets[c.id] = {
             path,
-            cx: size.width / 2 + (c.transform?.x || 0) * size.width,
-            cy: size.height / 2 + (c.transform?.y || 0) * size.height,
+            scale: opts.scale,
+            cx: size.width / 2 + (base.transform?.x || 0) * size.width,
+            cy: size.height / 2 + (base.transform?.y || 0) * size.height,
           };
         }
       }
@@ -95,6 +101,19 @@ export function startExport(opts) {
     }
     const mediaMap = {};
     for (const m of project.media) mediaMap[m.id] = { ...m, missing: meta[m.id]?.status === 'missing' };
+    // clipes com "Reverter": garante a cópia invertida (já fica em cache depois da primeira vez)
+    for (const tr of project.tracks) {
+      for (const c of tr.clips) {
+        if (!c.reverse || (c.type !== 'video' && c.type !== 'audio')) continue;
+        const m = mediaMap[c.mediaId];
+        if (!m || m.missing) continue;
+        const kind = c.type === 'audio' ? 'audio' : 'video';
+        if (m.rev?.[kind]) continue;
+        if (onProgress) onProgress(0, null, 'Preparando os clipes invertidos…');
+        const r = await window.api.reverse(m.path, kind, `rev_${kind}_${m.id}`);
+        m.rev = { ...(m.rev || {}), [kind]: r };
+      }
+    }
     const { args, graph, duration } = buildExport({
       project, mediaMap,
       out: { format, width: size.width, height: size.height, fps, quality, vKbps, aKbps, hw, endAt },

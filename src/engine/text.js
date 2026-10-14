@@ -100,22 +100,23 @@ export function drawTextBlock(ctx, st, k) {
 }
 
 // PNG de um clipe de texto já com escala, rotação e opacidade (para a exportação).
-export async function renderTextPng(clip, k) {
+// Com pontos de modificação, o que muda fica de fora (scale: tamanho usado; rotate/opacity: false).
+export async function renderTextPng(clip, k, { scale = null, rotate = true, opacity = true } = {}) {
   const st = clip.text;
   const tf = clip.transform || {};
-  const kk = k * (tf.scale ?? 1);
+  const kk = k * (scale ?? tf.scale ?? 1);
   await ensureFont(st, kk);
   const L = layoutText(st, kk);
   const m = textMargin(st, kk);
   const bw = L.boxW + m * 2, bh = L.boxH + m * 2;
-  const rot = ((tf.rotation || 0) * Math.PI) / 180;
+  const rot = rotate ? ((tf.rotation || 0) * Math.PI) / 180 : 0;
   const rw = Math.ceil(Math.abs(bw * Math.cos(rot)) + Math.abs(bh * Math.sin(rot)));
   const rh = Math.ceil(Math.abs(bw * Math.sin(rot)) + Math.abs(bh * Math.cos(rot)));
   const c = makeCanvas(rw + 2, rh + 2);
   const ctx = c.getContext('2d');
   ctx.translate(c.width / 2, c.height / 2);
   ctx.rotate(rot);
-  ctx.globalAlpha = clip.opacity ?? 1;
+  ctx.globalAlpha = opacity ? clip.opacity ?? 1 : 1;
   drawTextBlock(ctx, st, kk);
   const blob = await new Promise((res) => c.toBlob(res, 'image/png'));
   return new Uint8Array(await blob.arrayBuffer());

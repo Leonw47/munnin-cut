@@ -1,11 +1,12 @@
 import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { Play, Pause, Maximize, ChevronDown, Clapperboard, SkipBack, SkipForward } from 'lucide-react';
+import { Play, Pause, Maximize, Minimize, ChevronDown, Clapperboard, SkipBack, SkipForward, Rewind, FastForward, Volume2, VolumeX } from 'lucide-react';
 import { useStore } from '../store.js';
 import { engine } from '../engine/index.js';
 import { clipBox } from '../engine/compositor.js';
 import { RATIOS, sizeFromMedia } from '../shared/defs.js';
 import { fmtTime, projectDuration, mainTrack, findClip } from '../shared/timeline.js';
 import { Dropdown, MenuItem } from './ui.jsx';
+import { resolveAt, setPropAt } from '../shared/keyframes.js';
 
 function useMediaMap(project) {
   const ref = useRef({ media: null, map: {} });
@@ -53,7 +54,7 @@ function TransformOverlay({ W, H }) {
   const found = sel?.type === 'clip' ? findClip(project, sel.id) : null;
   const clip = found?.clip;
   const visible = clip && clip.type !== 'effect' && clip.type !== 'audio' && !found.track.hidden && time >= clip.start && time < clip.start + clip.duration;
-  const box = visible ? clipBox(project, mediaMap, clip, W, H) : null;
+  const box = visible ? clipBox(project, mediaMap, resolveAt(clip, time - clip.start), W, H) : null;
 
   const local = (e) => {
     const r = svgRef.current.getBoundingClientRect();
@@ -66,7 +67,9 @@ function TransformOverlay({ W, H }) {
     const s = useStore.getState();
     s.pause();
     const p0 = local(e);
-    const tf0 = { ...(target.transform || {}) };
+    // com pontos de modificação, mexer no reprodutor cria/atualiza o ponto no instante da agulha
+    const lt = Math.max(0, Math.min(target.duration, s.time - target.start));
+    const tf0 = { ...(resolveAt(target, lt).transform || {}) };
     let moved = false;
     const move = (ev) => {
       const p = local(ev);
@@ -78,12 +81,12 @@ function TransformOverlay({ W, H }) {
         if (gx) nx = 0;
         if (gy) ny = 0;
         setGuides({ x: gx, y: gy, angle: null });
-        s.updateClip(target.id, (c) => { c.transform.x = nx; c.transform.y = ny; }, { silent: true });
+        s.updateClip(target.id, (c) => { setPropAt(c, 'x', nx, lt); setPropAt(c, 'y', ny, lt); }, { silent: true });
       } else if (mode === 'scale') {
         const d0 = Math.hypot(p0.x - b0.cx, p0.y - b0.cy) || 1;
         const d1 = Math.hypot(p.x - b0.cx, p.y - b0.cy);
         const ns = Math.max(0.02, Math.min(20, (tf0.scale ?? 1) * (d1 / d0)));
-        s.updateClip(target.id, (c) => { c.transform.scale = ns; }, { silent: true });
+        s.updateClip(target.id, (c) => { setPropAt(c, 'scale', ns, lt); }, { silent: true });
       } else if (mode === 'rotate') {
         const a0 = Math.atan2(p0.y - b0.cy, p0.x - b0.cx);
         const a1 = Math.atan2(p.y - b0.cy, p.x - b0.cx);
@@ -92,7 +95,7 @@ function TransformOverlay({ W, H }) {
         const snap = Math.round(deg / 90) * 90;
         if (Math.abs(deg - snap) < 4) deg = snap;
         setGuides({ x: false, y: false, angle: Math.round(deg) });
-        s.updateClip(target.id, (c) => { c.transform.rotation = deg; }, { silent: true });
+        s.updateClip(target.id, (c) => { setPropAt(c, 'rotation', deg, lt); }, { silent: true });
       }
     };
     const up = () => {
@@ -110,7 +113,7 @@ function TransformOverlay({ W, H }) {
     const p = local(e);
     const s = useStore.getState();
     for (const c of visibleClipsTopFirst(project, time)) {
-      const b = clipBox(project, mediaMap, c, W, H);
+      const b = clipBox(project, mediaMap, resolveAt(c, time - c.start), W, H);
       if (b && inBox(b, p.x, p.y)) {
         s.select({ type: 'clip', id: c.id });
         beginGesture(e, 'move', c, b);
@@ -154,6 +157,71 @@ function TransformOverlay({ W, H }) {
   );
 }
 
+// Controles da tela cheia (aparecem ao mexer o mouse; somem sozinhos durante a reprodução).
+function FullscreenBar({ visible, onExit }) {
+  const time = useStore((s) => s.time);
+  const playing = useStore((s) => s.playing);
+  const project = useStore((s) => s.project);
+  const muted = useStore((s) => s.previewMuted);
+  const d = projectDuration(project);
+  const fps = project.fps || 30;
+  const s = useStore.getState;
+  return (
+    <div className={`fs-bar ${visible ? '' : 'hidden'}`} onPointerDown={(e) => e.stopPropagation()} onClick={(e) => e.stopPropagation()} onDoubleClick={(e) => e.stopPropagation()}>
+      <button className="icon-btn" title="Voltar 5 s" onClick={() => s().setTime(Math.max(0, s().time - 5))}><Rewind size={16} /></button>
+      <button className="play-btn" title="Reproduzir / pausar (Espaço)" onClick={() => s().togglePlay()}>
+        {playing ? <Pause size={18} fill="currentColor" /> : <Play size={18} fill="currentColor" />}
+      </button>
+      <button className="icon-btn" title="Avançar 5 s" onClick={() => s().setTime(s().time + 5)}><FastForward size={16} /></button>
+      <input type="range" min={0} max={Math.max(d, 0.01)} step={1 / fps} value={Math.min(time, d)}
+        style={{ '--p': `${d ? (Math.min(time, d) / d) * 100 : 0}%` }}
+        onPointerDown={() => s().pause()} onChange={(e) => s().setTime(parseFloat(e.target.value))} />
+      <span className="tc">{fmtTime(time, fps, false)} / {fmtTime(d, fps, false)}</span>
+      <button className="icon-btn" title={muted ? 'Ativar som' : 'Silenciar'} onClick={() => useStore.setState({ previewMuted: !muted })}>
+        {muted ? <VolumeX size={16} /> : <Volume2 size={16} />}
+      </button>
+      <button className="icon-btn" title="Sair da tela cheia (Esc)" onClick={onExit}><Minimize size={16} /></button>
+    </div>
+  );
+}
+
+// Conta-gotas do chroma key: o próximo clique no vídeo escolhe a cor a remover.
+function ColorPicker({ canvasRef, clipId }) {
+  const [hover, setHover] = useState(null);
+  const read = (e) => {
+    const c = canvasRef.current;
+    const r = c.getBoundingClientRect();
+    const x = Math.floor(((e.clientX - r.left) / r.width) * c.width), y = Math.floor(((e.clientY - r.top) / r.height) * c.height);
+    if (x < 0 || y < 0 || x >= c.width || y >= c.height) return null;
+    // média 5×5 ao redor do ponto (evita pegar um pixel de ruído)
+    const d = c.getContext('2d').getImageData(Math.max(0, x - 2), Math.max(0, y - 2), 5, 5).data;
+    let rr = 0, gg = 0, bb = 0, n = 0;
+    for (let i = 0; i < d.length; i += 4) { rr += d[i]; gg += d[i + 1]; bb += d[i + 2]; n++; }
+    const hx = (v) => Math.round(v / n).toString(16).padStart(2, '0');
+    return { hex: `#${hx(rr)}${hx(gg)}${hx(bb)}`, x: e.clientX - r.left, y: e.clientY - r.top };
+  };
+  const cancel = () => useStore.setState({ pickColor: null });
+  useEffect(() => {
+    const k = (e) => { if (e.key === 'Escape') cancel(); };
+    window.addEventListener('keydown', k);
+    return () => window.removeEventListener('keydown', k);
+  }, []);
+  return (
+    <div style={{ position: 'absolute', inset: 0, zIndex: 15, cursor: 'crosshair' }}
+      onMouseMove={(e) => setHover(read(e))} onMouseLeave={() => setHover(null)}
+      onPointerDown={(e) => {
+        e.stopPropagation();
+        const p = read(e);
+        if (!p) return;
+        useStore.getState().updateClip(clipId, (c) => { c.chroma = { ...(c.chroma || {}), on: true, color: p.hex }; });
+        cancel();
+      }}>
+      <div className="pick-tip">Clique na cor do fundo para remover · Esc cancela</div>
+      {hover && <div className="pick-swatch" style={{ left: hover.x + 14, top: hover.y + 14, background: hover.hex }} />}
+    </div>
+  );
+}
+
 function Timecode() {
   const time = useStore((s) => s.time);
   const project = useStore((s) => s.project);
@@ -171,6 +239,25 @@ export default function Player() {
   const playing = useStore((s) => s.playing);
   const hasClips = project.tracks.some((t) => t.clips.length);
   const aspect = project.width / project.height;
+  const pickColor = useStore((st) => st.pickColor);
+  const [isFs, setIsFs] = useState(false);
+  const [idle, setIdle] = useState(false);
+  const idleTimer = useRef(null);
+
+  useEffect(() => {
+    const onFs = () => { setIsFs(document.fullscreenElement === stageRef.current); setIdle(false); };
+    document.addEventListener('fullscreenchange', onFs);
+    return () => document.removeEventListener('fullscreenchange', onFs);
+  }, []);
+  const wake = () => {
+    setIdle(false);
+    clearTimeout(idleTimer.current);
+    idleTimer.current = setTimeout(() => setIdle(true), 2500);
+  };
+  const toggleFs = () => {
+    const el = stageRef.current;
+    if (document.fullscreenElement) document.exitFullscreen(); else el.requestFullscreen?.();
+  };
 
   useLayoutEffect(() => {
     const el = stageRef.current;
@@ -219,10 +306,10 @@ export default function Player() {
   return (
     <div className="panel">
       <div className="panel-head">Reprodutor <span style={{ marginLeft: 'auto', color: 'var(--faint)', fontWeight: 400 }}>{project.width}×{project.height} · {project.fps} fps</span></div>
-      <div className="player-stage" ref={stageRef}>
+      <div className="player-stage" ref={stageRef} onMouseMove={isFs ? wake : undefined}>
         <div style={{ position: 'relative', width: size.w, height: size.h }}>
           <canvas ref={canvasRef} style={{ width: size.w, height: size.h }} />
-          {size.w > 0 && <TransformOverlay W={size.w} H={size.h} />}
+          {size.w > 0 && !isFs && <TransformOverlay W={size.w} H={size.h} />}
           {!hasClips && (
             <div className="empty-stage" style={{ position: 'absolute', inset: 0, justifyContent: 'center', pointerEvents: 'none' }}>
               <Clapperboard size={34} />
@@ -230,6 +317,11 @@ export default function Player() {
             </div>
           )}
         </div>
+        {isFs && <>
+          <div className={`fs-click ${idle && playing ? 'idle' : ''}`} onClick={() => s().togglePlay()} onDoubleClick={toggleFs} />
+          <FullscreenBar visible={!idle || !playing} onExit={toggleFs} />
+        </>}
+        {pickColor && !isFs && <ColorPicker canvasRef={canvasRef} clipId={pickColor.clipId} />}
       </div>
       <div className="player-foot">
         <Timecode />
@@ -248,10 +340,7 @@ export default function Player() {
               <MenuItem key={r.id} on={project.ratio === r.id} label={`${r.name}${r.hint ? ` · ${r.hint}` : ''}`} onClick={() => setRatio(r)} />
             ))}
           </Dropdown>
-          <button className="icon-btn" title="Tela cheia" onClick={() => {
-            const el = stageRef.current;
-            if (document.fullscreenElement) document.exitFullscreen(); else el.requestFullscreen?.();
-          }}><Maximize size={15} /></button>
+          <button className="icon-btn" title="Tela cheia" onClick={toggleFs}><Maximize size={15} /></button>
         </div>
       </div>
     </div>

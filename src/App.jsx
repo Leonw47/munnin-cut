@@ -72,7 +72,13 @@ export default function App() {
   const [dragging, setDragging] = useState(false);
 
   useEffect(() => {
-    const off1 = window.api.onProxyProgress(({ jobId, pct }) => useStore.getState().setMeta(jobId, { progress: pct }));
+    const off1 = window.api.onProxyProgress(({ jobId, pct }) => {
+      const s = useStore.getState();
+      const rv = /^rev_(video|audio)_(.+)$/.exec(jobId);
+      if (!rv) { s.setMeta(jobId, { progress: pct }); return; }
+      const rev = s.meta[rv[2]]?.rev || {};
+      s.setMeta(rv[2], { rev: { ...rev, [rv[1]]: { ...(rev[rv[1]] || {}), progress: pct } } });
+    });
     const off2 = window.api.onOpenFile((f) => openProjectFromFile(f));
     window.api.pendingFile().then((f) => { if (f) openProjectFromFile(f); });
     // Reabre o projeto se a interface foi reiniciada depois de uma falha.
@@ -106,6 +112,8 @@ export default function App() {
       else if (ctrl && k === 'c') s.copySelection();
       else if (ctrl && k === 'v') s.paste();
       else if (ctrl && k === 'd') s.duplicateSelection();
+      else if (ctrl && k === 'a') s.selectAll();
+      else if (!ctrl && k === 'k') s.toggleKeyframes();
       else if (ctrl && k === 'e') useStore.setState({ modal: 'export' });
       else if (ctrl && k === 'i') window.api.openMediaDialog().then((p) => p.length && s.importPaths(p));
       else if (ctrl && k === 's') saveNow({ force: true }).then(() => s.toastMsg('Projeto salvo'));
@@ -115,7 +123,7 @@ export default function App() {
       else if (k === 'end') s.setTime(projectDuration(s.project));
       else if (k === '=' || k === '+') useStore.setState({ zoom: Math.min(600, s.zoom * 1.25) });
       else if (k === '-') useStore.setState({ zoom: Math.max(2, s.zoom / 1.25) });
-      else if (k === 'escape') s.select(null);
+      else if (k === 'escape') { if (s.pickColor) useStore.setState({ pickColor: null }); else s.select(null); }
       else handled = false;
       if (handled) e.preventDefault();
     };

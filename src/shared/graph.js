@@ -2,11 +2,14 @@
 // Função pura: roda no renderer e nos testes em Node.
 
 import { EXPORT_FORMATS } from './defs.js';
-import { layoutProject, mainTrack, transitionDuration, projectDuration, cropDims, fitScale } from './timeline.js';
+import { layoutProject, mainTrack, transitionDuration, projectDuration, cropDims, fitScale, overlayChains, overlayTransDur } from './timeline.js';
 import { clipOps, effectClipOps, ffFilters } from './ops.js';
 import { animScaleExpr, animOffsetExprs, animFades, animRotExpr } from './anim.js';
 import { effectDef, isSegmentEffect, seedOf } from './effects.js';
 import { isCamTransition, camClipChain, camMixExpr } from './camtrans.js';
+import { chromaFilters } from './chroma.js';
+import { audioFxFilters } from './audiofx.js';
+import { splitKf, maxScale, kfExpr, kfWindows, KF_PROPS, COLOR_PROPS } from './keyframes.js';
 
 const r3 = (x) => String(Math.round(x * 1000) / 1000);
 const n4 = (x) => String(Math.round(x * 10000) / 10000);
@@ -49,6 +52,14 @@ export function effectSegments(src, FPS) {
  */
 export function buildExport({ project: src, mediaMap, out, textAssets = {}, fxAssets = {}, outPath, graphPath }) {
   const project = layoutProject(structuredClone(src));
+  // pontos de modificação: valores constantes viram fixos; o que muda fica em c.__dyn
+  for (const tr of project.tracks) {
+    tr.clips = tr.clips.map((c) => {
+      const { base, dyn } = splitKf(c);
+      if (Object.keys(dyn).length) base.__dyn = dyn;
+      return base;
+    });
+  }
   const fmt = EXPORT_FORMATS.find((f) => f.id === out.format) || EXPORT_FORMATS[0];
   const wantVideo = fmt.kind !== 'audio';
   const wantAudio = fmt.kind !== 'gif';
@@ -71,10 +82,13 @@ export function buildExport({ project: src, mediaMap, out, textAssets = {}, fxAs
 
   function inputFor(c, m) {
     if (inputCache.has(c.id)) return inputCache.get(c.id);
-    const p = m.renderPath || m.path;
+    // "Reverter": usa a cópia invertida; o trecho [in, in + dur·vel] do original fica em [D − in − dur·vel, D − in]
+    const rev = c.reverse && m.rev ? m.rev[c.type === 'audio' ? 'audio' : 'video'] : null;
+    const p = rev ? rev.path : m.renderPath || m.path;
+    const inPt = rev ? Math.max(0, rev.duration - (c.in || 0) - c.duration * (c.speed || 1)) : c.in || 0;
     const idx = m.type === 'image'
       ? addInput(['-i', p])
-      : addInput(['-ss', r3(c.in || 0), '-t', r3(c.duration * (c.speed || 1) + 0.25), '-i', p]);
+      : addInput(['-ss', r3(inPt), '-t', r3(c.duration * (c.speed || 1) + 0.25), '-i', p]);
     inputCache.set(c.id, idx);
     return idx;
   }
@@ -98,39 +112,87 @@ export function buildExport({ project: src, mediaMap, out, textAssets = {}, fxAs
       f.push(`crop=w=iw*${n4(1 - (cr.l || 0) - (cr.r || 0))}:h=ih*${n4(1 - (cr.t || 0) - (cr.b || 0))}:x=iw*${n4(cr.l || 0)}:y=ih*${n4(cr.t || 0)}`);
     }
     const { sw, sh } = cropDims(m, cr);
-    const s = fitScale(sw, sh, W, H, c.fit) * (c.transform?.scale ?? 1);
+    const dyn = c.__dyn || {};
+    // com escala em pontos de modificação, a camada sai no maior tamanho e é reduzida quadro a quadro
+    const s = fitScale(sw, sh, W, H, c.fit) * maxScale(c, dyn);
     const w = even(sw * s), h = even(sh * s);
-    f.push(`scale=${w}:${h}`, 'setsar=1', 'format=rgba');
-    const fx = ffFilters(clipOps(c), { w, h, alpha: !!m.hasAlpha });
+    f.push(`scale=${w}:${h}`, 'setsar=1');
+    if (c.chroma?.on) f.push(...chromaFilters(c.chroma)); // termina em rgba
+    else f.push('format=rgba');
+    // cor com pontos de modificação: filtros por trechos (tempo local), senão filtros fixos
+    const colorDyn = COLOR_PROPS.some((p) => dyn[p]);
+    const fx = colorDyn ? [] : ffFilters(clipOps(c), { w, h, alpha: !!m.hasAlpha });
     // alguns filtros (vinheta, eq) descartam o alfa; a rotação e as animações precisam dele
     if (fx.length) f.push(...fx, 'format=rgba');
+    const steps = colorDyn ? colorSteps(c, dyn, w, h, m) : [];
     const isStatic = m.type === 'image';
-    return { f: isStatic ? [...f, ...loopFor(c.duration)] : f, stat: isStatic ? f : null, loop: isStatic ? loopFor(c.duration) : null, w, h };
+    if (!isStatic) return { f: [...f, ...steps], stat: null, loop: null, w, h };
+    const loop = [...loopFor(c.duration), ...steps];
+    return { f: [...f, ...loop], stat: f, loop, w, h };
+  }
+
+  // Ajustes/filtro que mudam ao longo do clipe: um conjunto de filtros por trecho (a cada 2 quadros).
+  function colorSteps(c, dyn, w, h, m) {
+    const props = COLOR_PROPS.filter((p) => dyn[p]);
+    const wins = kfWindows({ ...c, kf: dyn }, props, FPS, { step: 2, quant: (p, v) => Math.round(v) });
+    const out = [];
+    wins.forEach((wd, i) => {
+      const rc = { ...c, adjust: { ...(c.adjust || {}) }, filter: c.filter ? { ...c.filter } : c.filter };
+      for (const p of props) KF_PROPS[p].set(rc, wd.vals[p]);
+      const a = i === 0 ? -1e6 : wd.a, b = i === wins.length - 1 ? 1e6 : wd.b;
+      out.push(...ffFilters(clipOps(rc), { w, h, alpha: !!m.hasAlpha, enable: `gte(t,${r3(a)})*lt(t,${r3(b)})` }));
+    });
+    return out.length ? [...out, 'format=rgba'] : [];
+  }
+
+  // Opacidade que muda: colorchannelmixer por trechos de 1 quadro (tempo do fluxo; at0 = início do clipe).
+  function opacitySteps(c, dyn, at0) {
+    const wins = kfWindows({ ...c, kf: dyn }, ['opacity'], FPS, { step: 1, quant: (p, v) => Math.round(v * 100) / 100 });
+    return wins.map((wd, i) => {
+      const v = wd.vals.opacity;
+      if (v >= 0.995) return null;
+      const a = i === 0 ? -1e6 : at0 + wd.a, b = i === wins.length - 1 ? 1e6 : at0 + wd.b;
+      return `colorchannelmixer=aa=${n4(Math.max(0, v))}:enable='gte(t,${r3(a)})*lt(t,${r3(b)})'`;
+    }).filter(Boolean);
+  }
+
+  // Giro e escala: animação de entrada/saída + pontos de modificação na mesma expressão.
+  function motionFilters(c, dyn, at0, { rotBaked = true, scaleBase = null } = {}) {
+    const f = [];
+    const rx = [dyn.rotation && rotBaked === false ? kfExpr(dyn.rotation, at0, Math.PI / 180) : '', animRotExpr(c, at0)].filter(Boolean).join('+');
+    if (rx) f.push(`rotate=a='${rx}':c=none:ow='hypot(iw,ih)':oh='ow'`);
+    const sx = [animScaleExpr(c, at0), dyn.scale ? `(${kfExpr(dyn.scale, at0)})/${n4(scaleBase ?? maxScale(c, dyn))}` : ''].filter(Boolean).map((e) => `(${e})`).join('*');
+    if (sx) f.push(`scale=w='max(2,trunc(iw*${sx}))':h='max(2,trunc(ih*${sx}))':eval=frame`);
+    if (dyn.opacity) f.push(...opacitySteps(c, dyn, at0));
+    return f;
+  }
+
+  // Posição (centro) com pontos de modificação + deslocamento das animações.
+  function posExprs(c, dyn, at0, cx, cy) {
+    const { dx, dy } = animOffsetExprs(c, at0);
+    const X = dyn.x ? `${n4(W / 2)}+${W}*(${kfExpr(dyn.x, at0)})` : n4(cx);
+    const Y = dyn.y ? `${n4(H / 2)}+${H}*(${kfExpr(dyn.y, at0)})` : n4(cy);
+    return { x: `${X}-w/2${dx ? `+${W}*(${dx})` : ''}`, y: `${Y}-h/2${dy ? `+${H}*(${dy})` : ''}` };
   }
 
   // Espelhar → girar → opacidade → (deslocar no tempo) → animações.
-  function placeChain(c, t0) {
+  // t0: onde o fluxo da camada começa; at0: onde o clipe "de verdade" começa (difere quando há
+  // quadros parados antes dele, nas transições das faixas de cima).
+  function placeChain(c, t0, at0 = t0) {
     const f = [];
     const tf = c.transform || {};
+    const dyn = c.__dyn || {};
     if (tf.flipH) f.push('hflip');
     if (tf.flipV) f.push('vflip');
     const rot = ((tf.rotation || 0) * Math.PI) / 180;
-    if (Math.abs(rot) > 1e-4) f.push(`rotate=a=${n4(rot)}:c=none:ow=rotw(${n4(rot)}):oh=roth(${n4(rot)})`);
+    if (!dyn.rotation && Math.abs(rot) > 1e-4) f.push(`rotate=a=${n4(rot)}:c=none:ow=rotw(${n4(rot)}):oh=roth(${n4(rot)})`);
     const op = c.opacity ?? 1;
-    if (op < 0.999) f.push(`colorchannelmixer=aa=${n4(op)}`);
+    if (!dyn.opacity && op < 0.999) f.push(`colorchannelmixer=aa=${n4(op)}`);
     if (t0 > 0) f.push(`setpts=PTS+${r3(t0)}/TB`);
-    const rx = animRotExpr(c, t0);
-    if (rx) f.push(`rotate=a='${rx}':c=none:ow='hypot(iw,ih)':oh='ow'`);
-    const sx = animScaleExpr(c, t0);
-    if (sx) f.push(`scale=w='max(2,trunc(iw*${sx}))':h='max(2,trunc(ih*${sx}))':eval=frame`);
-    f.push(...animFades(c, t0));
-    const { dx, dy } = animOffsetExprs(c, t0);
+    f.push(...motionFilters(c, dyn, at0, { rotBaked: false }));
+    f.push(...animFades(c, at0));
     const cx = W / 2 + (tf.x || 0) * W, cy = H / 2 + (tf.y || 0) * H;
-    return {
-      f,
-      x: `${n4(cx)}-w/2${dx ? `+${W}*(${dx})` : ''}`,
-      y: `${n4(cy)}-h/2${dy ? `+${H}*(${dy})` : ''}`,
-    };
+    return { f, ...posExprs(c, dyn, at0, cx, cy) };
   }
 
   function audioPart(c, m) {
@@ -143,11 +205,13 @@ export function buildExport({ project: src, mediaMap, out, textAssets = {}, fxAs
     if (Math.abs(sp - 1) > 1e-3) tempos.push(sp);
     for (const t of tempos) f.push(`atempo=${n4(t)}`);
     f.push(`atrim=duration=${r3(c.duration)}`, 'asetpts=PTS-STARTPTS');
+    f.push('aformat=sample_fmts=fltp:sample_rates=48000:channel_layouts=stereo');
+    f.push(...audioFxFilters(c.audioFx)); // eco, robô, telefone, voz fina/grossa, graves/agudos…
     const vol = c.volume ?? 1;
-    if (Math.abs(vol - 1) > 1e-3) f.push(`volume=${n4(vol)}`);
+    if (c.__dyn?.volume) f.push(`volume=volume='${kfExpr(c.__dyn.volume, 0)}':eval=frame`); // volume com pontos de modificação
+    else if (Math.abs(vol - 1) > 1e-3) f.push(`volume=${n4(vol)}`);
     if (c.fadeIn > 0) f.push(`afade=t=in:st=0:d=${r3(Math.min(c.fadeIn, c.duration))}`);
     if (c.fadeOut > 0) f.push(`afade=t=out:st=${r3(Math.max(0, c.duration - c.fadeOut))}:d=${r3(Math.min(c.fadeOut, c.duration))}`);
-    f.push('aformat=sample_fmts=fltp:sample_rates=48000:channel_layouts=stereo');
     if (c.start > 0.0005) f.push(`adelay=delays=${Math.round(c.start * 1000)}:all=1`);
     const l = L('a');
     F.push(`[${idx}:a]${f.join(',')}[${l}]`);
@@ -238,12 +302,86 @@ export function buildExport({ project: src, mediaMap, out, textAssets = {}, fxAs
       F.push(`[${acc}]tpad=stop_mode=add:stop_duration=${r3(T - accDur)}:color=${hex(bgDefault.color)}[${base}]`);
     } else base = acc;
 
+    // Camada de um clipe (texto, forma, foto ou vídeo) no tempo do fluxo "base".
+    // t0: onde o fluxo da camada começa; pre/post: segundos de quadro parado antes/depois do clipe
+    // (usados nas transições entre clipes das faixas de cima).
+    function layerOf(c, t0, pre = 0, post = 0) {
+      const at0 = t0 + pre;
+      if (c.type === 'text' || c.type === 'shape') {
+        const a = textAssets[c.id];
+        if (!a) return null;
+        const dyn = c.__dyn || {};
+        const idx = addInput(['-i', a.path]);
+        const f = ['format=rgba', ...loopFor(c.duration + pre + post + 0.05), `setpts=PTS-STARTPTS+${r3(t0)}/TB`];
+        // o PNG já vem com escala/giro/opacidade fixos; o que muda (pontos de modificação) é aplicado aqui
+        f.push(...motionFilters(c, dyn, at0, { rotBaked: !dyn.rotation, scaleBase: a.scale ?? maxScale(c, dyn) }));
+        f.push(...animFades(c, at0));
+        const l = L('t');
+        F.push(`[${idx}:v]${f.join(',')}[${l}]`);
+        return { l, ...posExprs(c, dyn, at0, a.cx, a.cy) };
+      }
+      const m = mediaOf(c);
+      if (!usable(m)) return null;
+      const idx = inputFor(c, m);
+      // (fotos: o laço e os trechos de cor já vêm no preChain; os quadros parados entram depois)
+      const { f: pf } = preChain(c, m);
+      let f = pf;
+      if (pre > 0 || post > 0) f = [...pf, `tpad=start_mode=clone:start_duration=${r3(pre)}:stop_mode=clone:stop_duration=${r3(post)}`];
+      const pl = placeChain(c, t0, at0);
+      const l = L('o');
+      F.push(`[${idx}:v]${[...f, ...pl.f].join(',')}[${l}]`);
+      return { l, x: pl.x, y: pl.y };
+    }
+
+    // Clipes encostados com transição (A→B→C…): cada um é sobreposto num pedaço do fundo e os
+    // pedaços são unidos com xfade — A segura o último quadro e B o primeiro durante a mistura.
+    function chainTransition(X, chain) {
+      const n = chain.length;
+      const TF = Math.round(T * FPS);
+      const cuts = [], ds = [];
+      for (let i = 1; i < n; i++) {
+        cuts.push(Math.round(chain[i].start * FPS));
+        ds.push(2 * Math.max(1, Math.round((overlayTransDur(chain[i - 1], chain[i]) * FPS) / 2)));
+      }
+      const xs = Array.from({ length: n }, () => L('xs'));
+      F.push(`[${X}]split=${n}${xs.map((x) => `[${x}]`).join('')}`);
+      const segs = [];
+      for (let i = 0; i < n; i++) {
+        const c = chain[i];
+        const aF = i === 0 ? 0 : cuts[i - 1] - ds[i - 1] / 2;
+        const bF = i === n - 1 ? TF : cuts[i] + ds[i] / 2;
+        const pre = i === 0 ? 0 : ds[i - 1] / 2 / FPS;
+        const post = i === n - 1 ? 0 : ds[i] / 2 / FPS;
+        const t0 = i === 0 ? c.start : 0;
+        const sg = L('sx'), out = L('sy');
+        F.push(`[${xs[i]}]trim=start_frame=${aF}:end_frame=${bF},setpts=PTS-STARTPTS[${sg}]`);
+        const ly = layerOf(c, t0, pre, post);
+        if (ly) F.push(`[${sg}][${ly.l}]overlay=x='${ly.x}':y='${ly.y}':eof_action=pass:enable='between(t,${r3(t0)},${r3(t0 + pre + c.duration + post)})',format=yuv420p,setsar=1,settb=AVTB[${out}]`);
+        else F.push(`[${sg}]format=yuv420p,setsar=1,settb=AVTB[${out}]`);
+        segs.push(out);
+      }
+      let acc = segs[0];
+      for (let i = 1; i < n; i++) {
+        const l = L('xo');
+        F.push(`[${acc}][${segs[i]}]xfade=transition=${chain[i - 1].transition.id}:duration=${r3(ds[i - 1] / FPS)}:offset=${r3((cuts[i - 1] - ds[i - 1] / 2) / FPS)}[${l}]`);
+        acc = l;
+      }
+      return acc;
+    }
+
     // ---- Faixas acima da principal, de baixo para cima ----
     const mi = main ? project.tracks.indexOf(main) : project.tracks.length;
     for (let ti = mi - 1; ti >= 0; ti--) {
       const tr = project.tracks[ti];
       if (tr.hidden || tr.kind === 'audio') continue;
+      // cadeias com transição (só as que cabem inteiras no trecho exportado)
+      const TFr = Math.round(T * FPS);
+      const chains = tr.kind === 'effect' ? [] : overlayChains(tr).filter((ch) => ch.every((c, i) => i === 0
+        || Math.round(c.start * FPS) + Math.max(1, Math.round((overlayTransDur(ch[i - 1], c) * FPS) / 2)) <= TFr));
+      const chained = new Set(chains.flat().map((c) => c.id));
+      for (const ch of chains) base = chainTransition(base, ch);
       for (const c of [...tr.clips].sort((a, b) => a.start - b.start)) {
+        if (chained.has(c.id)) continue;
         const s = c.start, e = c.start + c.duration;
         if (e <= 0 || s >= T) continue;
         const en = `between(t,${r3(s)},${r3(e)})`;
@@ -299,30 +437,11 @@ export function buildExport({ project: src, mediaMap, out, textAssets = {}, fxAs
           const nb = L('b');
           F.push(segs.length > 1 ? `${segs.map((x) => `[${x}]`).join('')}concat=n=${segs.length}:v=1:a=0,settb=AVTB[${nb}]` : `[${segs[0]}]null[${nb}]`);
           base = nb;
-        } else if (c.type === 'text') {
-          const a = textAssets[c.id];
-          if (!a) continue;
-          const idx = addInput(['-i', a.path]);
-          const f = ['format=rgba', ...loopFor(c.duration + 0.05), `setpts=PTS-STARTPTS+${r3(s)}/TB`];
-          const rx = animRotExpr(c, s);
-          if (rx) f.push(`rotate=a='${rx}':c=none:ow='hypot(iw,ih)':oh='ow'`);
-          const sx = animScaleExpr(c, s);
-          if (sx) f.push(`scale=w='max(2,trunc(iw*${sx}))':h='max(2,trunc(ih*${sx}))':eval=frame`);
-          f.push(...animFades(c, s));
-          const { dx, dy } = animOffsetExprs(c, s);
-          const tl = L('t'), l = L('b');
-          F.push(`[${idx}:v]${f.join(',')}[${tl}]`);
-          F.push(`[${base}][${tl}]overlay=x='${n4(a.cx)}-w/2${dx ? `+${W}*(${dx})` : ''}':y='${n4(a.cy)}-h/2${dy ? `+${H}*(${dy})` : ''}':eof_action=pass:enable='${en}'[${l}]`);
-          base = l;
-        } else if (c.type === 'video' || c.type === 'image') {
-          const m = mediaOf(c);
-          if (!usable(m)) continue;
-          const idx = inputFor(c, m);
-          const { f: pre } = preChain(c, m);
-          const pl = placeChain(c, s);
-          const ol = L('o'), l = L('b');
-          F.push(`[${idx}:v]${[...pre, ...pl.f].join(',')}[${ol}]`);
-          F.push(`[${base}][${ol}]overlay=x='${pl.x}':y='${pl.y}':eof_action=pass:enable='${en}'[${l}]`);
+        } else if (c.type === 'text' || c.type === 'shape' || c.type === 'video' || c.type === 'image') {
+          const ly = layerOf(c, s);
+          if (!ly) continue;
+          const l = L('b');
+          F.push(`[${base}][${ly.l}]overlay=x='${ly.x}':y='${ly.y}':eof_action=pass:enable='${en}'[${l}]`);
           base = l;
         }
       }

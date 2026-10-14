@@ -7,8 +7,15 @@ Baixe o instalador da versão mais recente em **Releases** (`MunninCut-Setup-<ve
 clique em **Mais informações → Executar assim mesmo**.
 
 ## O que tem
-- Linha do tempo com faixa principal magnética, sobreposições, textos, stickers, efeitos e áudios;
-  dividir (Ctrl+B), aparar, mover, duplicar, copiar/colar, desfazer/refazer, ímã e zoom.
+- Linha do tempo com faixa principal magnética, sobreposições, textos, stickers, formas, efeitos e áudios;
+  dividir (Ctrl+B), aparar, mover, duplicar, copiar/colar, desfazer/refazer, ímã e zoom;
+  seleção de vários clipes (Ctrl+clique, Ctrl+A ou retângulo) para mover, copiar e excluir juntos.
+- Pontos de modificação (keyframes, tecla K): posição, escala, rotação, opacidade, volume, ajustes de cor e
+  intensidade do filtro mudam suavemente entre os pontos — na prévia e no arquivo exportado.
+- Remover fundo verde/azul (chroma key) com conta-gotas; reverter clipes (imagem e som); efeitos de voz
+  (eco, igreja, robô, telefone, rádio, megafone, debaixo d'água, voz fina/grossa), graves, agudos e redução de ruído.
+- Formas padrão (quadrado, círculo, estrela, coração, seta, balão…) com cor, contorno, cantos e sombra.
+- Prévia de filtros e efeitos ao passar o mouse; tela cheia com controles.
 - Transições (24, via `xfade`), animações de entrada/saída, filtros de cor, ajustes (brilho, contraste,
   saturação, temperatura, matiz, nitidez, vinheta, desfoque) e efeitos (VHS, granulado, flash, barras de cinema…).
 - 94 efeitos no estilo CapCut, em categorias: Básico (fades, abrir/fechar, desfoque pulsante…), Luz suave,
@@ -17,7 +24,8 @@ clique em **Mais informações → Executar assim mesmo**.
   vazamento de luz, arco-íris, duotones), Divisão (2/3/4/9 telas, espelhos, caleidoscópio) e Partículas
   (corações, estrelas, confete, neve, chuva, bolhas, contagem 3-2-1), Iluminação (raios, holofote,
   lens flare, bokeh, borda neon…), Aura e Transição criativa (giro de câmera, chicote, impacto…).
-- 34 transições, incluindo as de câmera (giro, zoom, chicote, rolar, impacto) com desfoque de movimento.
+- 34 transições, incluindo as de câmera (giro, zoom, chicote, rolar, impacto) com desfoque de movimento;
+  as de mistura também valem entre clipes encostados nas faixas de cima.
 - Cortar áudio direto no bloco da linha do tempo (com a duração à vista) ou antes de inserir (teclas I e O).
 - Legendas automáticas offline (whisper.cpp) com estilos e revisão do texto.
 - Resiliência: arquivos trocados com o mesmo nome são relidos mantendo os efeitos; arquivos movidos são
@@ -36,8 +44,10 @@ clique em **Mais informações → Executar assim mesmo**.
   (FFmpeg aplicado só no trecho do clipe, via split/trim/concat); as camadas desenhadas (partículas, REC…)
   usam a mesma função nos dois lados e viram uma sequência de PNGs na exportação.
 - `src/shared/` — regras puras usadas na prévia **e** na exportação: `ops.js` (matrizes de cor iguais às do CSS),
-  `anim.js`, `timeline.js`, `graph.js` (monta o `filter_complex` do FFmpeg), `camtrans.js` (transições de câmera)
-  e `expr.js` (avalia na prévia as mesmas expressões que vão para o FFmpeg).
+  `anim.js`, `timeline.js`, `graph.js` (monta o `filter_complex` do FFmpeg), `camtrans.js` (transições de câmera),
+  `expr.js` (avalia na prévia as mesmas expressões que vão para o FFmpeg), `keyframes.js` (pontos de modificação),
+  `chroma.js` (mesmas contas do chromakey/despill do FFmpeg) e `audiofx.js` (efeitos de voz: um plano só para
+  o Web Audio da prévia e os filtros do FFmpeg).
 - `src/engine/` — prévia em canvas: compositor, transições, texto, sincronização dos `<video>`/`<audio>`.
 - `src/components/` e `src/panels/` — interface (React + zustand).
 

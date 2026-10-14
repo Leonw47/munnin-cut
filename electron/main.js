@@ -213,6 +213,8 @@ ipcMain.handle('media:thumbs', (_e, p, info) => media.thumbs(p, info));
 ipcMain.handle('media:waveform', (_e, p) => media.waveform(p));
 ipcMain.handle('media:proxy', (e, p, kind, jobId) =>
   media.proxy(p, kind, (pct) => { if (!e.sender.isDestroyed()) e.sender.send('media:proxyProgress', { jobId, pct }); }));
+ipcMain.handle('media:reverse', (e, p, kind, jobId) =>
+  media.reverse(p, kind, (pct) => { if (!e.sender.isDestroyed()) e.sender.send('media:proxyProgress', { jobId, pct }); }));
 
 const fxCacheRoot = path.join(cacheDir, 'fx');
 function scopeDir(scope) {
@@ -539,6 +541,8 @@ ipcMain.handle('test:fs', async (_e, op, a, b) => {
   return true;
 });
 ipcMain.handle('test:log', (_e, msg) => { if (AUTOTEST) console.log('[teste]', msg); return true; });
+// Só nos testes: roda um trecho como se fosse um clique do usuário (ex.: entrar em tela cheia).
+ipcMain.handle('test:gesture', (_e, code) => (AUTOTEST ? win.webContents.executeJavaScript(String(code), true) : null));
 
 ipcMain.handle('shell:showItem', (_e, p) => { shell.showItemInFolder(p); return true; });
 ipcMain.handle('shell:openPath', (_e, p) => shell.openPath(p));
