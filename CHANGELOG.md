@@ -3,6 +3,41 @@
 Formato baseado em [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/) e versões no padrão
 [SemVer](https://semver.org/lang/pt-BR/): MAJOR.MINOR.PATCH — correções sobem o PATCH, recursos novos o MINOR.
 
+## [1.4.0] — 2026-10-14
+Feedback de teste do Douglas Zanetti.
+
+### Adicionado
+- **Pontos de modificação (keyframes):** marque um ponto (◆ ou tecla K), leve a agulha a outro momento e mude
+  posição, escala, rotação, opacidade, ajustes de cor (brilho, contraste, saturação…), intensidade do filtro ou
+  volume — o app cria outro ponto e faz a passagem suave entre eles. Losangos no inspetor e na linha do tempo
+  (clique para ir até o ponto), botões de ponto anterior/próximo; mexer no reprodutor também cria pontos.
+  Dividir, aparar o começo e mudar a velocidade preservam os pontos. A exportação reproduz a mesma curva.
+- **Seleção de vários clipes:** Ctrl+clique, Ctrl+A ou arrastar um retângulo na área vazia da linha do tempo.
+  Mover em grupo, duplicar, copiar/colar, silenciar e excluir de uma vez; filtro aplicado em todos.
+- **Remover fundo (chroma key)** para vídeo e foto: cor do fundo com conta-gotas no reprodutor, intensidade,
+  bordas suaves e remoção do reflexo verde/azul (mesmas contas do chromakey/despill do FFmpeg).
+- **Formas padrão:** quadrado, arredondado, círculo, anel, triângulo, losango, hexágono, estrela, coração, seta,
+  linha, balão e moldura, com cor, contorno, cantos, sombra e espelhamento.
+- **Prévia ao passar o mouse:** filtros e efeitos aparecem no reprodutor sem aplicar (no clipe selecionado ou
+  no quadro inteiro).
+- **Transições nas faixas de cima:** entre dois clipes encostados de uma sobreposição/texto/forma, com as
+  transições de mistura (dissolver, limpar, círculo, relógio, abrir).
+- **Reverter** clipes de vídeo e áudio (imagem e som de trás para frente), com cópia invertida em cache.
+- **Efeitos de voz:** eco, igreja/salão, robô, telefone, rádio antigo, megafone, debaixo d'água, voz fina e voz
+  grossa, com intensidade; equalizador de graves e agudos; redução de ruído na exportação.
+- **Tela cheia com controles:** reproduzir/pausar, voltar/avançar 5 s, barra de tempo, silenciar e sair;
+  clique no vídeo pausa, clique duplo sai.
+
+### Corrigido
+- Puxar a borda de um clipe sobre o vizinho na mesma faixa não sobrepõe mais (a borda para no vizinho).
+- Arrastar a agulha não faz mais a prévia piscar entre camadas: enquanto o vídeo busca o quadro, a camada de cima
+  continua com o último quadro.
+- Exportação falhava com ajustes de cor fortes combinados (coeficiente fora do limite do colorchannelmixer).
+
+### Alterado
+- Clique na área vazia da linha do tempo leva a agulha; arrastar ali desenha a seleção (a régua continua
+  arrastando a agulha).
+
 ## [1.3.0] — 2026-10-11
 ### Adicionado
 - **Resiliência das mídias:** cada mídia guarda o caminho e uma "impressão" do arquivo (tamanho e data).
