@@ -3,12 +3,17 @@
 Formato baseado em [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/) e versões no padrão
 [SemVer](https://semver.org/lang/pt-BR/): MAJOR.MINOR.PATCH — correções sobem o PATCH, recursos novos o MINOR.
 
+## [1.4.1] — 2026-10-16
+### Adicionado
+- **Escala independente em X (Largura) e Y (Altura):** novos controles **Largura X** e **Altura Y** no painel Transformar e alças laterais interativas no reprodutor permitem esticar ou encolher a largura e a altura dos clipes de vídeo separadamente sem que um interfira no outro.
+- **Suporte a pontos de animação (keyframes):** os fatores Largura X e Altura Y agora contam com pontos de modificação (keyframes ◆ / tecla K). É possível marcar um ponto na linha do tempo, avançar a agulha, alterar o tamanho X ou Y e marcar outro ponto para que o vídeo se estique ou encolha suavemente ao longo do tempo (tanto na prévia do editor quanto na exportação final).
+
 ## [1.4.0] — 2026-10-14
 Feedback de teste do Douglas Zanetti.
 
 ### Adicionado
 - **Pontos de modificação (keyframes):** marque um ponto (◆ ou tecla K), leve a agulha a outro momento e mude
-  posição, escala, rotação, opacidade, ajustes de cor (brilho, contraste, saturação…), intensidade do filtro ou
+  posição, escala, largura (X), altura (Y), rotação, opacidade, ajustes de cor (brilho, contraste, saturação…), intensidade do filtro ou
   volume — o app cria outro ponto e faz a passagem suave entre eles. Losangos no inspetor e na linha do tempo
   (clique para ir até o ponto), botões de ponto anterior/próximo; mexer no reprodutor também cria pontos.
   Dividir, aparar o começo e mudar a velocidade preservam os pontos. A exportação reproduz a mesma curva.

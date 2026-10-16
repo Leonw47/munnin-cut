@@ -1,7 +1,7 @@
 // Pipeline de exportação: gera os PNGs de texto, monta o grafo do FFmpeg e dispara o processo.
 import { renderTextPng } from './engine/text.js';
 import { renderShapePng } from './engine/shapes.js';
-import { splitKf, maxScale } from './shared/keyframes.js';
+import { splitKf, maxScale, maxScaleX, maxScaleY } from './shared/keyframes.js';
 import { buildExport, exportSize, effectSegments } from './shared/graph.js';
 import { makeCanvas } from './engine/util.js';
 import { EXPORT_FORMATS } from './shared/defs.js';
@@ -38,12 +38,20 @@ export function startExport(opts) {
           if (c.type !== 'text' && c.type !== 'shape') continue;
           // pontos de modificação: o que muda (escala, giro, opacidade) não vai "assado" no PNG
           const { base, dyn } = splitKf(c);
-          const opts = { scale: maxScale(base, dyn), rotate: !dyn.rotation, opacity: !dyn.opacity };
+          const opts = {
+            scale: maxScale(base, dyn),
+            scaleX: maxScaleX(base, dyn),
+            scaleY: maxScaleY(base, dyn),
+            rotate: !dyn.rotation && !dyn.scaleX && !dyn.scaleY,
+            opacity: !dyn.opacity,
+          };
           const bytes = c.type === 'shape' ? await renderShapePng(base, k, opts) : await renderTextPng(base, k, opts);
           const path = await window.api.writeFile(`job:${jobId}`, `text_${c.id}.png`, bytes);
           textAssets[c.id] = {
             path,
             scale: opts.scale,
+            scaleX: opts.scaleX,
+            scaleY: opts.scaleY,
             cx: size.width / 2 + (base.transform?.x || 0) * size.width,
             cy: size.height / 2 + (base.transform?.y || 0) * size.height,
           };

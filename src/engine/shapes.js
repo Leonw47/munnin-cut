@@ -144,13 +144,15 @@ export function drawShape(ctx, sh, k) {
 }
 
 // PNG de um clipe de forma (exportação). opts.bake: escala, rotação e opacidade já aplicadas.
-export async function renderShapePng(clip, k, { scale = null, rotate = true, opacity = true } = {}) {
+export async function renderShapePng(clip, k, { scale = null, scaleX = null, scaleY = null, rotate = true, opacity = true } = {}) {
   const sh = clip.shape;
   const tf = clip.transform || {};
   const kk = k * (scale ?? tf.scale ?? 1);
+  const sx = scaleX ?? tf.scaleX ?? 1;
+  const sy = scaleY ?? tf.scaleY ?? 1;
   const { w, h } = shapeSize(sh, kk);
   const m = shapeMargin(sh, kk);
-  const bw = w + m * 2, bh = h + m * 2;
+  const bw = (w + m * 2) * sx, bh = (h + m * 2) * sy;
   const rot = rotate ? ((tf.rotation || 0) * Math.PI) / 180 : 0;
   const rw = Math.ceil(Math.abs(bw * Math.cos(rot)) + Math.abs(bh * Math.sin(rot)));
   const rh = Math.ceil(Math.abs(bw * Math.sin(rot)) + Math.abs(bh * Math.cos(rot)));
@@ -158,7 +160,7 @@ export async function renderShapePng(clip, k, { scale = null, rotate = true, opa
   const ctx = c.getContext('2d');
   ctx.translate(c.width / 2, c.height / 2);
   ctx.rotate(rot);
-  ctx.scale(tf.flipH ? -1 : 1, tf.flipV ? -1 : 1);
+  ctx.scale(sx * (tf.flipH ? -1 : 1), sy * (tf.flipV ? -1 : 1));
   ctx.globalAlpha = opacity ? clip.opacity ?? 1 : 1;
   drawShape(ctx, sh, kk);
   const blob = await new Promise((res) => c.toBlob(res, 'image/png'));

@@ -10,7 +10,7 @@ clique em **Mais informações → Executar assim mesmo**.
 - Linha do tempo com faixa principal magnética, sobreposições, textos, stickers, formas, efeitos e áudios;
   dividir (Ctrl+B), aparar, mover, duplicar, copiar/colar, desfazer/refazer, ímã e zoom;
   seleção de vários clipes (Ctrl+clique, Ctrl+A ou retângulo) para mover, copiar e excluir juntos.
-- Pontos de modificação (keyframes, tecla K): posição, escala, rotação, opacidade, volume, ajustes de cor e
+- Pontos de modificação (keyframes, tecla K): posição, escala, largura (X), altura (Y), rotação, opacidade, volume, ajustes de cor e
   intensidade do filtro mudam suavemente entre os pontos — na prévia e no arquivo exportado.
 - Remover fundo verde/azul (chroma key) com conta-gotas; reverter clipes (imagem e som); efeitos de voz
   (eco, igreja, robô, telefone, rádio, megafone, debaixo d'água, voz fina/grossa), graves, agudos e redução de ruído.
