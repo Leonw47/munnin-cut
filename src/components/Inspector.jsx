@@ -131,6 +131,7 @@ function TransitionPanel({ clipId }) {
 // o ponto no instante da agulha — e entre os pontos a mudança é suave.
 function KfSlider({ clip, prop, label, min, max, step = 1, toUi = (v) => v, fromUi = (v) => v }) {
   const time = useStore((s) => s.time);
+  const justCreatedAt = useRef(null);
   const lt = time - clip.start;
   const inside = lt >= -1e-3 && lt <= clip.duration + 1e-3;
   const tl = Math.max(0, Math.min(clip.duration, lt));
@@ -139,6 +140,11 @@ function KfSlider({ clip, prop, label, min, max, step = 1, toUi = (v) => v, from
   const v = propAt(clip, prop, tl);
   const toggle = () => {
     if (!inside) { useStore.getState().toastMsg('Coloque a agulha sobre o clipe para marcar o ponto.'); return; }
+    if (at && justCreatedAt.current !== null && Math.abs(justCreatedAt.current - tl) < 1 / 60) {
+      justCreatedAt.current = null;
+      return;
+    }
+    justCreatedAt.current = null;
     useStore.getState().updateClip(clip.id, (c) => {
       if (hasKfAt(c, prop, tl)) removeKfAt(c, prop, tl);
       else upsertKf(c, prop, tl, propAt(c, prop, tl));
@@ -151,7 +157,10 @@ function KfSlider({ clip, prop, label, min, max, step = 1, toUi = (v) => v, from
         <button className={`kf-btn ${at ? 'on' : on ? 'has' : ''}`} onClick={toggle}
           title={at ? 'Tirar o ponto de modificação deste momento' : on ? 'Marcar um ponto neste momento (este valor já muda ao longo do clipe)' : 'Marcar ponto de modificação neste momento'}>◆</button>
       </label>
-      <div><Slider value={toUi(v)} min={min} max={max} step={step} onChange={(x) => editClip(clip.id, (c) => setPropAt(c, prop, fromUi(x), tl))} /></div>
+      <div><Slider value={toUi(v)} min={min} max={max} step={step} onChange={(x) => {
+        if (on && !at) justCreatedAt.current = tl;
+        editClip(clip.id, (c) => setPropAt(c, prop, fromUi(x), tl));
+      }} /></div>
     </div>
   );
 }
@@ -174,7 +183,7 @@ function BasicTab({ clip, isMain }) {
   return (
     <>
       <Section title="Transformar" right={
-        <button className="btn small ghost" title="Redefinir" onClick={() => useStore.getState().updateClip(id, (c) => { c.transform = { x: 0, y: 0, scale: 1, rotation: 0, flipH: false, flipV: false }; c.opacity = 1; clearKf(c, ['x', 'y', 'scale', 'rotation', 'opacity']); })}><RotateCcw size={13} /> Redefinir</button>
+        <button className="btn small ghost" title="Redefinir" onClick={() => useStore.getState().updateClip(id, (c) => { c.transform = { x: 0, y: 0, scale: 1, scaleX: 1, scaleY: 1, rotation: 0, flipH: false, flipV: false }; c.opacity = 1; clearKf(c, ['x', 'y', 'scale', 'scaleX', 'scaleY', 'rotation', 'opacity']); })}><RotateCcw size={13} /> Redefinir</button>
       }>
         {isMedia && (
           <Field label="Encaixe">
@@ -183,6 +192,8 @@ function BasicTab({ clip, isMain }) {
           </Field>
         )}
         <KfSlider clip={clip} prop="scale" label="Escala" min={1} max={500} toUi={(v) => Math.round(v * 100)} fromUi={(x) => x / 100} />
+        <KfSlider clip={clip} prop="scaleX" label="Largura X" min={1} max={500} toUi={(v) => Math.round(v * 100)} fromUi={(x) => x / 100} />
+        <KfSlider clip={clip} prop="scaleY" label="Altura Y" min={1} max={500} toUi={(v) => Math.round(v * 100)} fromUi={(x) => x / 100} />
         <KfSlider clip={clip} prop="x" label="Posição X" min={-100} max={100} step={0.1} {...pct} />
         <KfSlider clip={clip} prop="y" label="Posição Y" min={-100} max={100} step={0.1} {...pct} />
         <KfSlider clip={clip} prop="rotation" label="Rotação" min={-180} max={180} toUi={(v) => Math.round(v)} />

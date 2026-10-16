@@ -87,6 +87,18 @@ function TransformOverlay({ W, H }) {
         const d1 = Math.hypot(p.x - b0.cx, p.y - b0.cy);
         const ns = Math.max(0.02, Math.min(20, (tf0.scale ?? 1) * (d1 / d0)));
         s.updateClip(target.id, (c) => { setPropAt(c, 'scale', ns, lt); }, { silent: true });
+      } else if (mode === 'scale-x') {
+        const rad = (b0.rot * Math.PI) / 180;
+        const d0 = Math.max(4, Math.abs((p0.x - b0.cx) * Math.cos(rad) + (p0.y - b0.cy) * Math.sin(rad)));
+        const d1 = Math.abs((p.x - b0.cx) * Math.cos(rad) + (p.y - b0.cy) * Math.sin(rad));
+        const nsx = Math.max(0.01, Math.min(20, (tf0.scaleX ?? 1) * (d1 / d0)));
+        s.updateClip(target.id, (c) => { setPropAt(c, 'scaleX', nsx, lt); }, { silent: true });
+      } else if (mode === 'scale-y') {
+        const rad = (b0.rot * Math.PI) / 180;
+        const d0 = Math.max(4, Math.abs(-(p0.x - b0.cx) * Math.sin(rad) + (p0.y - b0.cy) * Math.cos(rad)));
+        const d1 = Math.abs(-(p.x - b0.cx) * Math.sin(rad) + (p.y - b0.cy) * Math.cos(rad));
+        const nsy = Math.max(0.01, Math.min(20, (tf0.scaleY ?? 1) * (d1 / d0)));
+        s.updateClip(target.id, (c) => { setPropAt(c, 'scaleY', nsy, lt); }, { silent: true });
       } else if (mode === 'rotate') {
         const a0 = Math.atan2(p0.y - b0.cy, p0.x - b0.cx);
         const a1 = Math.atan2(p.y - b0.cy, p.x - b0.cx);
@@ -137,6 +149,12 @@ function TransformOverlay({ W, H }) {
       {guides.y && <line x1={0} y1={H / 2} x2={W} y2={H / 2} stroke="#ff4fd8" strokeDasharray="4 3" />}
       {box && !playing && (() => {
         const pts = [corner(-1, -1), corner(1, -1), corner(1, 1), corner(-1, 1)];
+        const sides = [
+          { p: corner(-1, 0), mode: 'scale-x', w: 6, h: 16, cursor: 'ew-resize', title: 'Esticar largura (X)' },
+          { p: corner(1, 0), mode: 'scale-x', w: 6, h: 16, cursor: 'ew-resize', title: 'Esticar largura (X)' },
+          { p: corner(0, -1), mode: 'scale-y', w: 16, h: 6, cursor: 'ns-resize', title: 'Esticar altura (Y)' },
+          { p: corner(0, 1), mode: 'scale-y', w: 16, h: 6, cursor: 'ns-resize', title: 'Esticar altura (Y)' },
+        ];
         const top = corner(0, -1);
         const rh = { x: top.x + 26 * Math.sin(r), y: top.y - 26 * Math.cos(r) };
         return (
@@ -144,6 +162,13 @@ function TransformOverlay({ W, H }) {
             <polygon points={pts.map((p) => `${p.x},${p.y}`).join(' ')} fill="transparent" stroke="#fff" strokeWidth="1.5"
               style={{ cursor: 'move' }} onPointerDown={(e) => beginGesture(e, 'move', clip, box)} />
             <line x1={top.x} y1={top.y} x2={rh.x} y2={rh.y} stroke="#fff" strokeWidth="1.2" />
+            {sides.map((s, i) => (
+              <rect key={`s${i}`} x={-s.w / 2} y={-s.h / 2} width={s.w} height={s.h} rx="3" fill="#fff" stroke="#0006"
+                transform={`translate(${s.p.x},${s.p.y}) rotate(${box.rot || 0})`}
+                style={{ cursor: s.cursor }} onPointerDown={(e) => beginGesture(e, s.mode, clip, box)}>
+                <title>{s.title}</title>
+              </rect>
+            ))}
             {pts.map((p, i) => (
               <rect key={i} x={p.x - 5} y={p.y - 5} width="10" height="10" rx="2" fill="#fff" stroke="#0006"
                 style={{ cursor: i % 2 ? 'nesw-resize' : 'nwse-resize' }} onPointerDown={(e) => beginGesture(e, 'scale', clip, box)} />

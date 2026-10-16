@@ -120,8 +120,9 @@ export function fitScale(sw, sh, W, H, fit = 'contain') {
 // Tamanho da camada de mídia (sem animação) em pixels do canvas W×H.
 export function mediaLayerSize(clip, media, W, H) {
   const { sw, sh } = cropDims(media, clip.crop);
-  const s = fitScale(sw, sh, W, H, clip.fit) * (clip.transform?.scale ?? 1);
-  return { w: sw * s, h: sh * s };
+  const tf = clip.transform || {};
+  const s = fitScale(sw, sh, W, H, clip.fit) * (tf.scale ?? 1);
+  return { w: sw * s * (tf.scaleX ?? 1), h: sh * s * (tf.scaleY ?? 1) };
 }
 
 export function uid(prefix = 'id') {
