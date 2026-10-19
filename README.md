@@ -14,6 +14,7 @@ clique em **Mais informações → Executar assim mesmo**.
   intensidade do filtro mudam suavemente entre os pontos — na prévia e no arquivo exportado.
 - Remover fundo verde/azul (chroma key) com conta-gotas; reverter clipes (imagem e som); efeitos de voz
   (eco, igreja, robô, telefone, rádio, megafone, debaixo d'água, voz fina/grossa), graves, agudos e redução de ruído.
+- Largura (X) e altura (Y) independentes, com alças laterais no reprodutor (contribuição do Douglas Zanetti).
 - Formas padrão (quadrado, círculo, estrela, coração, seta, balão…) com cor, contorno, cantos e sombra.
 - Prévia de filtros e efeitos ao passar o mouse; tela cheia com controles.
 - Transições (24, via `xfade`), animações de entrada/saída, filtros de cor, ajustes (brilho, contraste,
@@ -77,5 +78,5 @@ node scripts/test-size.mjs                            # compara o tamanho estima
 node scripts/test-bordas.mjs                          # confere que nada deixa barra preta na lateral (1080 de largura)
 node scripts/test-youtube.mjs                         # baixador do YouTube: instalação, atualização, trecho, erros
 ```
-Testes de interface: `MC_AUTOTEST=scripts/autotest-ui.js npx electron .` (também `autotest-interact.js`, `autotest-fx.js`, `autotest-v12.js`, `autotest-v13.js`, `autotest-v14.js`, `autotest-v15.js` e `autotest-scroll.js`).
+Testes de interface: `MC_AUTOTEST=scripts/autotest-ui.js npx electron .` (também `autotest-interact.js`, `autotest-fx.js`, `autotest-v12.js`, `autotest-v13.js`, `autotest-v14.js`, `autotest-v15.js`, `autotest-v16.js` e `autotest-scroll.js`).
 O FFmpeg fica em `resources/bin/` (não versionado). Histórico de versões em [CHANGELOG.md](CHANGELOG.md).

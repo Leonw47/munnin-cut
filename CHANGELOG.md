@@ -3,6 +3,22 @@
 Formato baseado em [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/) e versões no padrão
 [SemVer](https://semver.org/lang/pt-BR/): MAJOR.MINOR.PATCH — correções sobem o PATCH, recursos novos o MINOR.
 
+## [1.6.0] — 2026-10-19
+Contribuição do Douglas Zanetti (PR #1).
+
+### Adicionado
+- **Largura (X) e altura (Y) independentes:** controles "Largura X" e "Altura Y" no painel Transformar e alças
+  laterais no reprodutor (as dos cantos continuam mudando a escala proporcional) para esticar ou achatar vídeos,
+  fotos, textos e formas. Valem com pontos de modificação (◆ / K), na prévia e na exportação, e respeitam o giro:
+  o clipe estica nos próprios eixos antes de girar. Projetos antigos abrem iguais (largura e altura começam em 100%).
+- Mexer num controle com pontos de modificação cria o ponto naquele instante; o clique seguinte no ◆ não o apaga
+  mais por engano.
+
+### Corrigido (na integração)
+- Texto e forma com largura/altura animadas **e** girados saíam cortados na exportação (o `rotate` do FFmpeg
+  fixa o tamanho no primeiro quadro): agora recebem a mesma caixa fixa das mídias, com tamanho par — uma largura
+  ímpar fazia a exportação falhar.
+
 ## [1.5.0] — 2026-10-19
 
 ### Adicionado
