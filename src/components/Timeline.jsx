@@ -545,7 +545,25 @@ export default function Timeline({ height }) {
       return;
     }
     switch (item.kind) {
-      case 'media': addMediaAt(item.id); break;
+      case 'media': {
+        const ids = item.ids?.length ? item.ids : [item.id];
+        if (ids.length === 1) { addMediaAt(ids[0]); break; }
+        // vários itens da biblioteca: um depois do outro, na ordem da seleção
+        const toMain = rowTrack?.main || (!rowTrack && hit.zone !== 'top') || rowTrack?.kind === 'audio';
+        let idx = mainInsertIndex(t).index, at = sn;
+        for (const mid of ids) {
+          const m = S().project.media.find((x) => x.id === mid);
+          if (!m) continue;
+          let cid;
+          if (m.type === 'audio') cid = s.addMedia(mid, { target: 'audio', time: at });
+          else if (toMain) cid = s.addMedia(mid, { target: 'main', index: idx++ });
+          else cid = s.addMedia(mid, { target: 'overlay', time: at });
+          const c = cid && S().project.tracks.flatMap((tr) => tr.clips).find((x) => x.id === cid);
+          if (c && (m.type === 'audio' || !toMain)) at = c.start + c.duration;
+        }
+        break;
+      }
+      case 'sfx': s.addSfx(item.id, opts('audio')); break;
       case 'text': s.addText(item.preset, opts('text')); break;
       case 'sticker': s.addSticker(item.emoji, opts('text')); break;
       case 'shape': s.addShape(item.id, opts('text')); break;

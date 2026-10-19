@@ -8,6 +8,7 @@ import { spawn } from 'node:child_process';
 import { Readable } from 'node:stream';
 import { fileURLToPath } from 'node:url';
 import { createMedia } from './media.js';
+import { createYtdlp } from './ytdlp.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const isDev = !app.isPackaged;
@@ -308,6 +309,44 @@ ipcMain.handle('dialog:replace', async (_e, name) => {
   const r = await dialog.showOpenDialog(win, { title: `Substituir "${name}" por…`, properties: ['openFile'], filters: MEDIA_FILTER });
   return r.canceled ? null : r.filePaths[0];
 });
+
+// ---------- Efeitos sonoros (sintetizados no build: resources/sfx) ----------
+const sfxDir = app.isPackaged ? path.join(process.resourcesPath, 'sfx') : path.join(__dirname, '..', 'resources', 'sfx');
+const sfxUserDir = path.join(docsRoot, 'Efeitos sonoros');
+ipcMain.handle('sfx:list', () => {
+  let index = {};
+  try { index = JSON.parse(fs.readFileSync(path.join(sfxDir, 'index.json'), 'utf8')); } catch { /* sem biblioteca */ }
+  return { dir: sfxDir, index };
+});
+// copia o som para Documentos\Munnin Cut\Efeitos sonoros (caminho estável para o projeto) e devolve o caminho
+ipcMain.handle('sfx:materialize', async (_e, id, fileName) => {
+  if (!/^[A-Za-z0-9]+$/.test(String(id))) throw new Error('som inválido');
+  const src = path.join(sfxDir, `${id}.wav`);
+  if (!fs.existsSync(src)) throw new Error('som não encontrado na biblioteca');
+  let safe = path.basename(String(fileName || `${id}.wav`)).replace(/[<>:"|?*]/g, '_');
+  if (!safe.toLowerCase().endsWith('.wav')) safe += '.wav';
+  await fsp.mkdir(sfxUserDir, { recursive: true });
+  const dst = path.join(sfxUserDir, safe);
+  let same = false;
+  try { same = fs.statSync(dst).size === fs.statSync(src).size; } catch { /* ainda não existe */ }
+  if (!same) await fsp.copyFile(src, dst);
+  return dst;
+});
+
+// ---------- Áudio do YouTube (yt-dlp, sempre atualizado) ----------
+const youtubeDir = path.join(docsRoot, 'Áudios do YouTube');
+const yt = createYtdlp({
+  binDir: path.join(userDir, 'bin'), ffmpegDir: binDir, nodeExe: process.execPath, outDir: youtubeDir,
+  log: (m) => fs.appendFile(path.join(logsDir, 'youtube.txt'), `${new Date().toISOString()} ${m}\n`, () => {}),
+});
+const ytSend = (e) => (p) => { if (!e.sender.isDestroyed()) e.sender.send('yt:progress', p); };
+ipcMain.handle('yt:status', () => yt.status());
+ipcMain.handle('yt:update', (e) => yt.update({ onStage: ytSend(e) }));
+ipcMain.handle('yt:download', (e, opts) => yt.download(opts || {}, ytSend(e)));
+ipcMain.handle('yt:cancel', () => { yt.cancel(); return true; });
+ipcMain.handle('yt:folder', () => youtubeDir);
+// verificação diária em segundo plano — só se o baixador já foi usado alguma vez
+app.whenReady().then(() => setTimeout(() => { if (!AUTOTEST && yt.isInstalled()) yt.ensure(() => {}).catch(() => {}); }, 20000));
 
 // ---------- Legendas automáticas (whisper.cpp) ----------
 const CAPTION_MODELS = [

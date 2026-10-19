@@ -6,8 +6,11 @@ import { mediaUrl, OK_AUDIO, makeCanvas } from './engine/util.js';
 import { effectDef } from './shared/effects.js';
 import { SHAPES, DEFAULT_SHAPE } from './engine/shapes.js';
 import { sliceKf, kfPropsFor, hasKfAt, removeKfAt, upsertKf, propAt, kfTimes } from './shared/keyframes.js';
+import { sfxFileName } from './shared/sfx.js';
 
 const api = window.api;
+// ordem dos itens mostrados no painel da biblioteca aberto (para Shift+clique e Ctrl+A)
+export const libView = { order: [] };
 
 // ---------- Fábricas ----------
 export function newTrack(kind, main = false) {
@@ -197,6 +200,10 @@ export const useStore = create((set, get) => ({
   previewMuted: false,
   fxPreview: null, // { kind: 'filter' | 'effect', id } — efeito sob o mouse, mostrado sem aplicar
   pickColor: null, // { clipId } — conta-gotas do chroma key ativo (próximo clique no reprodutor escolhe a cor)
+  libSel: [], // mídias selecionadas na biblioteca (Delete remove do projeto)
+  libAnchor: null, // último item clicado (início do Shift+clique)
+  libFocus: false, // a biblioteca recebe as teclas (Delete, Ctrl+A, Esc) em vez da linha do tempo
+  ytFocus: 0, // pedido para focar o campo de link do YouTube (painel Áudio)
 
   toastMsg(text, kind = 'info', ms = 3500) {
     clearTimeout(toastTimer);
@@ -207,11 +214,11 @@ export const useStore = create((set, get) => ({
   // ---------- Telas ----------
   openEditor(project) {
     if (!project.tracks?.some((t) => t.main)) project.tracks = [newTrack('video', true), ...(project.tracks || [])];
-    set({ screen: 'editor', project: layoutProject(project), past: [], future: [], selection: null, time: 0, playing: false, anchor: null, meta: {}, zoom: 60 });
+    set({ screen: 'editor', project: layoutProject(project), past: [], future: [], selection: null, time: 0, playing: false, anchor: null, meta: {}, zoom: 60, libSel: [], libAnchor: null, libFocus: false });
     get().prepareAll();
   },
   newProject(ratioId) { get().openEditor(createProject(ratioId)); },
-  goHome() { set({ screen: 'home', project: null, playing: false, anchor: null, selection: null, meta: {} }); },
+  goHome() { set({ screen: 'home', project: null, playing: false, anchor: null, selection: null, meta: {}, libSel: [], libAnchor: null, libFocus: false }); },
 
   // ---------- Histórico ----------
   commit(fn, { silent = false, keepTracks = false } = {}) {
@@ -526,14 +533,60 @@ export const useStore = create((set, get) => ({
     get().pause();
     set({ modal: 'trim', trimMediaId: id });
   },
-  removeMedia(id) {
-    const used = get().project.tracks.some((t) => t.clips.some((c) => c.mediaId === id));
-    if (used && !window.confirm('Esta mídia está na linha do tempo. Remover a mídia e os clipes que a usam?')) return;
+  removeMedia(id) { get().removeMediaMany([id]); },
+  removeMediaMany(ids) {
+    const p0 = get().project;
+    const del = new Set(ids.filter((id) => p0.media.some((m) => m.id === id)));
+    if (!del.size) return;
+    const used = [...del].filter((id) => p0.tracks.some((t) => t.clips.some((c) => c.mediaId === id))).length;
+    if (used) {
+      const msg = del.size === 1 ? 'Esta mídia está na linha do tempo. Remover a mídia e os clipes que a usam?'
+        : `${used === del.size ? `As ${del.size} mídias estão` : `${used} das ${del.size} mídias estão`} na linha do tempo. Remover as mídias e os clipes que as usam?`;
+      if (!window.confirm(msg)) return;
+    }
     get().commit((p) => {
-      for (const t of p.tracks) t.clips = t.clips.filter((c) => c.mediaId !== id);
-      p.media = p.media.filter((m) => m.id !== id);
+      for (const t of p.tracks) t.clips = t.clips.filter((c) => !del.has(c.mediaId));
+      p.media = p.media.filter((m) => !del.has(m.id));
     }, { silent: true });
-    set((s) => ({ selection: get().validSelection(s.project, s.selection) }));
+    set((s) => ({
+      selection: get().validSelection(s.project, s.selection),
+      libSel: s.libSel.filter((x) => !del.has(x)),
+      libAnchor: del.has(s.libAnchor) ? null : s.libAnchor,
+    }));
+    if (del.size > 1) get().toastMsg(`${del.size} itens removidos do projeto (os arquivos continuam no computador).`);
+  },
+
+  // ---------- Seleção na biblioteca de mídia ----------
+  // clique = um item; Ctrl+clique = liga/desliga; Shift+clique = do último clicado até este (na ordem mostrada)
+  libClick(id, { ctrl = false, shift = false, order = [] } = {}) {
+    const s = get();
+    if (shift && s.libAnchor && order.includes(s.libAnchor) && order.includes(id)) {
+      const a = order.indexOf(s.libAnchor), b = order.indexOf(id);
+      const range = order.slice(Math.min(a, b), Math.max(a, b) + 1);
+      set({ libSel: ctrl ? [...new Set([...s.libSel, ...range])] : range, libFocus: true });
+      return;
+    }
+    if (ctrl) {
+      set({ libSel: s.libSel.includes(id) ? s.libSel.filter((x) => x !== id) : [...s.libSel, id], libAnchor: id, libFocus: true });
+      return;
+    }
+    set({ libSel: [id], libAnchor: id, libFocus: true });
+  },
+  libSelectAll(order) { set({ libSel: [...order], libFocus: true }); },
+  libBlur() { if (get().libFocus || get().libSel.length) set({ libFocus: false, libSel: [], libAnchor: null }); },
+
+  // ---------- Efeitos sonoros ----------
+  // copia o som da biblioteca para Documentos\Munnin Cut\Efeitos sonoros, importa e põe no cursor (faixa de áudio)
+  async addSfx(sfxId, opts = {}) {
+    try {
+      const file = await api.sfxMaterialize(sfxId, sfxFileName(sfxId));
+      const [mid] = await get().importPaths([file]);
+      if (!mid) return null;
+      return get().addMedia(mid, { target: 'audio', time: opts.time ?? get().time, trackId: opts.trackId });
+    } catch (e) {
+      get().toastMsg(`Não foi possível adicionar o som: ${String(e.message || e).replace(/^Error invoking remote method '[^']+': (Error: )?/, '')}`, 'err');
+      return null;
+    }
   },
 
   // ---------- Adicionar à linha do tempo ----------

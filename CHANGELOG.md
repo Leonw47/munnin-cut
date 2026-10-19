@@ -3,6 +3,31 @@
 Formato baseado em [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/) e versões no padrão
 [SemVer](https://semver.org/lang/pt-BR/): MAJOR.MINOR.PATCH — correções sobem o PATCH, recursos novos o MINOR.
 
+## [1.5.0] — 2026-10-19
+
+### Adicionado
+- **Efeitos sonoros (aba Sons):** 97 sons em 9 categorias — Transições (whoosh, riser, boom, braam…), Interface,
+  Impactos, Engraçados (boing, trombone triste, ba-dum-tss, grilos…), Games 8-bit, Magia e brilhos, Natureza
+  (vento, chuva, trovão, ondas, fogueira, passarinhos…), Música e percussão (sino de igreja, gongo, tadá,
+  aplausos…) e Tempo e alertas. Clique ouve, **+** ou clique duplo põe no cursor, ou arraste até a linha do
+  tempo; pesquisa por nome. Todos são sintetizados pelo próprio app (`scripts/sfx`), com volume equilibrado
+  entre eles — sem direitos de terceiros. O som usado vai para `Documentos\Munnin Cut\Efeitos sonoros`.
+- **Áudio do YouTube** (aba Áudio e botão "YouTube" na aba Mídia): cole o link e o áudio entra na biblioteca e na
+  linha do tempo, no cursor; opção de baixar só um trecho. Usa o yt-dlp oficial, instalado na primeira vez com
+  conferência do SHA-256, atualizado sozinho uma vez por dia e — se o YouTube mudar algo e o download falhar —
+  atualizado na hora e tentado de novo (e, se ainda falhar, com a versão noturna). Botão "Atualizar" e versão à
+  vista. O próprio app serve de runtime de JavaScript que o YouTube exige: nada precisa ser instalado.
+- **Seleção de vários itens na biblioteca:** clique, Ctrl+clique (um a um), Shift+clique (de um item a outro) e
+  Ctrl+A; **Delete** remove do projeto (pergunta antes se algum estiver na linha do tempo); arrastar um item
+  selecionado leva todos para a linha do tempo, um depois do outro.
+- **Corte direto no cartão:** clicar num vídeo ou áudio da biblioteca mostra as alças de início e fim no próprio
+  cartão (com a onda sonora), sem abrir janela. Shift deixa o ajuste 10× mais fino, o meio arrasta o trecho
+  inteiro, clique duplo volta para a mídia inteira; enquanto arrasta, toca o ponto do corte e o vídeo mostra o
+  quadro. A janela de corte continua no botão direito ("Cortar antes de inserir…").
+
+### Alterado
+- Abas do painel esquerdo mais compactas para caber a nova aba Sons.
+
 ## [1.4.1] — 2026-10-19
 
 ### Corrigido

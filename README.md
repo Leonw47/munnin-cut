@@ -26,7 +26,15 @@ clique em **Mais informações → Executar assim mesmo**.
   lens flare, bokeh, borda neon…), Aura e Transição criativa (giro de câmera, chicote, impacto…).
 - 34 transições, incluindo as de câmera (giro, zoom, chicote, rolar, impacto) com desfoque de movimento;
   as de mistura também valem entre clipes encostados nas faixas de cima.
-- Cortar áudio direto no bloco da linha do tempo (com a duração à vista) ou antes de inserir (teclas I e O).
+- Cortar áudio direto no bloco da linha do tempo (com a duração à vista) ou antes de inserir: direto no cartão
+  da biblioteca (clique e arraste as alças; Shift = ajuste fino) ou na janela de corte (botão direito; teclas I e O).
+- Biblioteca de mídia com seleção de vários itens (clique, Ctrl+clique, Shift+clique, Ctrl+A): Delete remove do
+  projeto; arrastar leva todos para a linha do tempo.
+- 97 efeitos sonoros em 9 categorias (transições, interface, impactos, engraçados, games 8-bit, magia, natureza,
+  música e percussão, tempo e alertas) — todos sintetizados pelo próprio app, sem direitos de terceiros.
+- Áudio do YouTube: cola o link e o áudio (inteiro ou só um trecho) já entra no projeto. Usa o yt-dlp oficial,
+  instalado na primeira vez (com conferência SHA-256) e atualizado sozinho: confere todo dia e, se o YouTube
+  mudar algo e o download falhar, atualiza e tenta de novo (inclusive na versão noturna).
 - Legendas automáticas offline (whisper.cpp) com estilos e revisão do texto.
 - Resiliência: arquivos trocados com o mesmo nome são relidos mantendo os efeitos; arquivos movidos são
   reencontrados pelo nome; ausentes aparecem com Localizar/Substituir. Projetos podem ser duplicados como modelo.
@@ -48,6 +56,10 @@ clique em **Mais informações → Executar assim mesmo**.
   `expr.js` (avalia na prévia as mesmas expressões que vão para o FFmpeg), `keyframes.js` (pontos de modificação),
   `chroma.js` (mesmas contas do chromakey/despill do FFmpeg) e `audiofx.js` (efeitos de voz: um plano só para
   o Web Audio da prévia e os filtros do FFmpeg).
+- `electron/ytdlp.js` — áudio do YouTube: instala/atualiza o yt-dlp e usa o próprio Electron como runtime de
+  JavaScript (`ELECTRON_RUN_AS_NODE`), que o YouTube exige.
+- `scripts/sfx/` — síntese dos efeitos sonoros (osciladores, ruídos, filtros, reverb, Karplus-Strong);
+  `npm run sfx` gera `resources/sfx` (o `npm run dist` gera sozinho).
 - `src/engine/` — prévia em canvas: compositor, transições, texto, sincronização dos `<video>`/`<audio>`.
 - `src/components/` e `src/panels/` — interface (React + zustand).
 
@@ -62,6 +74,8 @@ node scripts/test-graph.mjs mp4 webm gif mp3 prores   # testa o montador de expo
 node scripts/test-effects.mjs                         # exporta cada efeito animado e gera uma folha de amostras
 node scripts/test-transitions.mjs                     # exporta cada transição de câmera
 node scripts/test-size.mjs                            # compara o tamanho estimado com o real
+node scripts/test-bordas.mjs                          # confere que nada deixa barra preta na lateral (1080 de largura)
+node scripts/test-youtube.mjs                         # baixador do YouTube: instalação, atualização, trecho, erros
 ```
-Testes de interface: `MC_AUTOTEST=scripts/autotest-ui.js npx electron .` (também `autotest-interact.js`, `autotest-fx.js`, `autotest-v12.js`, `autotest-v13.js` e `autotest-scroll.js`).
+Testes de interface: `MC_AUTOTEST=scripts/autotest-ui.js npx electron .` (também `autotest-interact.js`, `autotest-fx.js`, `autotest-v12.js`, `autotest-v13.js`, `autotest-v14.js`, `autotest-v15.js` e `autotest-scroll.js`).
 O FFmpeg fica em `resources/bin/` (não versionado). Histórico de versões em [CHANGELOG.md](CHANGELOG.md).

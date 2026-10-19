@@ -3,3 +3,5 @@ dist/
 release/
 resources/bin/*.exe
 resources/whisper/
+# gerados por scripts/gen-sfx.mjs (npm run sfx; o dist gera sozinho)
+resources/sfx/

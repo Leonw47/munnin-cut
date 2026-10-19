@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { AlertTriangle, Info, RotateCcw, House, FileText } from 'lucide-react';
-import { useStore } from './store.js';
+import { useStore, libView } from './store.js';
 import { initAutosave, saveNow } from './autosave.js';
 import { uid, projectDuration } from './shared/timeline.js';
 import Home from './components/Home.jsx';
@@ -104,6 +104,10 @@ export default function App() {
       const ctrl = e.ctrlKey || e.metaKey;
       const k = e.key.toLowerCase();
       let handled = true;
+      // biblioteca de mídia em foco: Delete remove os itens selecionados, Ctrl+A seleciona todos, Esc limpa
+      if (s.libFocus && s.libSel.length && (k === 'delete' || k === 'backspace')) { e.preventDefault(); s.removeMediaMany(s.libSel); return; }
+      if (s.libFocus && ctrl && k === 'a') { e.preventDefault(); s.libSelectAll(libView.order); return; }
+      if (s.libFocus && k === 'escape') { e.preventDefault(); s.libBlur(); return; }
       if (k === ' ') s.togglePlay();
       else if (ctrl && k === 'b') s.splitAt();
       else if (k === 'delete' || k === 'backspace') s.deleteSelection();
@@ -128,7 +132,15 @@ export default function App() {
       if (handled) e.preventDefault();
     };
     window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
+    // clicar fora da biblioteca devolve as teclas para a linha do tempo (e limpa a seleção da biblioteca)
+    const onDown = (e) => {
+      const s = useStore.getState();
+      if (!s.libFocus && !s.libSel.length) return;
+      if (e.target?.closest?.('.media-lib, .ctx-menu, .modal-back, .toast')) return;
+      s.libBlur();
+    };
+    window.addEventListener('pointerdown', onDown, true);
+    return () => { window.removeEventListener('keydown', onKey); window.removeEventListener('pointerdown', onDown, true); };
   }, []);
 
   // Arrastar arquivos do Explorer para a janela

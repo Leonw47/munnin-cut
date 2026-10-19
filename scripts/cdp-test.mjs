@@ -42,6 +42,10 @@ const shot = async (name) => {
 await sleep(1500);
 await shot('p1_inicio');
 const DIR = 'C:/Users/leona/AppData/Local/Temp/munnin-cut-test';
+// 1.5: o que o teste criar em Documentos\Munnin Cut é apagado no fim (só se não existia antes)
+const docsRoot = path.dirname(await evaluate('return (await window.api.info()).draftsDir;'));
+const sfxTeste = path.join(docsRoot, 'Efeitos sonoros', 'Sino de igreja.wav');
+const sfxJaExistia = fs.existsSync(sfxTeste);
 const r = await evaluate(`
   const { useStore, startExport } = window.__mc;
   const S = () => useStore.getState();
@@ -77,7 +81,15 @@ const r = await evaluate(`
     const w = t.words || t.segments || t;
     legendas = Array.isArray(w) ? w.slice(0, 12).map((x) => x.text).join('').trim() : JSON.stringify(t).slice(0, 200);
   } catch (e) { legendas = 'ERRO: ' + e.message; }
-  return { v14, meta: Object.values(S().meta).map((m) => m.status), size: [S().project.width, S().project.height], res, nvenc: nv, legendas, pid, drafts: info.draftsDir };
+  // 1.5: biblioteca de sons empacotada e áudio do YouTube (yt-dlp com o próprio app como runtime de JS)
+  const sfxL = await window.api.sfxList();
+  const sfxClip = await S().addSfx('churchBell', { time: 0 });
+  const sfxPath = S().project.media.find((m) => m.name === 'Sino de igreja.wav')?.path;
+  let yt;
+  try { const d = await window.api.ytDownload({ url: 'https://youtu.be/aqz-KE-bpKQ', start: 1, end: 4 }); yt = { ok: true, path: d.path, title: d.title }; }
+  catch (e) { yt = { erro: e.message }; }
+  const v15 = { sons: Object.keys(sfxL.index || {}).length, sfxDir: sfxL.dir, sfxClip: !!sfxClip, sfxPath, yt, ytStatus: await window.api.ytStatus() };
+  return { v14, v15, meta: Object.values(S().meta).map((m) => m.status), size: [S().project.width, S().project.height], res, nvenc: nv, legendas, pid, drafts: info.draftsDir };
 `);
 console.log(JSON.stringify(r, null, 1));
 await shot('p2_editor');
@@ -85,4 +97,7 @@ await shot('p2_editor');
 await sleep(1600);
 await evaluate(`await window.api.deleteDraft('${r?.pid}'); return true;`);
 proc.kill();
+await sleep(800);
+if (!sfxJaExistia) fs.rmSync(sfxTeste, { force: true });
+if (r?.v15?.yt?.path) fs.rmSync(r.v15.yt.path, { force: true });
 process.exit(0);
