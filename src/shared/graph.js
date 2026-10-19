@@ -16,6 +16,14 @@ const n4 = (x) => String(Math.round(x * 10000) / 10000);
 const even = (x) => Math.max(2, Math.round(x / 2) * 2);
 const hex = (c) => (/^#[0-9a-f]{6}$/i.test(c || '') ? c : '#000000');
 
+// Bug do FFmpeg 8.0.1: a conversão rápida yuv420p → gbrp deixa as últimas colunas pretas em algumas
+// larguras (1080 → 8 px, 1350 → 6 px, 1078, 1076, 1012…), o que virava uma barra preta na lateral
+// direita de quase todo vídeo 1080 de largura (Instagram 4:5, 9:16, 1:1). Com accurate_rnd o
+// swscale usa o caminho correto; aplicado só nas passagens para gbrp custa ~5% de tempo (no grafo
+// inteiro custaria ~25%).
+const TO_GBRP = 'scale=flags=bicubic+accurate_rnd,format=gbrp';
+export const rgbSafe = (graph) => graph.replace(/format=gbrp\b/g, TO_GBRP);
+
 export function exportSize(project, shortSide) {
   const s = shortSide / Math.min(project.width, project.height);
   return { width: even(project.width * s), height: even(project.height * s) };
@@ -520,5 +528,5 @@ export function buildExport({ project: src, mediaMap, out, textAssets = {}, fxAs
   if (wantVideo) args.push('-map', '[vout]', ...v, '-r', String(fmt.kind === 'gif' ? Math.min(FPS, 15) : FPS));
   if (wantAudio) args.push('-map', '[aout]', ...a, '-ar', '48000');
   args.push('-t', r3(T), '-progress', 'pipe:1', '-nostats', '-loglevel', 'error', outPath);
-  return { args, graph: F.join(';\n'), duration: T };
+  return { args, graph: rgbSafe(F.join(';\n')), duration: T };
 }

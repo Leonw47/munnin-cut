@@ -3,6 +3,21 @@
 Formato baseado em [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/) e versões no padrão
 [SemVer](https://semver.org/lang/pt-BR/): MAJOR.MINOR.PATCH — correções sobem o PATCH, recursos novos o MINOR.
 
+## [1.4.1] — 2026-10-19
+
+### Corrigido
+- **Barra preta na lateral direita do vídeo exportado** em larguras como 1080 (Instagram 4:5 e 1:1, Stories/Reels
+  9:16) e 1350. Era um defeito do FFmpeg 8.0.1 na conversão de cor usada pelas transições de câmera (Chicote,
+  Giro, Zoom, Rolar, Impacto), pelos efeitos de brilho/glitch/duotone, pelas camadas de luz e pelos filtros
+  aplicados na faixa de efeitos: as últimas 8 colunas de cada linha saíam pretas — e, depois de uma transição
+  de câmera, o defeito ficava no vídeo inteiro. A conversão agora usa o caminho preciso do FFmpeg (~5% mais
+  lenta só nesses trechos).
+
+### Testes
+- `node scripts/test-bordas.mjs` exporta 119 casos em 1080×1350, 1080×1920 e 1080×1080 (cada efeito, filtro e
+  transição) e mede a borda direita; com `--sem-correcao` acusa as barras (36 casos), provando que o teste pega
+  o defeito.
+
 ## [1.4.0] — 2026-10-14
 Feedback de teste do Douglas Zanetti.
 
