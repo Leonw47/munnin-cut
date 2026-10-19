@@ -50,12 +50,12 @@ export const project = {
       { ...base, id: 'o1', type: 'image', mediaId: 'c', start: 1, duration: 2, transform: { x: 0.25, y: 0, scale: 0.45, rotation: 0 }, transition: { id: 'circleopen', duration: 1 } },
       { ...base, id: 'o2', type: 'video', mediaId: 'g', start: 3, duration: 2, transform: { x: 0.25, y: 0, scale: 0.6, rotation: 0 },
         chroma: { on: true, color: '#00d639', similarity: 30, smooth: 12, spill: true }, transition: { id: 'fade', duration: 0.6 } },
-      { ...base, id: 'o3', type: 'video', mediaId: 'b', start: 5, duration: 2, transform: { x: 0.25, y: 0, scale: 0.45, rotation: 10 }, animOut: { id: 'zoomOut', duration: 0.5 },
-        ...(KF ? { kf: { x: [{ t: 0, v: 0.25 }, { t: 1.5, v: -0.25 }], opacity: [{ t: 0, v: 1 }, { t: 1.5, v: 0.3 }], 'adjust.brightness': [{ t: 0, v: 0 }, { t: 1.5, v: 60 }] } } : {}) },
+      { ...base, id: 'o3', type: 'video', mediaId: 'b', start: 5, duration: 2, transform: { x: 0.25, y: 0, scale: 0.45, scaleX: 1.4, scaleY: 0.8, rotation: 10 }, animOut: { id: 'zoomOut', duration: 0.5 },
+        ...(KF ? { kf: { x: [{ t: 0, v: 0.25 }, { t: 1.5, v: -0.25 }], scaleX: [{ t: 0, v: 0.8 }, { t: 1.5, v: 1.8 }], scaleY: [{ t: 0, v: 1.3 }, { t: 1.5, v: 0.7 }], opacity: [{ t: 0, v: 1 }, { t: 1.5, v: 0.3 }], 'adjust.brightness': [{ t: 0, v: 0 }, { t: 1.5, v: 60 }] } } : {}) },
     ] },
     { id: 'main', kind: 'video', main: true, clips: [
       { ...base, id: 'm1', type: 'video', mediaId: 'a', in: 1, duration: 4, reverse: true, transition: { id: 'fade', duration: 0.5 },
-        ...(KF ? { kf: { scale: [{ t: 0.5, v: 1 }, { t: 3, v: 1.6 }], rotation: [{ t: 0, v: 0 }, { t: 3.5, v: 20 }] } } : {}) },
+        ...(KF ? { kf: { scale: [{ t: 0.5, v: 1 }, { t: 3, v: 1.6 }], scaleX: [{ t: 0, v: 1 }, { t: 3, v: 1.5 }], scaleY: [{ t: 0, v: 1 }, { t: 3, v: 0.8 }], rotation: [{ t: 0, v: 0 }, { t: 3.5, v: 20 }] } } : {}) },
       { ...base, id: 'm2', type: 'video', mediaId: 'a', in: 0, duration: 4 },
     ] },
     { id: 'au', kind: 'audio', clips: [

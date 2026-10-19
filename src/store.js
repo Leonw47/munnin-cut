@@ -38,7 +38,7 @@ export function createProject(ratioId = '16:9') {
 }
 
 const baseVisual = () => ({
-  transform: { x: 0, y: 0, scale: 1, rotation: 0, flipH: false, flipV: false },
+  transform: { x: 0, y: 0, scale: 1, scaleX: 1, scaleY: 1, rotation: 0, flipH: false, flipV: false },
   opacity: 1,
   animIn: { id: 'none', duration: 0.5 },
   animOut: { id: 'none', duration: 0.5 },

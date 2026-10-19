@@ -12,6 +12,8 @@ export const KF_PROPS = {
   x: { name: 'Posição X', get: (c) => c.transform?.x || 0, set: (c, v) => { c.transform = { ...(c.transform || {}), x: v }; } },
   y: { name: 'Posição Y', get: (c) => c.transform?.y || 0, set: (c, v) => { c.transform = { ...(c.transform || {}), y: v }; } },
   scale: { name: 'Escala', get: (c) => c.transform?.scale ?? 1, set: (c, v) => { c.transform = { ...(c.transform || {}), scale: v }; } },
+  scaleX: { name: 'Largura X', get: (c) => c.transform?.scaleX ?? 1, set: (c, v) => { c.transform = { ...(c.transform || {}), scaleX: v }; } },
+  scaleY: { name: 'Altura Y', get: (c) => c.transform?.scaleY ?? 1, set: (c, v) => { c.transform = { ...(c.transform || {}), scaleY: v }; } },
   rotation: { name: 'Rotação', get: (c) => c.transform?.rotation || 0, set: (c, v) => { c.transform = { ...(c.transform || {}), rotation: v }; } },
   opacity: { name: 'Opacidade', get: (c) => c.opacity ?? 1, set: (c, v) => { c.opacity = v; } },
   volume: { name: 'Volume', get: (c) => c.volume ?? 1, set: (c, v) => { c.volume = v; } },
@@ -119,7 +121,7 @@ export function scaleKf(kf, k) {
 // Propriedades que o botão ◆ grava de uma vez, conforme o tipo de clipe.
 export function kfPropsFor(clip, media) {
   const p = [];
-  if (['video', 'image', 'text', 'shape'].includes(clip.type)) p.push('x', 'y', 'scale', 'rotation', 'opacity');
+  if (['video', 'image', 'text', 'shape'].includes(clip.type)) p.push('x', 'y', 'scale', 'scaleX', 'scaleY', 'rotation', 'opacity');
   if (clip.type === 'video' || clip.type === 'image') {
     p.push(...ADJUST_FIELDS.map((f) => `adjust.${f.key}`));
     if (clip.filter?.id && clip.filter.id !== 'none') p.push('filter');
@@ -149,6 +151,16 @@ export function splitKf(clip) {
 export function maxScale(clip, dyn) {
   const s = clip.transform?.scale ?? 1;
   return dyn?.scale ? Math.max(...dyn.scale.map((k) => k.v), 0.01) : s;
+}
+
+export function maxScaleX(clip, dyn) {
+  const sx = clip.transform?.scaleX ?? 1;
+  return dyn?.scaleX ? Math.max(...dyn.scaleX.map((k) => k.v), 0.01) : sx;
+}
+
+export function maxScaleY(clip, dyn) {
+  const sy = clip.transform?.scaleY ?? 1;
+  return dyn?.scaleY ? Math.max(...dyn.scaleY.map((k) => k.v), 0.01) : sy;
 }
 
 // Expressão do FFmpeg com a curva dos pontos; T0 = instante (no fluxo) em que o clipe começa.

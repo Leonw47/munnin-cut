@@ -9,7 +9,7 @@ import { effectDef, isSegmentEffect, seedOf } from './effects.js';
 import { isCamTransition, camClipChain, camMixExpr } from './camtrans.js';
 import { chromaFilters } from './chroma.js';
 import { audioFxFilters } from './audiofx.js';
-import { splitKf, maxScale, kfExpr, kfWindows, KF_PROPS, COLOR_PROPS } from './keyframes.js';
+import { splitKf, maxScale, maxScaleX, maxScaleY, kfExpr, kfWindows, KF_PROPS, COLOR_PROPS } from './keyframes.js';
 
 const r3 = (x) => String(Math.round(x * 1000) / 1000);
 const n4 = (x) => String(Math.round(x * 10000) / 10000);
@@ -123,7 +123,7 @@ export function buildExport({ project: src, mediaMap, out, textAssets = {}, fxAs
     const dyn = c.__dyn || {};
     // com escala em pontos de modificação, a camada sai no maior tamanho e é reduzida quadro a quadro
     const s = fitScale(sw, sh, W, H, c.fit) * maxScale(c, dyn);
-    const w = even(sw * s), h = even(sh * s);
+    const w = even(sw * s * maxScaleX(c, dyn)), h = even(sh * s * maxScaleY(c, dyn));
     f.push(`scale=${w}:${h}`, 'setsar=1');
     if (c.chroma?.on) f.push(...chromaFilters(c.chroma)); // termina em rgba
     else f.push('format=rgba');
@@ -165,12 +165,33 @@ export function buildExport({ project: src, mediaMap, out, textAssets = {}, fxAs
   }
 
   // Giro e escala: animação de entrada/saída + pontos de modificação na mesma expressão.
-  function motionFilters(c, dyn, at0, { rotBaked = true, scaleBase = null } = {}) {
+  function motionFilters(c, dyn, at0, { rotBaked = true, staticRot = 0, scaleBase = null, scaleXBase = null, scaleYBase = null, boxW = null, boxH = null } = {}) {
     const f = [];
     const rx = [dyn.rotation && rotBaked === false ? kfExpr(dyn.rotation, at0, Math.PI / 180) : '', animRotExpr(c, at0)].filter(Boolean).join('+');
-    if (rx) f.push(`rotate=a='${rx}':c=none:ow='hypot(iw,ih)':oh='ow'`);
-    const sx = [animScaleExpr(c, at0), dyn.scale ? `(${kfExpr(dyn.scale, at0)})/${n4(scaleBase ?? maxScale(c, dyn))}` : ''].filter(Boolean).map((e) => `(${e})`).join('*');
-    if (sx) f.push(`scale=w='max(2,trunc(iw*${sx}))':h='max(2,trunc(ih*${sx}))':eval=frame`);
+    const sb = scaleBase ?? maxScale(c, dyn);
+    const sxb = scaleXBase ?? maxScaleX(c, dyn);
+    const syb = scaleYBase ?? maxScaleY(c, dyn);
+    const su = [animScaleExpr(c, at0), dyn.scale ? `(${kfExpr(dyn.scale, at0)})/${n4(sb)}` : ''].filter(Boolean);
+    const sx = [...su, dyn.scaleX ? `(${kfExpr(dyn.scaleX, at0)})/${n4(sxb)}` : ''].filter(Boolean).map((e) => `(${e})`).join('*');
+    const sy = [...su, dyn.scaleY ? `(${kfExpr(dyn.scaleY, at0)})/${n4(syb)}` : ''].filter(Boolean).map((e) => `(${e})`).join('*');
+    const hasDynStretch = !!(dyn.scaleX || dyn.scaleY);
+    const hasRot = Math.abs(staticRot) > 1e-4 || !!rx;
+    if (hasDynStretch && hasRot) {
+      const wExpr = sx ? `max(2,trunc(iw*${sx}))` : 'iw';
+      const hExpr = sy ? `max(2,trunc(ih*${sy}))` : 'ih';
+      f.push(`scale=w='${wExpr}':h='${hExpr}':eval=frame`);
+      if (boxW && boxH) f.push(`pad=w='max(iw,${boxW})':h='max(ih,${boxH})':x='(ow-iw)/2':y='(oh-ih)/2':color=0x00000000:eval=frame`);
+      if (Math.abs(staticRot) > 1e-4) f.push(`rotate=a=${n4(staticRot)}:c=none:ow=rotw(${n4(staticRot)}):oh=roth(${n4(staticRot)})`);
+      if (rx) f.push(`rotate=a='${rx}':c=none:ow='hypot(iw,ih)':oh='ow'`);
+    } else {
+      if (Math.abs(staticRot) > 1e-4) f.push(`rotate=a=${n4(staticRot)}:c=none:ow=rotw(${n4(staticRot)}):oh=roth(${n4(staticRot)})`);
+      if (rx) f.push(`rotate=a='${rx}':c=none:ow='hypot(iw,ih)':oh='ow'`);
+      if (sx || sy) {
+        const wExpr = sx ? `max(2,trunc(iw*${sx}))` : 'iw';
+        const hExpr = sy ? `max(2,trunc(ih*${sy}))` : 'ih';
+        f.push(`scale=w='${wExpr}':h='${hExpr}':eval=frame`);
+      }
+    }
     if (dyn.opacity) f.push(...opacitySteps(c, dyn, at0));
     return f;
   }
@@ -186,18 +207,20 @@ export function buildExport({ project: src, mediaMap, out, textAssets = {}, fxAs
   // Espelhar → girar → opacidade → (deslocar no tempo) → animações.
   // t0: onde o fluxo da camada começa; at0: onde o clipe "de verdade" começa (difere quando há
   // quadros parados antes dele, nas transições das faixas de cima).
-  function placeChain(c, t0, at0 = t0) {
+  function placeChain(c, t0, at0 = t0, boxW = null, boxH = null) {
     const f = [];
     const tf = c.transform || {};
     const dyn = c.__dyn || {};
     if (tf.flipH) f.push('hflip');
     if (tf.flipV) f.push('vflip');
     const rot = ((tf.rotation || 0) * Math.PI) / 180;
-    if (!dyn.rotation && Math.abs(rot) > 1e-4) f.push(`rotate=a=${n4(rot)}:c=none:ow=rotw(${n4(rot)}):oh=roth(${n4(rot)})`);
+    const staticRot = !dyn.rotation && Math.abs(rot) > 1e-4 ? rot : 0;
+    const hasDynStretch = !!(dyn.scaleX || dyn.scaleY);
+    if (staticRot && !hasDynStretch) f.push(`rotate=a=${n4(staticRot)}:c=none:ow=rotw(${n4(staticRot)}):oh=roth(${n4(staticRot)})`);
     const op = c.opacity ?? 1;
     if (!dyn.opacity && op < 0.999) f.push(`colorchannelmixer=aa=${n4(op)}`);
     if (t0 > 0) f.push(`setpts=PTS+${r3(t0)}/TB`);
-    f.push(...motionFilters(c, dyn, at0, { rotBaked: false }));
+    f.push(...motionFilters(c, dyn, at0, { rotBaked: false, staticRot: hasDynStretch ? staticRot : 0, boxW, boxH }));
     f.push(...animFades(c, at0));
     const cx = W / 2 + (tf.x || 0) * W, cy = H / 2 + (tf.y || 0) * H;
     return { f, ...posExprs(c, dyn, at0, cx, cy) };
@@ -252,8 +275,8 @@ export function buildExport({ project: src, mediaMap, out, textAssets = {}, fxAs
         F.push(`color=c=${hex(bgDefault.color)}:s=${W}x${H}:r=${FPS}:d=${r3(dur)},format=yuv420p,setsar=1,settb=AVTB[${lab}]`);
       } else {
         const idx = inputFor(c, m);
-        const { f: pre, stat, loop } = preChain(c, m);
-        const pl = placeChain(c, 0);
+        const { f: pre, stat, loop, w: pw, h: ph } = preChain(c, m);
+        const pl = placeChain(c, 0, 0, pw, ph);
         const bg = c.bg || bgDefault;
         const bgL = L('bg'), fgL = L('fg');
         if (bg.type === 'blur') {
@@ -322,7 +345,15 @@ export function buildExport({ project: src, mediaMap, out, textAssets = {}, fxAs
         const idx = addInput(['-i', a.path]);
         const f = ['format=rgba', ...loopFor(c.duration + pre + post + 0.05), `setpts=PTS-STARTPTS+${r3(t0)}/TB`];
         // o PNG já vem com escala/giro/opacidade fixos; o que muda (pontos de modificação) é aplicado aqui
-        f.push(...motionFilters(c, dyn, at0, { rotBaked: !dyn.rotation, scaleBase: a.scale ?? maxScale(c, dyn) }));
+        const rotBaked = !dyn.rotation && !dyn.scaleX && !dyn.scaleY;
+        const staticRot = !rotBaked && !dyn.rotation ? ((c.transform?.rotation || 0) * Math.PI) / 180 : 0;
+        f.push(...motionFilters(c, dyn, at0, {
+          rotBaked,
+          staticRot: Math.abs(staticRot) > 1e-4 ? staticRot : 0,
+          scaleBase: a.scale ?? maxScale(c, dyn),
+          scaleXBase: a.scaleX ?? maxScaleX(c, dyn),
+          scaleYBase: a.scaleY ?? maxScaleY(c, dyn),
+        }));
         f.push(...animFades(c, at0));
         const l = L('t');
         F.push(`[${idx}:v]${f.join(',')}[${l}]`);
@@ -332,10 +363,10 @@ export function buildExport({ project: src, mediaMap, out, textAssets = {}, fxAs
       if (!usable(m)) return null;
       const idx = inputFor(c, m);
       // (fotos: o laço e os trechos de cor já vêm no preChain; os quadros parados entram depois)
-      const { f: pf } = preChain(c, m);
+      const { f: pf, w: pw, h: ph } = preChain(c, m);
       let f = pf;
       if (pre > 0 || post > 0) f = [...pf, `tpad=start_mode=clone:start_duration=${r3(pre)}:stop_mode=clone:stop_duration=${r3(post)}`];
-      const pl = placeChain(c, t0, at0);
+      const pl = placeChain(c, t0, at0, pw, ph);
       const l = L('o');
       F.push(`[${idx}:v]${[...f, ...pl.f].join(',')}[${l}]`);
       return { l, x: pl.x, y: pl.y };

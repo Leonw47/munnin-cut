@@ -46,12 +46,14 @@ function makeNoise() {
 export function clipBox(project, mediaMap, clip, W, H) {
   const k = W / project.width;
   const tf = clip.transform || {};
+  const s = tf.scale ?? 1, sx = tf.scaleX ?? 1, sy = tf.scaleY ?? 1;
   let w, h;
   if (clip.type === 'text') {
-    const L = layoutText(clip.text, k * (tf.scale ?? 1));
-    w = L.boxW; h = L.boxH;
+    const L = layoutText(clip.text, k * s);
+    w = L.boxW * sx; h = L.boxH * sy;
   } else if (clip.type === 'shape') {
-    ({ w, h } = shapeSize(clip.shape, k * (tf.scale ?? 1)));
+    ({ w, h } = shapeSize(clip.shape, k * s));
+    w *= sx; h *= sy;
   } else {
     const m = mediaMap[clip.mediaId];
     if (!m) return null;
@@ -299,7 +301,7 @@ export class Compositor {
     ctx.translate(W / 2 + ((tf.x || 0) + a.dx) * W, H / 2 + ((tf.y || 0) + a.dy) * H);
     ctx.rotate(((tf.rotation || 0) * Math.PI) / 180 + (a.rot || 0));
     const s = a.scale * (tf.scale ?? 1);
-    ctx.scale(s, s);
+    ctx.scale(s * (tf.scaleX ?? 1), s * (tf.scaleY ?? 1));
     drawTextBlock(ctx, clip.text, k);
     ctx.restore();
   }
@@ -314,7 +316,7 @@ export class Compositor {
     ctx.translate(W / 2 + ((tf.x || 0) + a.dx) * W, H / 2 + ((tf.y || 0) + a.dy) * H);
     ctx.rotate(((tf.rotation || 0) * Math.PI) / 180 + (a.rot || 0));
     const s = a.scale * (tf.scale ?? 1);
-    ctx.scale(s * (tf.flipH ? -1 : 1), s * (tf.flipV ? -1 : 1));
+    ctx.scale(s * (tf.scaleX ?? 1) * (tf.flipH ? -1 : 1), s * (tf.scaleY ?? 1) * (tf.flipV ? -1 : 1));
     drawShape(ctx, clip.shape, k);
     ctx.restore();
   }

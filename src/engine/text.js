@@ -101,14 +101,16 @@ export function drawTextBlock(ctx, st, k) {
 
 // PNG de um clipe de texto já com escala, rotação e opacidade (para a exportação).
 // Com pontos de modificação, o que muda fica de fora (scale: tamanho usado; rotate/opacity: false).
-export async function renderTextPng(clip, k, { scale = null, rotate = true, opacity = true } = {}) {
+export async function renderTextPng(clip, k, { scale = null, scaleX = null, scaleY = null, rotate = true, opacity = true } = {}) {
   const st = clip.text;
   const tf = clip.transform || {};
   const kk = k * (scale ?? tf.scale ?? 1);
+  const sx = scaleX ?? tf.scaleX ?? 1;
+  const sy = scaleY ?? tf.scaleY ?? 1;
   await ensureFont(st, kk);
   const L = layoutText(st, kk);
   const m = textMargin(st, kk);
-  const bw = L.boxW + m * 2, bh = L.boxH + m * 2;
+  const bw = (L.boxW + m * 2) * sx, bh = (L.boxH + m * 2) * sy;
   const rot = rotate ? ((tf.rotation || 0) * Math.PI) / 180 : 0;
   const rw = Math.ceil(Math.abs(bw * Math.cos(rot)) + Math.abs(bh * Math.sin(rot)));
   const rh = Math.ceil(Math.abs(bw * Math.sin(rot)) + Math.abs(bh * Math.cos(rot)));
@@ -116,6 +118,7 @@ export async function renderTextPng(clip, k, { scale = null, rotate = true, opac
   const ctx = c.getContext('2d');
   ctx.translate(c.width / 2, c.height / 2);
   ctx.rotate(rot);
+  ctx.scale(sx, sy);
   ctx.globalAlpha = opacity ? clip.opacity ?? 1 : 1;
   drawTextBlock(ctx, st, kk);
   const blob = await new Promise((res) => c.toBlob(res, 'image/png'));
