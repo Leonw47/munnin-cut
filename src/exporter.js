@@ -47,8 +47,12 @@ export function startExport(opts) {
           };
           const bytes = c.type === 'shape' ? await renderShapePng(base, k, opts) : await renderTextPng(base, k, opts);
           const path = await window.api.writeFile(`job:${jobId}`, `text_${c.id}.png`, bytes);
+          // tamanho do PNG (cabeçalho IHDR): com largura/altura animadas e giro, o FFmpeg precisa de uma
+          // caixa fixa antes do rotate (ele fixa o tamanho de saída no primeiro quadro)
+          const dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
           textAssets[c.id] = {
             path,
+            w: dv.getUint32(16), h: dv.getUint32(20),
             scale: opts.scale,
             scaleX: opts.scaleX,
             scaleY: opts.scaleY,

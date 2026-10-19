@@ -180,7 +180,9 @@ export function buildExport({ project: src, mediaMap, out, textAssets = {}, fxAs
       const wExpr = sx ? `max(2,trunc(iw*${sx}))` : 'iw';
       const hExpr = sy ? `max(2,trunc(ih*${sy}))` : 'ih';
       f.push(`scale=w='${wExpr}':h='${hExpr}':eval=frame`);
-      if (boxW && boxH) f.push(`pad=w='max(iw,${boxW})':h='max(ih,${boxH})':x='(ow-iw)/2':y='(oh-ih)/2':color=0x00000000:eval=frame`);
+      // caixa fixa (o rotate fixa o tamanho no 1º quadro); par, porque o pad arredonda para baixo em formatos 4:2:0
+      const up2 = (v) => Math.ceil(v / 2) * 2;
+      if (boxW && boxH) f.push(`pad=w='max(iw,${up2(boxW)})':h='max(ih,${up2(boxH)})':x='(ow-iw)/2':y='(oh-ih)/2':color=0x00000000:eval=frame`);
       if (Math.abs(staticRot) > 1e-4) f.push(`rotate=a=${n4(staticRot)}:c=none:ow=rotw(${n4(staticRot)}):oh=roth(${n4(staticRot)})`);
       if (rx) f.push(`rotate=a='${rx}':c=none:ow='hypot(iw,ih)':oh='ow'`);
     } else {
@@ -353,6 +355,7 @@ export function buildExport({ project: src, mediaMap, out, textAssets = {}, fxAs
           scaleBase: a.scale ?? maxScale(c, dyn),
           scaleXBase: a.scaleX ?? maxScaleX(c, dyn),
           scaleYBase: a.scaleY ?? maxScaleY(c, dyn),
+          boxW: a.w, boxH: a.h,
         }));
         f.push(...animFades(c, at0));
         const l = L('t');
