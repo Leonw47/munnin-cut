@@ -3,6 +3,18 @@
 Formato baseado em [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/) e versões no padrão
 [SemVer](https://semver.org/lang/pt-BR/): MAJOR.MINOR.PATCH — correções sobem o PATCH, recursos novos o MINOR.
 
+## [1.7.1] — 2026-10-21
+
+### Corrigido
+- **O som sumia depois de mexer nos controles da Voz** (e só voltava reabrindo). Cada movimento de um controle
+  remontava a cadeia inteira e o processador antigo de redução de ruído continuava rodando escondido; depois de
+  algumas centenas de movimentos, o áudio da prévia parava. Agora mexer num controle só muda os valores da cadeia
+  que já está tocando (com transição suave, sem estalo) e, quando a cadeia precisa ser remontada, o processador
+  antigo é desligado. O mesmo cuidado vale para o processador de "voz fina / voz grossa".
+
+### Testes
+- `autotest-v17` ganhou a checagem "arrastar os controles mantém o som" (200 mudanças tocando).
+
 ## [1.7.0] — 2026-10-21
 
 ### Adicionado

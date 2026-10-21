@@ -34,8 +34,16 @@ function respostaImpulso(ac, id) {
   return buf;
 }
 
+/** Formato da cadeia: só muda quando um estágio liga/desliga ou o ambiente troca (aí precisa remontar). */
+export function estruturaVoz(ac, voz) {
+  const p = vozPlano(voz);
+  return JSON.stringify([p.ruido > 0 && vozPronta.has(ac), !!p.passaAltas, !!p.eq, !!p.comp, p.ambiente?.id || null, p.limitador]);
+}
+
 /**
- * Monta a cadeia. analise: { perfil: number[]|null, nivel: dBFS|null }. Devolve { input, output, dispose, latencia }.
+ * Monta a cadeia. analise: { perfil: number[]|null, nivel: dBFS|null }.
+ * Devolve { input, output, latencia, atualizar(voz, analise), dispose }. Mexer num controle chama `atualizar`
+ * (muda os valores na hora, sem remontar); remontar a cada movimento empilhava processadores e o som sumia.
  * Sem o worklet carregado, a redução de ruído fica de fora (a prévia remonta quando ele carregar).
  */
 export function montarVoz(ac, voz, analise = null) {
@@ -44,37 +52,42 @@ export function montarVoz(ac, voz, analise = null) {
   const input = ac.createGain();
   let cur = input;
   const chain = (n) => { cur.connect(n); cur = n; nodes.push(n); return n; };
+  const ref = { eq: [] };
   let latencia = 0;
+  let perfilEnviado = !!analise?.perfil;
   if (p.ruido > 0 && vozPronta.has(ac)) {
-    chain(new AudioWorkletNode(ac, 'mc-ruido', {
+    ref.wk = chain(new AudioWorkletNode(ac, 'mc-ruido', {
       numberOfInputs: 1, numberOfOutputs: 1, outputChannelCount: [2],
       processorOptions: { forca: p.ruido, perfil: analise?.perfil || null },
     }));
+    stops.push(() => ref.wk.port.postMessage({ fim: true }));   // o processador para de rodar e pode ser liberado
     latencia = 1024 / ac.sampleRate;
   }
   if (p.passaAltas) {
-    const b = chain(ac.createBiquadFilter());
+    const b = ref.hp = chain(ac.createBiquadFilter());
     b.type = 'highpass'; b.frequency.value = p.passaAltas; b.Q.value = 0.707;
   }
   for (const e of p.eq || []) {
     const b = chain(ac.createBiquadFilter());
     b.type = e.tipo; b.frequency.value = e.f; b.Q.value = e.q; b.gain.value = e.g;
+    ref.eq.push(b);
   }
-  if (p.preGanho) { const g = chain(ac.createGain()); g.gain.value = p.preGanho; }
+  if (p.comp) { ref.pre = chain(ac.createGain()); ref.pre.gain.value = p.preGanho; }
   // o compressor do Web Audio olha 6 ms à frente (atraso fixo); somado na latência para a exportação compensar
   const OLHA = 0.006;
   if (p.comp) {
     latencia += OLHA;
-    const c = chain(ac.createDynamicsCompressor());
+    const c = ref.comp = chain(ac.createDynamicsCompressor());
     c.threshold.value = p.comp.limiar; c.ratio.value = p.comp.razao; c.knee.value = p.comp.joelho;
     c.attack.value = p.comp.ataque; c.release.value = p.comp.solta;
+    ref.pos = chain(ac.createGain()); ref.pos.gain.value = p.posGanho;
   }
-  if (p.posGanho) { const g = chain(ac.createGain()); g.gain.value = p.posGanho; }
   if (p.ambiente) {
     const { id, mix } = p.ambiente;
     const seco = ac.createGain(), molhado = ac.createGain(), soma = ac.createGain();
     seco.gain.value = 1 - mix * 0.5;
     molhado.gain.value = mix;
+    ref.seco = seco; ref.molhado = molhado;
     cur.connect(seco).connect(soma);
     nodes.push(seco, molhado, soma);
     if (IRS[id]) {
@@ -110,8 +123,29 @@ export function montarVoz(ac, voz, analise = null) {
   }
   return {
     input, output: cur, latencia,
+    // mesmos estágios, valores novos (transição de 30 ms, sem estalo)
+    atualizar(v2, an2 = analise) {
+      const q = vozPlano(v2, an2?.nivel ?? null);
+      const t = ac.currentTime, T = 0.03;
+      if (ref.wk) {
+        ref.wk.port.postMessage({ forca: q.ruido });
+        if (an2?.perfil && !perfilEnviado) { ref.wk.port.postMessage({ perfil: an2.perfil }); perfilEnviado = true; }
+      }
+      if (ref.hp && q.passaAltas) ref.hp.frequency.setTargetAtTime(q.passaAltas, t, T);
+      ref.eq.forEach((b, i) => { if (q.eq?.[i]) b.gain.setTargetAtTime(q.eq[i].g, t, T); });
+      if (ref.pre && q.comp) {
+        ref.pre.gain.setTargetAtTime(q.preGanho, t, T);
+        ref.comp.threshold.setTargetAtTime(q.comp.limiar, t, T);
+        ref.comp.ratio.setTargetAtTime(q.comp.razao, t, T);
+        ref.pos.gain.setTargetAtTime(q.posGanho, t, T);
+      }
+      if (ref.seco && q.ambiente) {
+        ref.seco.gain.setTargetAtTime(1 - q.ambiente.mix * 0.5, t, T);
+        ref.molhado.gain.setTargetAtTime(q.ambiente.mix, t, T);
+      }
+    },
     dispose() {
-      for (const f of stops) f();
+      for (const f of stops) { try { f(); } catch { /* ignore */ } }
       for (const n of [input, ...nodes]) { try { n.disconnect(); } catch { /* ignore */ } }
     },
   };

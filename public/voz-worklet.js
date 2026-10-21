@@ -177,14 +177,17 @@ if (typeof AudioWorkletProcessor !== 'undefined') {
       super();
       const o = (opts && opts.processorOptions) || {};
       this.red = new Reducao(o.forca ?? 0.5, o.perfil ? new Float32Array(o.perfil) : null);
+      this.vivo = true;
       this.port.onmessage = (e) => {
         const d = e.data || {};
         if (d.forca !== undefined) this.red.ajustar(d.forca);
         if (d.perfil) { this.red.perfil = new Float32Array(d.perfil); this.red.canais = []; }
+        if (d.fim) this.vivo = false;          // cadeia desmontada: para de processar e deixa o nó ser liberado
       };
     }
 
     process(inputs, outputs) {
+      if (!this.vivo) return false;
       const inp = inputs[0], out = outputs[0];
       if (!out || !out.length) return true;
       for (let ch = 0; ch < out.length; ch++) {

@@ -3,7 +3,7 @@ import { mediaUrl } from './util.js';
 import { hasAudioFx, audioFxPlan } from '../shared/audiofx.js';
 import { buildAudioFx, loadPitchWorklet, workletReady } from './audioFx.js';
 import { temVoz, vozDoClipe } from '../shared/voz.js';
-import { montarVoz, carregarVoz, vozPronta } from './voz.js';
+import { montarVoz, carregarVoz, vozPronta, estruturaVoz } from './voz.js';
 
 export class MediaPool {
   constructor(onNeedRender) {
@@ -142,9 +142,18 @@ export class MediaPool {
     if (v && (v.ruido > 0.5 || v.realce > 0.5) && !meta?.voz && meta?.vozStatus !== 'analisando' && meta?.vozStatus !== 'erro') {
       this.pedirAnalise?.(media.id);
     }
-    const key = (comFx || v) ? JSON.stringify([comFx, v, !!meta?.voz]) + (workletReady.has(ac) ? '|w' : '') + (vozPronta.has(ac) ? '|v' : '') : '';
-    if (e.fxKey === key) return;
+    // só remonta quando o FORMATO muda (estágio liga/desliga, ambiente troca, efeito de voz muda);
+    // mexer num controle da Voz só atualiza os valores da cadeia que já está tocando
+    const key = (comFx || v) ? JSON.stringify([comFx, v ? estruturaVoz(ac, v) : null]) + (workletReady.has(ac) ? '|w' : '') : '';
+    if (e.fxKey === key) {
+      if (e.voz && v) {
+        const vk = JSON.stringify([v, !!meta?.voz]);
+        if (e.vozKey !== vk) { e.vozKey = vk; e.voz.atualizar(v, meta?.voz || null); }
+      }
+      return;
+    }
     e.fxKey = key;
+    e.vozKey = v ? JSON.stringify([v, !!meta?.voz]) : '';
     try { e.node.disconnect(); } catch { /* ignore */ }
     if (e.fx) { e.fx.dispose(); e.fx = null; }
     if (e.voz) { e.voz.dispose(); e.voz = null; }

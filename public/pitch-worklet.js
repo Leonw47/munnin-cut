@@ -9,6 +9,8 @@ class MCPitch extends AudioWorkletProcessor {
     this.w = 0;
     this.phase = 0;
     this.win = Math.round(0.07 * sampleRate);
+    this.vivo = true;
+    this.port.onmessage = (e) => { if (e.data && e.data.fim) this.vivo = false; };   // cadeia desmontada
   }
   read(b, pos) {
     const N = this.N;
@@ -17,6 +19,7 @@ class MCPitch extends AudioWorkletProcessor {
     return b[i] * (1 - f) + b[(i + 1) % N] * f;
   }
   process(inputs, outputs, params) {
+    if (!this.vivo) return false;
     const inp = inputs[0], out = outputs[0];
     const ratio = params.ratio[0];
     const win = this.win;

@@ -20,7 +20,7 @@ export function buildAudioFx(ac, fx) {
   const stops = [];
   const input = ac.createGain();
   let cur = input;
-  const chain = (n) => { cur.connect(n); cur = n; nodes.push(n); };
+  const chain = (n) => { cur.connect(n); cur = n; nodes.push(n); return n; };
   const biquad = (type, freq, extra = {}) => {
     const b = ac.createBiquadFilter();
     b.type = type;
@@ -30,7 +30,8 @@ export function buildAudioFx(ac, fx) {
     chain(b);
   };
   if (p.pitch && workletReady.has(ac)) {
-    chain(new AudioWorkletNode(ac, 'mc-pitch', { numberOfInputs: 1, numberOfOutputs: 1, outputChannelCount: [2], parameterData: { ratio: p.pitch } }));
+    const wk = chain(new AudioWorkletNode(ac, 'mc-pitch', { numberOfInputs: 1, numberOfOutputs: 1, outputChannelCount: [2], parameterData: { ratio: p.pitch } }));
+    stops.push(() => wk.port.postMessage({ fim: true }));   // senão o processador continua rodando depois de desmontado
   }
   // Q em dB no Web Audio: −3,01 dB = 0,707 (o padrão do highpass/lowpass do FFmpeg)
   if (p.hp) biquad('highpass', p.hp, { q: -3.0103 });
