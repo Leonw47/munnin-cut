@@ -3,6 +3,32 @@
 Formato baseado em [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/) e versões no padrão
 [SemVer](https://semver.org/lang/pt-BR/): MAJOR.MINOR.PATCH — correções sobem o PATCH, recursos novos o MINOR.
 
+## [1.7.0] — 2026-10-21
+
+### Adicionado
+- **Voz — limpar e realçar** (aba Áudio de vídeos e áudios), tudo **em tempo real na prévia**:
+  - **Reduzir ruído:** redução espectral (STFT, Wiener com estimativa "decision-directed" e piso de ganho) feita
+    num AudioWorklet; o perfil do ruído é calculado uma vez por mídia (até 5 min analisados, com cache) e
+    ajustado enquanto toca.
+  - **Realçar a voz:** leva a fala a um volume padrão (pelo nível medido da mídia), comprime os picos e compensa.
+  - **Clareza:** corta zumbido grave, tira o som abafado (280 Hz) e dá presença (3,2 kHz) e brilho (9 kHz).
+  - **Ambiente:** Sala, Auditório e Igreja (reverb por convolução), Chorus e Voz dupla, com quantidade.
+  - Atalhos prontos: Voz limpa, Podcast, Lugar barulhento, Pregação / culto e Locutor.
+  - **Comparar com o original:** desliga a limpeza só na prévia, para ouvir antes e depois.
+- Na exportação, cada trecho passa pela **mesma cadeia** num OfflineAudioContext (o que se ouve é o que sai),
+  com a latência da redução de ruído e dos compressores compensada (som casado com a imagem) e cache entre
+  exportações.
+
+### Alterado
+- O antigo "Reduzir ruído" (que só valia no arquivo exportado) virou a redução em tempo real; projetos antigos
+  com ele ligado abrem com "Reduzir ruído" em 50.
+- Os testes automáticos rodam mesmo com o app aberto (não disputam a instância única).
+
+### Testes
+- `MC_AUTOTEST=scripts/autotest-v17.js`: análise, cadeia na prévia com som passando, comparar com o original,
+  exportação, cache e os quatro ambientes. Num vídeo real gravado no celular, a distância entre fala e ruído
+  passou de 9,3 dB para 14,5 dB com a fala 4,6 dB mais alta, sem estourar e sem atraso em relação à imagem.
+
 ## [1.6.0] — 2026-10-19
 Contribuição do Douglas Zanetti (PR #1).
 

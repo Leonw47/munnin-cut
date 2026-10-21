@@ -39,6 +39,8 @@ contextBridge.exposeInMainWorld('api', {
   onCaptionProgress: on('captions:progress'),
   fxCacheStatus: (key) => ipcRenderer.invoke('fxcache:status', key),
   sfxList: () => ipcRenderer.invoke('sfx:list'),
+  vozAnalisar: (p, duracao) => ipcRenderer.invoke('voz:analisar', p, duracao),
+  vozExtrair: (p, ss, t, jobId) => ipcRenderer.invoke('voz:extrair', p, ss, t, jobId),
   sfxMaterialize: (id, fileName) => ipcRenderer.invoke('sfx:materialize', id, fileName),
   ytStatus: () => ipcRenderer.invoke('yt:status'),
   ytUpdate: () => ipcRenderer.invoke('yt:update'),

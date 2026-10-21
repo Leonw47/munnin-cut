@@ -89,7 +89,13 @@ const r = await evaluate(`
   try { const d = await window.api.ytDownload({ url: 'https://youtu.be/aqz-KE-bpKQ', start: 1, end: 4 }); yt = { ok: true, path: d.path, title: d.title }; }
   catch (e) { yt = { erro: e.message }; }
   const v15 = { sons: Object.keys(sfxL.index || {}).length, sfxDir: sfxL.dir, sfxClip: !!sfxClip, sfxPath, yt, ytStatus: await window.api.ytStatus() };
-  return { v14, v15, meta: Object.values(S().meta).map((m) => m.status), size: [S().project.width, S().project.height], res, nvenc: nv, legendas, pid, drafts: info.draftsDir };
+  // 1.7: limpeza da voz no pacote (worklet em dist/, análise no processo principal, exportação offline)
+  const ca = S().project.tracks.find((t) => t.kind === 'audio')?.clips[0];
+  S().updateClip(ca.id, (c) => { c.voz = { ruido: 50, realce: 50, clareza: 40, ambiente: 'sala', ambMix: 20 }; });
+  const an17 = await window.api.vozAnalisar('${DIR}/m.mp3', 10);
+  const rv = await startExport({ project: S().project, meta: S().meta, format: 'mp3', res: 480, fps: 30, quality: 'standard', aKbps: 128, outPath: '${DIR}/pacote_voz.mp3' }).promise;
+  const v17 = { analise: Array.isArray(an17?.perfil) ? an17.perfil.length : null, exportVoz: rv.ok ? 'ok' : rv.error };
+  return { v14, v15, v17, meta: Object.values(S().meta).map((m) => m.status), size: [S().project.width, S().project.height], res, nvenc: nv, legendas, pid, drafts: info.draftsDir };
 `);
 console.log(JSON.stringify(r, null, 1));
 await shot('p2_editor');

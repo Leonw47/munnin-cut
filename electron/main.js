@@ -9,6 +9,7 @@ import { Readable } from 'node:stream';
 import { fileURLToPath } from 'node:url';
 import { createMedia } from './media.js';
 import { createYtdlp } from './ytdlp.js';
+import { createVoz } from './voz.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const isDev = !app.isPackaged;
@@ -39,6 +40,9 @@ const modelsDir = path.join(userDir, 'models');
 for (const d of [cacheDir, logsDir, draftsDir, recordingsDir, jobsRoot, modelsDir]) fs.mkdirSync(d, { recursive: true });
 
 const media = createMedia({ ffmpeg: FFMPEG, ffprobe: FFPROBE, cacheDir });
+// processador da voz: o mesmo arquivo do AudioWorklet da prévia (public/ no código, dist/ no pacote)
+const vozWorklet = path.join(__dirname, '..', app.isPackaged ? 'dist' : 'public', 'voz-worklet.js');
+const voz = createVoz({ ffmpeg: FFMPEG, cacheDir, workletPath: vozWorklet });
 
 // Teste automático: MC_AUTOTEST=<script.js> roda o script dentro da interface e salva capturas.
 const TEST_OUT = process.env.MC_TEST_OUT || path.join(os.tmpdir(), 'munnin-cut-shots');
@@ -46,7 +50,8 @@ const TEST_OUT = process.env.MC_TEST_OUT || path.join(os.tmpdir(), 'munnin-cut-s
 // ---------- Instância única + abrir .mcut pelo Explorer ----------
 let win = null;
 let pendingFile = process.argv.find((a) => a.toLowerCase().endsWith('.mcut')) || null;
-if (!app.requestSingleInstanceLock()) app.quit();
+// (nos testes automáticos roda ao lado do app aberto do usuário, sem disputar a instância única)
+if (!AUTOTEST && !app.requestSingleInstanceLock()) app.quit();
 app.on('second-instance', (_e, argv) => {
   const f = argv.find((a) => a.toLowerCase().endsWith('.mcut'));
   if (win) {
@@ -226,6 +231,7 @@ function scopeDir(scope) {
     return d;
   }
   if (scope === 'recordings') return recordingsDir;
+  if (scope === 'voz') return voz.dir;
   if (typeof scope === 'string' && scope.startsWith('job:')) {
     const id = scope.slice(4).replace(/[^a-z0-9_-]/gi, '');
     const d = path.join(jobsRoot, id);
@@ -254,6 +260,12 @@ ipcMain.handle('fxcache:done', (_e, key) => {
     for (const x of all.slice(40)) fs.rmSync(path.join(fxCacheRoot, x.d), { recursive: true, force: true });
   } catch { /* ignore */ }
   return true;
+});
+// ---------- Voz (limpeza e realce da fala) ----------
+ipcMain.handle('voz:analisar', (_e, p, duracao) => voz.analisar(p, duracao));
+ipcMain.handle('voz:extrair', (_e, p, ss, t, jobId) => {
+  const d = scopeDir(`job:${jobId}`);
+  return voz.extrair(p, ss, t, path.join(d, `voz_src_${Date.now()}_${Math.random().toString(36).slice(2, 7)}.wav`));
 });
 ipcMain.handle('fs:exists', (_e, paths) => (paths || []).map((p) => { try { return fs.existsSync(p); } catch { return false; } }));
 

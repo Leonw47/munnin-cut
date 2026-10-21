@@ -1,7 +1,8 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { FlipHorizontal2, FlipVertical2, RotateCcw, AlignLeft, AlignCenter, AlignRight, Italic, CaseUpper, AudioLines, Trash2, Link, Pipette } from 'lucide-react';
+import { FlipHorizontal2, FlipVertical2, RotateCcw, AlignLeft, AlignCenter, AlignRight, Italic, CaseUpper, AudioLines, Trash2, Link, Pipette, Loader2, Headphones } from 'lucide-react';
 import { DEFAULT_CHROMA } from '../shared/chroma.js';
 import { AUDIO_FX, DEFAULT_AUDIO_FX } from '../shared/audiofx.js';
+import { AMBIENTES, PRESETS_VOZ, VOZ_PADRAO, vozDoClipe, temVoz } from '../shared/voz.js';
 import { hasKf, hasKfAt, propAt, upsertKf, removeKfAt, setPropAt, scaleKf } from '../shared/keyframes.js';
 import { useStore } from '../store.js';
 import { findClip, fmtTime, projectDuration, mainTrack, transitionDuration, nextAdjacent, overlayTransDur, OVERLAY_TRANSITIONS } from '../shared/timeline.js';
@@ -286,11 +287,60 @@ function AudioTab({ clip }) {
         <Field label="Saída suave"><Slider value={clip.fadeOut || 0} min={0} max={Math.min(10, Number(clip.duration.toFixed(1)))} step={0.1} onChange={(v) => editClip(id, (c) => { c.fadeOut = v; })} /></Field>
         <Field label="Sem som"><Toggle on={!!clip.muted} onChange={(v) => s().updateClip(id, { muted: v })} /></Field>
       </Section>
+      <VozSection clip={clip} />
       <AudioFxSection clip={clip} />
       {clip.type === 'video' && (
         <button className="btn" onClick={() => s().extractAudio(id)}><AudioLines size={14} /> Separar áudio</button>
       )}
     </>
+  );
+}
+
+// Limpeza e realce da fala, em tempo real (a mesma cadeia vai para a exportação).
+function VozSection({ clip }) {
+  const id = clip.id;
+  const v = vozDoClipe(clip);
+  const original = useStore((s) => s.vozOriginal);
+  const status = useStore((s) => s.meta[clip.mediaId]?.vozStatus);
+  const set = (patch) => editClip(id, (c) => {
+    c.voz = { ...vozDoClipe(c), ...patch };
+    if (c.audioFx?.denoise) c.audioFx = { ...c.audioFx, denoise: false };   // o "reduzir ruído" antigo passa a ser este
+  });
+  const preset = PRESETS_VOZ.find((p) => Object.entries(p.v).every(([k, x]) => v[k] === x));
+  const ativo = temVoz(clip);
+  return (
+    <Section title="Voz — limpar e realçar" right={
+      <button className="btn small ghost" title="Desligar tudo" onClick={() => useStore.getState().updateClip(id, (c) => { c.voz = { ...VOZ_PADRAO }; if (c.audioFx?.denoise) c.audioFx = { ...c.audioFx, denoise: false }; })}><RotateCcw size={13} /></button>
+    }>
+      <div className="anim-grid" style={{ marginBottom: 10 }}>
+        {PRESETS_VOZ.map((p) => (
+          <button key={p.id} className={preset?.id === p.id ? 'on' : ''} title="Ponto de partida; ajuste nos controles abaixo"
+            onClick={() => useStore.getState().updateClip(id, (c) => { c.voz = { ...VOZ_PADRAO, ...p.v }; if (c.audioFx?.denoise) c.audioFx = { ...c.audioFx, denoise: false }; })}>{p.name}</button>
+        ))}
+      </div>
+      <Field label="Reduzir ruído" title="Tira o ruído de fundo (ventilador, carro, conversa distante, chiado). Funciona na prévia, em tempo real.">
+        <Slider value={v.ruido} min={0} max={100} onChange={(x) => set({ ruido: x })} />
+      </Field>
+      <Field label="Realçar a voz" title="Deixa a fala mais alta e por igual (normaliza o volume e comprime os picos), sem estourar.">
+        <Slider value={v.realce} min={0} max={100} onChange={(x) => set({ realce: x })} />
+      </Field>
+      <Field label="Clareza" title="Corta o zumbido grave, tira o som abafado e dá presença e brilho à voz.">
+        <Slider value={v.clareza} min={0} max={100} onChange={(x) => set({ clareza: x })} />
+      </Field>
+      <div className="hint" style={{ margin: '8px 0 6px' }}>Ambiente</div>
+      <div className="anim-grid">
+        {AMBIENTES.map((a) => <button key={a.id} className={v.ambiente === a.id ? 'on' : ''} onClick={() => set({ ambiente: a.id })}>{a.name}</button>)}
+      </div>
+      {v.ambiente !== 'none' && <Field label="Quantidade"><Slider value={v.ambMix} min={0} max={100} onChange={(x) => set({ ambMix: x })} /></Field>}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 10, flexWrap: 'wrap' }}>
+        <button className={`btn small ${original ? 'primary' : ''}`} disabled={!ativo} title="Desliga a limpeza só na prévia, para comparar antes e depois"
+          onClick={() => useStore.setState((st) => ({ vozOriginal: !st.vozOriginal }))}>
+          <Headphones size={13} /> {original ? 'Ouvindo o original — voltar' : 'Comparar com o original'}
+        </button>
+        {status === 'analisando' && <span className="hint" style={{ display: 'flex', alignItems: 'center', gap: 4 }}><Loader2 size={12} className="spin" /> analisando o ruído…</span>}
+      </div>
+      <div className="hint" style={{ marginTop: 6 }}>Em tempo real: dê play e ajuste ouvindo. O que você ouve aqui é o que sai na exportação.</div>
+    </Section>
   );
 }
 
@@ -311,10 +361,6 @@ function AudioFxSection({ clip }) {
       <Section title="Equalizador">
         <Field label="Graves"><Slider value={fx.bass} min={-12} max={12} step={0.5} onChange={(v) => set((a) => { a.bass = v; })} /></Field>
         <Field label="Agudos"><Slider value={fx.treble} min={-12} max={12} step={0.5} onChange={(v) => set((a) => { a.treble = v; })} /></Field>
-        <Field label="Reduzir ruído" title="Tira chiado e ruído de fundo constante (ventilador, ar-condicionado). Aplicado na exportação.">
-          <Toggle on={!!fx.denoise} onChange={(v) => set((a) => { a.denoise = v; })} />
-        </Field>
-        {fx.denoise && <div className="hint">A redução de ruído é aplicada no arquivo exportado (a prévia toca o som original).</div>}
       </Section>
     </>
   );

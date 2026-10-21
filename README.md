@@ -15,6 +15,8 @@ clique em **Mais informações → Executar assim mesmo**.
 - Remover fundo verde/azul (chroma key) com conta-gotas; reverter clipes (imagem e som); efeitos de voz
   (eco, igreja, robô, telefone, rádio, megafone, debaixo d'água, voz fina/grossa), graves, agudos e redução de ruído.
 - Largura (X) e altura (Y) independentes, com alças laterais no reprodutor (contribuição do Douglas Zanetti).
+- Voz — limpar e realçar, em tempo real: reduzir ruído, realçar a voz, clareza e ambientes (sala, auditório, igreja,
+  chorus, voz dupla), com atalhos prontos e "comparar com o original"; a exportação usa a mesma cadeia.
 - Formas padrão (quadrado, círculo, estrela, coração, seta, balão…) com cor, contorno, cantos e sombra.
 - Prévia de filtros e efeitos ao passar o mouse; tela cheia com controles.
 - Transições (24, via `xfade`), animações de entrada/saída, filtros de cor, ajustes (brilho, contraste,
@@ -57,6 +59,8 @@ clique em **Mais informações → Executar assim mesmo**.
   `expr.js` (avalia na prévia as mesmas expressões que vão para o FFmpeg), `keyframes.js` (pontos de modificação),
   `chroma.js` (mesmas contas do chromakey/despill do FFmpeg) e `audiofx.js` (efeitos de voz: um plano só para
   o Web Audio da prévia e os filtros do FFmpeg).
+- `public/voz-worklet.js` + `src/engine/voz.js` + `electron/voz.js` — limpeza da voz: o mesmo processador roda
+  no AudioWorklet da prévia, no OfflineAudioContext da exportação e (perfil do ruído) no processo principal.
 - `electron/ytdlp.js` — áudio do YouTube: instala/atualiza o yt-dlp e usa o próprio Electron como runtime de
   JavaScript (`ELECTRON_RUN_AS_NODE`), que o YouTube exige.
 - `scripts/sfx/` — síntese dos efeitos sonoros (osciladores, ruídos, filtros, reverb, Karplus-Strong);
@@ -78,5 +82,5 @@ node scripts/test-size.mjs                            # compara o tamanho estima
 node scripts/test-bordas.mjs                          # confere que nada deixa barra preta na lateral (1080 de largura)
 node scripts/test-youtube.mjs                         # baixador do YouTube: instalação, atualização, trecho, erros
 ```
-Testes de interface: `MC_AUTOTEST=scripts/autotest-ui.js npx electron .` (também `autotest-interact.js`, `autotest-fx.js`, `autotest-v12.js`, `autotest-v13.js`, `autotest-v14.js`, `autotest-v15.js`, `autotest-v16.js` e `autotest-scroll.js`).
+Testes de interface: `MC_AUTOTEST=scripts/autotest-ui.js npx electron .` (também `autotest-interact.js`, `autotest-fx.js`, `autotest-v12.js`, `autotest-v13.js`, `autotest-v14.js`, `autotest-v15.js`, `autotest-v16.js`, `autotest-v17.js` e `autotest-scroll.js`).
 O FFmpeg fica em `resources/bin/` (não versionado). Histórico de versões em [CHANGELOG.md](CHANGELOG.md).

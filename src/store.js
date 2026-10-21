@@ -204,6 +204,7 @@ export const useStore = create((set, get) => ({
   libAnchor: null, // último item clicado (início do Shift+clique)
   libFocus: false, // a biblioteca recebe as teclas (Delete, Ctrl+A, Esc) em vez da linha do tempo
   ytFocus: 0, // pedido para focar o campo de link do YouTube (painel Áudio)
+  vozOriginal: false, // "Ouvir original": a prévia toca sem a limpeza da voz (comparar)
 
   toastMsg(text, kind = 'info', ms = 3500) {
     clearTimeout(toastTimer);
@@ -554,6 +555,23 @@ export const useStore = create((set, get) => ({
       libAnchor: del.has(s.libAnchor) ? null : s.libAnchor,
     }));
     if (del.size > 1) get().toastMsg(`${del.size} itens removidos do projeto (os arquivos continuam no computador).`);
+  },
+
+  // Perfil do ruído e nível da fala de uma mídia (para a limpeza da voz) — calculado uma vez, com cache em disco.
+  async analisarVoz(mediaId) {
+    const m = get().project?.media.find((x) => x.id === mediaId);
+    const mt = get().meta[mediaId];
+    if (!m || mt?.voz || mt?.vozStatus === 'analisando') return mt?.voz || null;
+    get().setMeta(mediaId, { vozStatus: 'analisando' });
+    try {
+      const r = await api.vozAnalisar(m.path, m.duration);
+      get().setMeta(mediaId, { voz: r, vozStatus: 'pronta' });
+      return r;
+    } catch (e) {
+      get().setMeta(mediaId, { vozStatus: 'erro' });
+      get().toastMsg(`Não foi possível analisar o áudio de "${m.name}": ${String(e.message || e).replace(/^Error invoking remote method '[^']+': (Error: )?/, '')}`, 'err', 6000);
+      return null;
+    }
   },
 
   // ---------- Seleção na biblioteca de mídia ----------

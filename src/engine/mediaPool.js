@@ -2,6 +2,8 @@
 import { mediaUrl } from './util.js';
 import { hasAudioFx, audioFxPlan } from '../shared/audiofx.js';
 import { buildAudioFx, loadPitchWorklet, workletReady } from './audioFx.js';
+import { temVoz, vozDoClipe } from '../shared/voz.js';
+import { montarVoz, carregarVoz, vozPronta } from './voz.js';
 
 export class MediaPool {
   constructor(onNeedRender) {
@@ -15,6 +17,8 @@ export class MediaPool {
     this.box.style.cssText = 'position:fixed;left:-10px;top:-10px;width:1px;height:1px;overflow:hidden;opacity:0;pointer-events:none';
     document.body.appendChild(this.box);
     this.ac = null;
+    this.vozOriginal = false;     // "Ouvir original": desliga a cadeia Voz na prévia (comparar antes/depois)
+    this.pedirAnalise = null;     // (mediaId) → pede o perfil de ruído / nível da fala da mídia
   }
 
   audioCtx() {
@@ -80,7 +84,7 @@ export class MediaPool {
         gain.gain.value = 0;
         node.connect(gain).connect(ac.destination);
       } catch { el.volume = 0; }
-      e = { el, src, gain, node, kind, fx: null, fxKey: '' };
+      e = { el, src, gain, node, kind, fx: null, voz: null, fxKey: '' };
       this.els.set(clip.id, e);
     }
     return e;
@@ -107,6 +111,7 @@ export class MediaPool {
     try { e.el.pause(); e.el.removeAttribute('src'); e.el.load(); } catch { /* ignore */ }
     try { e.gain?.disconnect(); } catch { /* ignore */ }
     if (e.fx) e.fx.dispose();
+    if (e.voz) e.voz.dispose();
     e.el.remove();
     this.els.delete(id);
   }
@@ -127,33 +132,52 @@ export class MediaPool {
    * Sincroniza um clipe de vídeo/áudio com o tempo t da linha do tempo.
    * vol: volume já com fades, mudo etc. (0 = silêncio)
    */
-  // Liga/troca a cadeia de efeitos de áudio do clipe (entre a fonte e o volume).
-  applyFx(e, fx) {
+  // Liga/troca as cadeias de áudio do clipe, entre a fonte e o volume: Voz (limpeza/realce) → efeitos de voz.
+  applyFx(e, clip, media, meta) {
     const ac = this.ac;
     if (!ac || !e.node || !e.gain) return;
-    const want = hasAudioFx(fx) ? fx : null;
-    const key = want ? JSON.stringify(want) + (workletReady.has(ac) ? '|w' : '') : '';
+    const fx = clip.audioFx;
+    const comFx = hasAudioFx(fx) ? fx : null;
+    const v = temVoz(clip) && !this.vozOriginal ? vozDoClipe(clip) : null;
+    if (v && (v.ruido > 0.5 || v.realce > 0.5) && !meta?.voz && meta?.vozStatus !== 'analisando' && meta?.vozStatus !== 'erro') {
+      this.pedirAnalise?.(media.id);
+    }
+    const key = (comFx || v) ? JSON.stringify([comFx, v, !!meta?.voz]) + (workletReady.has(ac) ? '|w' : '') + (vozPronta.has(ac) ? '|v' : '') : '';
     if (e.fxKey === key) return;
     e.fxKey = key;
     try { e.node.disconnect(); } catch { /* ignore */ }
     if (e.fx) { e.fx.dispose(); e.fx = null; }
-    if (!want) { e.node.connect(e.gain); return; }
-    if (audioFxPlan(want).pitch && !workletReady.has(ac)) {
+    if (e.voz) { e.voz.dispose(); e.voz = null; }
+    if (comFx && audioFxPlan(comFx).pitch && !workletReady.has(ac)) {
       loadPitchWorklet(ac).then((ok) => { if (ok) e.fxKey = null; });
     }
+    if (v && v.ruido > 0.5 && !vozPronta.has(ac)) {
+      carregarVoz(ac).then((ok) => { if (ok) { e.fxKey = null; this.onNeedRender(); } });
+    }
+    let cur = e.node;
     try {
-      e.fx = buildAudioFx(ac, want);
-      e.node.connect(e.fx.input);
-      e.fx.output.connect(e.gain);
+      if (v) {
+        e.voz = montarVoz(ac, v, meta?.voz || null);
+        cur.connect(e.voz.input);
+        cur = e.voz.output;
+      }
+      if (comFx) {
+        e.fx = buildAudioFx(ac, comFx);
+        cur.connect(e.fx.input);
+        cur = e.fx.output;
+      }
+      cur.connect(e.gain);
     } catch {
-      e.fx = null;
+      try { e.node.disconnect(); } catch { /* ignore */ }
+      if (e.voz) { e.voz.dispose(); e.voz = null; }
+      if (e.fx) { e.fx.dispose(); e.fx = null; }
       e.node.connect(e.gain);
     }
   }
 
   sync(clip, media, meta, t, playing, fps, vol) {
     const e = this.element(clip, media, meta);
-    this.applyFx(e, clip.audioFx);
+    this.applyFx(e, clip, media, meta);
     const el = e.el;
     const local = t - clip.start;
     const active = local >= 0 && local < clip.duration;

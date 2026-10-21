@@ -58,7 +58,7 @@ export function effectSegments(src, FPS) {
  *   project, mediaMap {id: media}, out {format, width, height, fps, quality, hw},
  *   textAssets {clipId: {path, cx, cy}}, outPath, graphPath
  */
-export function buildExport({ project: src, mediaMap, out, textAssets = {}, fxAssets = {}, outPath, graphPath }) {
+export function buildExport({ project: src, mediaMap, out, textAssets = {}, fxAssets = {}, vozAssets = {}, outPath, graphPath }) {
   const project = layoutProject(structuredClone(src));
   // pontos de modificação: valores constantes viram fixos; o que muda fica em c.__dyn
   for (const tr of project.tracks) {
@@ -229,7 +229,8 @@ export function buildExport({ project: src, mediaMap, out, textAssets = {}, fxAs
   }
 
   function audioPart(c, m) {
-    const idx = inputFor(c, m);
+    // com "Voz": o trecho já limpo (mesma cadeia da prévia) entra no lugar do áudio da mídia
+    const idx = vozAssets[c.id] ? addInput(['-i', vozAssets[c.id].path]) : inputFor(c, m);
     const f = ['asetpts=PTS-STARTPTS'];
     let sp = c.speed || 1;
     const tempos = [];

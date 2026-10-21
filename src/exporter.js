@@ -3,7 +3,9 @@ import { renderTextPng } from './engine/text.js';
 import { renderShapePng } from './engine/shapes.js';
 import { splitKf, maxScale, maxScaleX, maxScaleY } from './shared/keyframes.js';
 import { buildExport, exportSize, effectSegments } from './shared/graph.js';
-import { makeCanvas } from './engine/util.js';
+import { makeCanvas, mediaUrl } from './engine/util.js';
+import { temVoz, vozDoClipe, VOZ_VERSAO } from './shared/voz.js';
+import { renderizarVoz } from './engine/voz.js';
 import { EXPORT_FORMATS } from './shared/defs.js';
 import { uid } from './shared/timeline.js';
 
@@ -126,10 +128,45 @@ export function startExport(opts) {
         m.rev = { ...(m.rev || {}), [kind]: r };
       }
     }
+    // Voz (limpeza/realce): o trecho de cada clipe passa pela MESMA cadeia da prévia (OfflineAudioContext)
+    // e o FFmpeg usa o resultado no lugar do áudio original. Fica em cache entre exportações.
+    const vozAssets = {};
+    if (fmt.kind !== 'gif') {
+      const alvos = [];
+      for (const tr of project.tracks) {
+        if (tr.muted) continue;
+        for (const c of tr.clips) {
+          if ((c.type !== 'video' && c.type !== 'audio') || c.muted || (c.volume ?? 1) <= 0 || !temVoz(c)) continue;
+          const m = mediaMap[c.mediaId];
+          if (!m || m.missing || !m.hasAudio) continue;
+          alvos.push({ c, m });
+        }
+      }
+      for (let i = 0; i < alvos.length; i++) {
+        const { c, m } = alvos[i];
+        if (onProgress) onProgress(0, null, `Limpando a voz… ${alvos.length > 1 ? `(${i + 1} de ${alvos.length})` : ''}`);
+        const rev = c.reverse && m.rev ? m.rev[c.type === 'audio' ? 'audio' : 'video'] : null;
+        const p = rev ? rev.path : m.path;
+        const durSrc = c.duration * (c.speed || 1) + 0.25;
+        const inPt = rev ? Math.max(0, rev.duration - (c.in || 0) - c.duration * (c.speed || 1)) : c.in || 0;
+        const v = vozDoClipe(c);
+        const precisaAnalise = v.ruido > 0.5 || v.realce > 0.5;
+        const analise = precisaAnalise ? (meta[m.id]?.voz || await window.api.vozAnalisar(m.path, m.duration)) : null;
+        const key = `voz_${hashKey(JSON.stringify([VOZ_VERSAO, p, m.fp || null, inPt.toFixed(3), durSrc.toFixed(3), v, analise?.nivel ?? null]))}`;
+        const st = await window.api.fxCacheStatus(key);
+        if (!st.done) {
+          const origem = await window.api.vozExtrair(p, inPt.toFixed(3), durSrc.toFixed(3), jobId);
+          const bytes = await renderizarVoz(mediaUrl(origem), v, analise);
+          await window.api.writeFile(`fxcache:${key}`, 'voz.wav', bytes);
+          await window.api.fxCacheDone(key);
+        }
+        vozAssets[c.id] = { path: `${st.dir}\\voz.wav` };
+      }
+    }
     const { args, graph, duration } = buildExport({
       project, mediaMap,
       out: { format, width: size.width, height: size.height, fps, quality, vKbps, aKbps, hw, endAt },
-      textAssets, fxAssets, outPath, graphPath: '__GRAPH__',
+      textAssets, fxAssets, vozAssets, outPath, graphPath: '__GRAPH__',
     });
     const off = window.api.onExportProgress((p) => { if (p.jobId === jobId && onProgress) onProgress(p.pct, p.speed); });
     try {

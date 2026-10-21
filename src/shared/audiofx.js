@@ -18,7 +18,8 @@ export const DEFAULT_AUDIO_FX = { id: 'none', mix: 100, bass: 0, treble: 0, deno
 
 export function hasAudioFx(fx) {
   if (!fx) return false;
-  return (fx.id && fx.id !== 'none') || Math.abs(fx.bass || 0) > 0.05 || Math.abs(fx.treble || 0) > 0.05 || !!fx.denoise;
+  // (o antigo "denoise" virou a limpeza da Voz, em tempo real — src/shared/voz.js)
+  return (fx.id && fx.id !== 'none') || Math.abs(fx.bass || 0) > 0.05 || Math.abs(fx.treble || 0) > 0.05;
 }
 
 // corte que "fecha" de 20 kHz até f conforme a intensidade m (escala logarítmica)
@@ -57,7 +58,6 @@ export function audioFxFilters(fx) {
   if (!hasAudioFx(fx)) return [];
   const p = audioFxPlan(fx);
   const f = [];
-  if (p.denoise) f.push('afftdn=nr=12:nf=-35');
   if (p.pitch) f.push(`rubberband=pitch=${n4(p.pitch)}`);
   if (p.hp) f.push(`highpass=f=${Math.round(p.hp)}`);
   if (p.lp) f.push(`lowpass=f=${Math.round(p.lp)}`);

@@ -46,6 +46,7 @@ class Engine {
   init() {
     if (this.pool) return;
     this.pool = new MediaPool(() => this.invalidate());
+    this.pool.pedirAnalise = (mid) => useStore.getState().analisarVoz(mid);
     useStore.subscribe((s, prev) => {
       if (s.project !== prev.project || s.time !== prev.time || s.meta !== prev.meta || s.fxPreview !== prev.fxPreview
         || s.selection !== prev.selection || s.pickColor !== prev.pickColor) this.invalidate();
@@ -105,6 +106,7 @@ class Engine {
     const s = useStore.getState();
     const project = s.project;
     if (!project) { if (this.pool && this.pool.els.size) this.pool.prune(new Set()); return; }
+    if (this.pool) this.pool.vozOriginal = !!s.vozOriginal;
     let t = s.time;
     if (s.playing && s.anchor) {
       const dur = projectDuration(project);
