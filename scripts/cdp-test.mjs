@@ -7,7 +7,13 @@ import path from 'node:path';
 const exe = process.argv[2];
 const out = process.argv[3];
 fs.mkdirSync(out, { recursive: true });
-const proc = spawn(exe, ['--remote-debugging-port=9333'], { stdio: 'ignore' });
+// perfil separado: roda ao lado do app aberto do usuário (instância única é por perfil) sem mexer nas configurações
+// dele; o modelo de legendas é copiado para o perfil de teste
+const perfil = path.join(process.env.TEMP || '.', 'munnin-cut-cdp-perfil');
+const modelo = path.join(process.env.APPDATA || '', 'Munnin Cut', 'models', 'ggml-base-q5_1.bin');
+fs.mkdirSync(path.join(perfil, 'models'), { recursive: true });
+if (fs.existsSync(modelo) && !fs.existsSync(path.join(perfil, 'models', 'ggml-base-q5_1.bin'))) fs.copyFileSync(modelo, path.join(perfil, 'models', 'ggml-base-q5_1.bin'));
+const proc = spawn(exe, ['--remote-debugging-port=9333', `--user-data-dir=${perfil}`], { stdio: 'ignore' });
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 let target = null;
