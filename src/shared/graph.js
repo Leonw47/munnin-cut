@@ -24,6 +24,16 @@ const hex = (c) => (/^#[0-9a-f]{6}$/i.test(c || '') ? c : '#000000');
 const TO_GBRP = 'scale=flags=bicubic+accurate_rnd,format=gbrp';
 export const rgbSafe = (graph) => graph.replace(/format=gbrp\b/g, TO_GBRP);
 
+// Vídeo HDR (iPhone grava em HLG/Dolby Vision) → SDR BT.709; sem isso as cores saem "lavadas".
+// Mesma conversão do proxy (electron/media.js). Roda depois de reduzir a camada (mais leve).
+export function hdrParaSdr(hdr) {
+  if (!hdr) return [];
+  return [
+    `zscale=tin=${hdr.trc}:min=${hdr.matrix}:pin=${hdr.prim}:rin=${hdr.range}:t=linear:npl=100`, 'format=gbrpf32le',
+    'zscale=p=bt709', 'tonemap=tonemap=hable:desat=0', 'zscale=t=bt709:m=bt709:r=tv', 'format=yuv420p',
+  ];
+}
+
 export function exportSize(project, shortSide) {
   const s = shortSide / Math.min(project.width, project.height);
   return { width: even(project.width * s), height: even(project.height * s) };
@@ -58,7 +68,7 @@ export function effectSegments(src, FPS) {
  *   project, mediaMap {id: media}, out {format, width, height, fps, quality, hw},
  *   textAssets {clipId: {path, cx, cy}}, outPath, graphPath
  */
-export function buildExport({ project: src, mediaMap, out, textAssets = {}, fxAssets = {}, vozAssets = {}, outPath, graphPath }) {
+export function buildExport({ project: src, mediaMap, out, textAssets = {}, fxAssets = {}, vozAssets = {}, chromaAssets = {}, coverAsset = null, outPath, graphPath }) {
   const project = layoutProject(structuredClone(src));
   // pontos de modificação: valores constantes viram fixos; o que muda fica em c.__dyn
   for (const tr of project.tracks) {
@@ -94,8 +104,9 @@ export function buildExport({ project: src, mediaMap, out, textAssets = {}, fxAs
     const rev = c.reverse && m.rev ? m.rev[c.type === 'audio' ? 'audio' : 'video'] : null;
     const p = rev ? rev.path : m.renderPath || m.path;
     const inPt = rev ? Math.max(0, rev.duration - (c.in || 0) - c.duration * (c.speed || 1)) : c.in || 0;
+    // foto com "remover fundo": o PNG já recortado pela mesma conta da prévia (engine/chromaImg.js)
     const idx = m.type === 'image'
-      ? addInput(['-i', p])
+      ? addInput(['-i', chromaAssets[c.id]?.path || p])
       : addInput(['-ss', r3(inPt), '-t', r3(c.duration * (c.speed || 1) + 0.25), '-i', p]);
     inputCache.set(c.id, idx);
     return idx;
@@ -125,7 +136,8 @@ export function buildExport({ project: src, mediaMap, out, textAssets = {}, fxAs
     const s = fitScale(sw, sh, W, H, c.fit) * maxScale(c, dyn);
     const w = even(sw * s * maxScaleX(c, dyn)), h = even(sh * s * maxScaleY(c, dyn));
     f.push(`scale=${w}:${h}`, 'setsar=1');
-    if (c.chroma?.on) f.push(...chromaFilters(c.chroma)); // termina em rgba
+    if (m.type === 'video') f.push(...hdrParaSdr(m.hdr));
+    if (c.chroma?.on && !chromaAssets[c.id]) f.push(...chromaFilters(c.chroma)); // termina em rgba
     else f.push('format=rgba');
     // cor com pontos de modificação: filtros por trechos (tempo local), senão filtros fixos
     const colorDyn = COLOR_PROPS.some((p) => dyn[p]);
@@ -490,6 +502,14 @@ export function buildExport({ project: src, mediaMap, out, textAssets = {}, fxAs
       }
     }
 
+    // capa: a imagem escolhida vira o 1º quadro (é o que as redes e o Windows mostram como miniatura)
+    if (coverAsset?.path && fmt.kind === 'video') {
+      const ci = addInput(['-i', coverAsset.path]);
+      const cv = L('cv'), bc = L('b');
+      F.push(`[${ci}:v]scale=${W}:${H}:force_original_aspect_ratio=increase,crop=${W}:${H},setsar=1,format=yuva420p[${cv}]`);
+      F.push(`[${base}][${cv}]overlay=0:0:eof_action=repeat:enable='eq(n,0)'[${bc}]`);
+      base = bc;
+    }
     if (fmt.kind === 'gif') {
       const gw = even(Math.min(W, W >= H ? 960 : 540));
       F.push(`[${base}]fps=${Math.min(FPS, 15)},scale=${gw}:-2:flags=lanczos,split[g1][g2];[g1]palettegen=stats_mode=diff[gp];[g2][gp]paletteuse=dither=bayer:bayer_scale=4[vout]`);

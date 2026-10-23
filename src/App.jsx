@@ -104,6 +104,9 @@ export default function App() {
       const ctrl = e.ctrlKey || e.metaKey;
       const k = e.key.toLowerCase();
       let handled = true;
+      // prévia da biblioteca aberta no reprodutor: Espaço toca/pausa ela, Esc volta ao projeto
+      if (s.libPreview && k === ' ') { e.preventDefault(); window.dispatchEvent(new Event('libprev-toggle')); return; }
+      if (s.libPreview && k === 'escape') { e.preventDefault(); s.closeLibPreview(); return; }
       // biblioteca de mídia em foco: Delete remove os itens selecionados, Ctrl+A seleciona todos, Esc limpa
       if (s.libFocus && s.libSel.length && (k === 'delete' || k === 'backspace')) { e.preventDefault(); s.removeMediaMany(s.libSel); return; }
       if (s.libFocus && ctrl && k === 'a') { e.preventDefault(); s.libSelectAll(libView.order); return; }

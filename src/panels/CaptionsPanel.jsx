@@ -6,6 +6,7 @@ import { CAPTION_STYLES, CAPTION_LANGS, captionStyle, generateCaptions } from '.
 import { presetCss } from './TextPanel.jsx';
 import { editClip, Seg, Slider } from '../components/ui.jsx';
 import { fmtBytes } from '../shared/defs.js';
+import TextoEmLote from '../components/TextoEmLote.jsx';
 
 const STAGES = { download: 'Baixando o modelo de legendas…', audio: 'Preparando o áudio…', transcribe: 'Ouvindo e transcrevendo…', apply: 'Criando as legendas…' };
 const ls = (k, d) => { try { return localStorage.getItem(k) ?? d; } catch { return d; } };
@@ -122,6 +123,7 @@ export default function CaptionsPanel() {
             <button className="btn small ghost" onClick={() => { if (window.confirm('Apagar todas as legendas?')) S().commit((p) => { for (const t of p.tracks) t.clips = t.clips.filter((c) => !c.caption); }); }}><Trash2 size={13} /> Apagar todas</button>
           </div>
           <div className="field"><label>Altura</label><Slider value={Math.round((caps[0].transform?.y ?? 0.32) * 100)} min={-45} max={45} onChange={(v) => setY(v / 100)} /></div>
+          <TextoEmLote ids={caps.map((c) => c.id)} titulo="Personalizar todas as legendas" />
           <div className="cap-list">
             {caps.map((c) => (
               <div key={c.id} className="cap-item">

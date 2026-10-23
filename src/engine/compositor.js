@@ -8,7 +8,8 @@ import { effectDef, seedOf } from '../shared/effects.js';
 import { sharedSvg } from './svgFilters.js';
 import { makeCanvas } from './util.js';
 import { drawShape, shapeSize } from './shapes.js';
-import { keyPixels } from '../shared/chroma.js';
+import { keyPixels, DEFAULT_CHROMA } from '../shared/chroma.js';
+import { recortarFoto } from './chromaImg.js';
 import { resolveAt } from '../shared/keyframes.js';
 
 const DEF_BG = { type: 'color', color: '#000000', blur: 0.03 };
@@ -194,24 +195,47 @@ export class Compositor {
     ctx.restore();
   }
 
+  // Foto com "remover fundo": recorte calculado uma vez (refaz só quando a foto ou os controles mudam).
+  fotoRecortada(clip, src) {
+    if (!this.fotos) this.fotos = new Map();
+    const ch = { ...DEFAULT_CHROMA, ...clip.chroma };
+    const key = JSON.stringify([src.el.src || src.el.currentSrc || '', src.w, src.h, ch.color, ch.similarity, ch.smooth, ch.spill, ch.bordas]);
+    const c = this.fotos.get(clip.id);
+    if (c?.key === key) return c.canvas;
+    try {
+      const canvas = recortarFoto(src.el, src.w, src.h, ch, 1600);
+      this.fotos.set(clip.id, { key, canvas });
+      return canvas;
+    } catch { return null; } // canvas protegido: segue com o recorte por quadro
+  }
+
   // Camada de mídia já recortada, no tamanho final e com cor/efeitos do clipe.
   mediaLayer(clip, media, src, W, H, lt) {
     const cr = clip.crop || {};
-    const sx = src.w * (cr.l || 0), sy = src.h * (cr.t || 0);
-    const sw = Math.max(1, src.w * (1 - (cr.l || 0) - (cr.r || 0)));
-    const sh = Math.max(1, src.h * (1 - (cr.t || 0) - (cr.b || 0)));
+    let el = src.el;
+    let sx = src.w * (cr.l || 0), sy = src.h * (cr.t || 0);
+    let sw = Math.max(1, src.w * (1 - (cr.l || 0) - (cr.r || 0)));
+    let sh = Math.max(1, src.h * (1 - (cr.t || 0) - (cr.b || 0)));
     const { w, h } = mediaLayerSize(clip, media, W, H);
     if (w < 0.5 || h < 0.5) return null;
     const ops = clipOps(clip);
-    const chroma = clip.chroma?.on && !this.noChroma?.has(clip.id);
-    if (!ops.length && !chroma) return { img: src.el, sx, sy, sw, sh, w, h };
+    let chroma = clip.chroma?.on && !this.noChroma?.has(clip.id);
+    if (chroma && media.type === 'image') {
+      const K = this.fotoRecortada(clip, src);
+      if (K) {
+        const fx = K.width / src.w, fy = K.height / src.h;
+        el = K; sx *= fx; sy *= fy; sw *= fx; sh *= fy;
+        chroma = false;
+      }
+    }
+    if (!ops.length && !chroma) return { img: el, sx, sy, sw, sh, w, h };
     // chroma key mexe pixel a pixel: a camada fica em até 1280 px para a prévia continuar leve
     const cap = Math.min(1, (chroma ? 1280 : 2400) / Math.max(w, h));
     const ow = Math.max(1, Math.round(w * cap)), oh = Math.max(1, Math.round(h * cap));
     const L = this.layerCanvas(clip.id, ow, oh);
     const css = cssFilter(ops.filter((o) => CSS_OPS.has(o.op)), oh, this.svg);
     if (chroma) {
-      L.ctx.drawImage(src.el, sx, sy, sw, sh, 0, 0, ow, oh);
+      L.ctx.drawImage(el, sx, sy, sw, sh, 0, 0, ow, oh);
       try {
         const img = L.ctx.getImageData(0, 0, ow, oh);
         keyPixels(img.data, clip.chroma);
@@ -226,7 +250,7 @@ export class Compositor {
       }
     } else {
       L.ctx.filter = css;
-      L.ctx.drawImage(src.el, sx, sy, sw, sh, 0, 0, ow, oh);
+      L.ctx.drawImage(el, sx, sy, sw, sh, 0, 0, ow, oh);
     }
     L.ctx.filter = 'none';
     const post = postOps(ops);
@@ -359,6 +383,7 @@ export class Compositor {
         return s.canvas;
       },
       rgbShift(dx, dy) { comp.rgbShift(comp.ctx, W, H, dx, dy); },
+      scratch(w, h, i = 16) { return comp.tmp(i, w, h); }, // canvas de rascunho (distorções)
       pixelate(b) { comp.pixelate(comp.ctx, W, H, b); },
     };
   }

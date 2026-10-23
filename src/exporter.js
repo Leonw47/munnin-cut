@@ -6,6 +6,8 @@ import { buildExport, exportSize, effectSegments } from './shared/graph.js';
 import { makeCanvas, mediaUrl } from './engine/util.js';
 import { temVoz, vozDoClipe, VOZ_VERSAO } from './shared/voz.js';
 import { renderizarVoz } from './engine/voz.js';
+import { recortarFoto } from './engine/chromaImg.js';
+import { DEFAULT_CHROMA } from './shared/chroma.js';
 import { EXPORT_FORMATS } from './shared/defs.js';
 import { uid } from './shared/timeline.js';
 
@@ -163,10 +165,44 @@ export function startExport(opts) {
         vozAssets[c.id] = { path: `${st.dir}\\voz.wav` };
       }
     }
+    // Fotos com "remover fundo": o recorte (com "só o fundo das bordas") vira um PNG com transparência.
+    const chromaAssets = {};
+    if (fmt.kind !== 'audio') {
+      for (const tr of project.tracks) {
+        if (tr.hidden) continue;
+        for (const c of tr.clips) {
+          if (c.type !== 'image' || !c.chroma?.on) continue;
+          const m = mediaMap[c.mediaId];
+          if (!m || m.missing) continue;
+          const ch = { ...DEFAULT_CHROMA, ...c.chroma };
+          const fonte = meta[m.id]?.proxy || m.renderPath || m.path;
+          const key = `chroma_${hashKey(JSON.stringify([fonte, m.fp || null, ch.color, ch.similarity, ch.smooth, ch.spill, ch.bordas]))}`;
+          const st = await window.api.fxCacheStatus(key);
+          if (!st.done) {
+            if (onProgress) onProgress(0, null, 'Recortando o fundo das fotos…');
+            const img = new Image();
+            img.crossOrigin = 'anonymous';
+            img.src = mediaUrl(fonte);
+            await img.decode();
+            const cv = recortarFoto(img, img.naturalWidth, img.naturalHeight, ch, 2560);
+            const blob = await new Promise((r) => cv.toBlob(r, 'image/png'));
+            await window.api.writeFile(`fxcache:${key}`, 'foto.png', new Uint8Array(await blob.arrayBuffer()));
+            await window.api.fxCacheDone(key);
+          }
+          chromaAssets[c.id] = { path: `${st.dir}\\foto.png` };
+        }
+      }
+    }
+    // capa (1º quadro): só se o arquivo ainda existe
+    let coverAsset = null;
+    if (project.cover?.path && fmt.kind === 'video') {
+      const [cst] = await window.api.statFiles([project.cover.path]).catch(() => [null]);
+      if (cst?.exists) coverAsset = { path: project.cover.path };
+    }
     const { args, graph, duration } = buildExport({
       project, mediaMap,
       out: { format, width: size.width, height: size.height, fps, quality, vKbps, aKbps, hw, endAt },
-      textAssets, fxAssets, vozAssets, outPath, graphPath: '__GRAPH__',
+      textAssets, fxAssets, vozAssets, chromaAssets, coverAsset, outPath, graphPath: '__GRAPH__',
     });
     const off = window.api.onExportProgress((p) => { if (p.jobId === jobId && onProgress) onProgress(p.pct, p.speed); });
     try {

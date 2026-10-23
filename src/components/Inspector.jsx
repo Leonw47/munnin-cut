@@ -1,12 +1,12 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { FlipHorizontal2, FlipVertical2, RotateCcw, AlignLeft, AlignCenter, AlignRight, Italic, CaseUpper, AudioLines, Trash2, Link, Pipette, Loader2, Headphones } from 'lucide-react';
-import { DEFAULT_CHROMA } from '../shared/chroma.js';
+import { DEFAULT_CHROMA, chromaParams } from '../shared/chroma.js';
 import { AUDIO_FX, DEFAULT_AUDIO_FX } from '../shared/audiofx.js';
 import { AMBIENTES, PRESETS_VOZ, VOZ_PADRAO, vozDoClipe, temVoz } from '../shared/voz.js';
-import { hasKf, hasKfAt, propAt, upsertKf, removeKfAt, setPropAt, scaleKf } from '../shared/keyframes.js';
+import { hasKf, hasKfAt, propAt, upsertKf, removeKfAt, setPropAt, scaleKf, KF_PROPS } from '../shared/keyframes.js';
 import { useStore } from '../store.js';
 import { findClip, fmtTime, projectDuration, mainTrack, transitionDuration, nextAdjacent, overlayTransDur, OVERLAY_TRANSITIONS } from '../shared/timeline.js';
-import { FONTS, RATIOS, FPS_LIST, TEXT_PRESETS, TRANSITIONS, ANIMS_IN, ANIMS_OUT, DEFAULT_TEXT, sizeFromMedia } from '../shared/defs.js';
+import { FONTS, RATIOS, FPS_LIST, TEXT_PRESETS, TRANSITIONS, ANIMS_IN, ANIMS_OUT, ANIMS_LOOP, DEFAULT_TEXT, sizeFromMedia } from '../shared/defs.js';
 import { ADJUST_FIELDS, FILTERS } from '../shared/ops.js';
 import { EFFECTS, FX_CATS } from '../shared/effects.js';
 import { Slider, Field, Toggle, Seg, ColorInput, editClip, editProject } from './ui.jsx';
@@ -14,6 +14,7 @@ import { FxSample, EffectThumb, fxHover, clearFxPreview, useClearFxPreviewOnUnmo
 import { presetCss } from '../panels/TextPanel.jsx';
 import { ShapeThumb } from '../panels/ShapesPanel.jsx';
 import { SHAPE_KINDS } from '../engine/shapes.js';
+import TextoEmLote from './TextoEmLote.jsx';
 
 function Tabs({ tabs, value, onChange }) {
   return (
@@ -227,11 +228,33 @@ function BasicTab({ clip, isMain }) {
           </Field>
           {clip.bg?.type === 'color' && <Field label="Cor"><ColorInput value={clip.bg.color} onChange={(v) => editClip(id, (c) => { c.bg.color = v; })} /></Field>}
           {clip.bg?.type === 'blur' && <Field label="Desfoque"><Slider value={Math.round((clip.bg.blur ?? 0.03) * 1000)} min={5} max={80} onChange={(v) => editClip(id, (c) => { c.bg.blur = v / 1000; })} /></Field>}
+          <FundoEscondido clip={clip} />
         </Section>
       )}
     </>
   );
 }
+
+// O fundo só aparece onde o vídeo não cobre a tela; quando cobre tudo, avisa (senão parece que não funciona).
+function FundoEscondido({ clip }) {
+  const m = useStore((s) => s.project.media.find((x) => x.id === clip.mediaId));
+  const W = useStore((s) => s.project.width), H = useStore((s) => s.project.height);
+  if (!m?.width || !m?.height || Object.keys(clip.kf || {}).length) return null;
+  const tf = clip.transform || {}, cr = clip.crop || {};
+  const anima = (a) => a && a.id && a.id !== 'none';
+  if ((tf.scale ?? 1) * Math.min(tf.scaleX ?? 1, tf.scaleY ?? 1) < 1 || tf.x || tf.y || tf.rotation || anima(clip.animIn) || anima(clip.animOut) || anima(clip.animLoop)) return null;
+  const a = (m.width * (1 - (cr.l || 0) - (cr.r || 0))) / (m.height * (1 - (cr.t || 0) - (cr.b || 0)));
+  const cobre = clip.fit === 'cover' || Math.abs(a - W / H) / (W / H) < 0.01;
+  if (!cobre) return null;
+  return (
+    <div className="hint" style={{ marginTop: 4 }}>
+      Agora {clip.type === 'image' ? 'a imagem' : 'o vídeo'} cobre a tela inteira, então o fundo não aparece. Ele aparece nas sobras: mude a proporção do projeto (ex.: 9:16 com vídeo deitado), diminua a escala ou use “Ajustar” no encaixe.
+    </div>
+  );
+}
+
+// Fundo colorido (verde, azul…) tem reflexo para tirar; branco/cinza/preto não.
+const isColorida = (hex) => chromaParams({ color: hex }).modo === 'uv';
 
 // Chroma key: remove o fundo verde/azul (ou de outra cor) do vídeo ou da foto.
 function ChromaSection({ clip }) {
@@ -241,7 +264,7 @@ function ChromaSection({ clip }) {
   const set = (fn) => editClip(id, (c) => { c.chroma = { ...DEFAULT_CHROMA, ...(c.chroma || {}) }; fn(c.chroma); });
   return (
     <Section title="Remover fundo (chroma key)" right={<Toggle on={ch.on} onChange={(v) => useStore.getState().updateClip(id, (c) => { c.chroma = { ...DEFAULT_CHROMA, ...(c.chroma || {}), on: v }; })} />}>
-      {!ch.on && <div className="hint">Para vídeos gravados com fundo verde ou azul: a cor do fundo fica transparente e aparece o que estiver embaixo.</div>}
+      {!ch.on && <div className="hint">Para fundo verde, azul ou de uma cor só (como o branco de foto de produto): a cor do fundo fica transparente e aparece o que estiver embaixo.</div>}
       {ch.on && <>
         <Field label="Cor do fundo">
           <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
@@ -253,11 +276,17 @@ function ChromaSection({ clip }) {
         <div style={{ display: 'flex', gap: 6, marginBottom: 8 }}>
           <button className="btn small" onClick={() => set((c) => { c.color = '#00d639'; })}>Verde</button>
           <button className="btn small" onClick={() => set((c) => { c.color = '#1f5bff'; })}>Azul</button>
+          <button className="btn small" onClick={() => set((c) => { c.color = '#ffffff'; })}>Branco</button>
         </div>
         <Field label="Intensidade"><Slider value={ch.similarity} min={0} max={100} onChange={(v) => set((c) => { c.similarity = v; })} /></Field>
         <Field label="Bordas suaves"><Slider value={ch.smooth} min={0} max={100} onChange={(v) => set((c) => { c.smooth = v; })} /></Field>
-        <Field label="Tirar reflexo" title="Tira o tom verde/azul que a luz do fundo deixa na pessoa"><Toggle on={!!ch.spill} onChange={(v) => set((c) => { c.spill = v; })} /></Field>
-        <div className="hint">Aumente a intensidade até o fundo sumir todo; se a pessoa começar a ficar transparente, diminua. Coloque um vídeo ou foto na faixa de baixo para aparecer no lugar do fundo.</div>
+        {clip.type === 'image' && (
+          <Field label="Só o fundo das bordas" title="Some só o fundo que encosta nas bordas da foto; a mesma cor dentro do objeto (uma etiqueta branca, um brilho) fica">
+            <Toggle on={ch.bordas !== false} onChange={(v) => set((c) => { c.bordas = v; })} />
+          </Field>
+        )}
+        {isColorida(ch.color) && <Field label="Tirar reflexo" title="Tira o tom verde/azul que a luz do fundo deixa na pessoa"><Toggle on={!!ch.spill} onChange={(v) => set((c) => { c.spill = v; })} /></Field>}
+        <div className="hint">Aumente a intensidade até o fundo sumir todo; se o objeto ou a pessoa começar a ficar transparente, diminua. Com fundo branco, cinza ou preto o claro/escuro também conta, então as cores do objeto não somem junto. Coloque um vídeo ou foto na faixa de baixo para aparecer no lugar do fundo.</div>
       </>}
     </Section>
   );
@@ -413,6 +442,7 @@ function AnimTab({ clip }) {
   const id = clip.id;
   const ai = clip.animIn || { id: 'none', duration: 0.5 };
   const ao = clip.animOut || { id: 'none', duration: 0.5 };
+  const al = clip.animLoop || { id: 'none' };
   const maxD = Math.max(0.1, Math.min(5, Number(clip.duration.toFixed(1))));
   return (
     <>
@@ -427,6 +457,16 @@ function AnimTab({ clip }) {
           {ANIMS_OUT.map((a) => <button key={a.id} className={ao.id === a.id ? 'on' : ''} onClick={() => useStore.getState().updateClip(id, (c) => { c.animOut = { id: a.id, duration: ao.duration || 0.5 }; })}>{a.name}</button>)}
         </div>
         {ao.id !== 'none' && <Field label="Duração"><Slider value={Math.min(ao.duration, maxD)} min={0.1} max={maxD} step={0.1} onChange={(v) => editClip(id, (c) => { c.animOut.duration = v; })} /></Field>}
+      </Section>
+      <Section title="Contínua (o clipe todo)">
+        <div className="anim-grid">
+          {ANIMS_LOOP.map((a) => <button key={a.id} className={al.id === a.id ? 'on' : ''} onClick={() => useStore.getState().updateClip(id, (c) => { c.animLoop = a.id === 'none' ? null : { id: a.id, speed: al.speed ?? 1, amount: al.amount ?? 100 }; })}>{a.name}</button>)}
+        </div>
+        {al.id !== 'none' && <>
+          {al.id !== 'kenburns' && <Field label="Velocidade"><Slider value={al.speed ?? 1} min={0.25} max={3} step={0.05} onChange={(v) => editClip(id, (c) => { c.animLoop.speed = v; })} /></Field>}
+          {al.id !== 'spin' && <Field label="Intensidade"><Slider value={al.amount ?? 100} min={10} max={200} onChange={(v) => editClip(id, (c) => { c.animLoop.amount = v; })} /></Field>}
+        </>}
+        <div className="hint">Fica junto com a entrada e a saída: dá para entrar quicando e continuar pulsando, por exemplo.</div>
       </Section>
     </>
   );
@@ -688,6 +728,7 @@ function MultiPanel({ ids }) {
   const clips = ids.map((id) => findClip(project, id)?.clip).filter(Boolean);
   const count = (pred) => clips.filter(pred).length;
   const sound = clips.filter((c) => c.type === 'video' || c.type === 'audio');
+  const visual = clips.filter((c) => c.type !== 'audio' && c.type !== 'effect');
   const allMuted = sound.length && sound.every((c) => c.muted);
   const setMuted = (v) => s().commit((p) => { for (const id of ids) { const f = findClip(p, id); if (f && (f.clip.type === 'video' || f.clip.type === 'audio')) f.clip.muted = v; } });
   return (
@@ -710,9 +751,57 @@ function MultiPanel({ ids }) {
             <button className="btn danger" onClick={() => s().deleteSelection()}><Trash2 size={14} /> Excluir</button>
           </div>
         </Section>
+        {(sound.length > 0 || visual.length > 0) && (
+          <Section title="Ajustar todos de uma vez">
+            {sound.length > 0 && <BatchSlider ids={sound.map((c) => c.id)} prop="volume" label="Volume" min={0} max={200} toUi={(v) => Math.round(v * 100)} fromUi={(x) => x / 100} />}
+            {visual.length > 0 && <BatchSlider ids={visual.map((c) => c.id)} prop="scale" label="Escala" min={1} max={500} toUi={(v) => Math.round(v * 100)} fromUi={(x) => x / 100} />}
+            {visual.length > 0 && <BatchSlider ids={visual.map((c) => c.id)} prop="opacity" label="Opacidade" min={0} max={100} toUi={(v) => Math.round(v * 100)} fromUi={(x) => x / 100} />}
+            <div className="hint">Vale para todos os clipes selecionados que têm essa opção. Quem tem pontos de modificação mantém a animação, só que proporcional ao novo valor.</div>
+          </Section>
+        )}
+        <TextoEmLote ids={ids} titulo="Texto dos selecionados" />
         <div className="hint">Arraste qualquer um deles na linha do tempo para mover todos juntos. Escolher um filtro na aba Filtros aplica em todos os vídeos e fotos da seleção. Ctrl + clique tira ou põe um clipe na seleção.</div>
       </div>
     </>
+  );
+}
+
+// Controle que muda a mesma propriedade em vários clipes. O valor mostrado é o do primeiro; ao arrastar,
+// quem não tem pontos de modificação recebe o valor novo e quem tem tem os pontos multiplicados na mesma
+// proporção (a conta parte sempre do estado do começo do gesto, sem acumular erro).
+function BatchSlider({ ids, prop, label, min, max, toUi, fromUi }) {
+  const project = useStore((s) => s.project);
+  const snap = useRef(null);
+  const clips = ids.map((id) => findClip(project, id)?.clip).filter(Boolean);
+  if (!clips.length) return null;
+  const vals = clips.map((c) => KF_PROPS[prop].get(c));
+  const igual = vals.every((v) => Math.abs(v - vals[0]) < 1e-6);
+  const inicio = () => {
+    const s = useStore.getState();
+    s.checkpoint();
+    snap.current = { v0: vals[0], itens: clips.map((c) => ({ id: c.id, base: KF_PROPS[prop].get(c), kf: c.kf?.[prop] ? c.kf[prop].map((k) => ({ ...k })) : null })) };
+  };
+  const mudar = (ui) => {
+    if (!snap.current) inicio();
+    const v = fromUi(ui);
+    const { v0, itens } = snap.current;
+    const lo = fromUi(min), hi = fromUi(max);
+    const cl = (x) => Math.max(lo, Math.min(hi, x));
+    useStore.getState().commit((p) => {
+      for (const it of itens) {
+        const f = findClip(p, it.id);
+        if (!f) continue;
+        if (it.kf && v0 > 1e-6) f.clip.kf = { ...f.clip.kf, [prop]: it.kf.map((k) => ({ t: k.t, v: cl(k.v * (v / v0)) })) };
+        else KF_PROPS[prop].set(f.clip, v);
+      }
+    }, { silent: true });
+  };
+  return (
+    <div onPointerDownCapture={inicio} onPointerUpCapture={() => { snap.current = null; }} onBlurCapture={() => { snap.current = null; }}>
+      <Field label={<span>{label}{!igual && <span className="hint" title="Os clipes têm valores diferentes; mostra o do primeiro"> (vários)</span>}</span>}>
+        <Slider value={toUi(vals[0])} min={min} max={max} onChange={mudar} />
+      </Field>
+    </div>
   );
 }
 

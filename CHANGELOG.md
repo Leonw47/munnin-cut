@@ -3,6 +3,63 @@
 Formato baseado em [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/) e versões no padrão
 [SemVer](https://semver.org/lang/pt-BR/): MAJOR.MINOR.PATCH — correções sobem o PATCH, recursos novos o MINOR.
 
+## [1.8.0] — 2026-10-23
+
+### Adicionado
+- **Efeitos novos (115 no total):**
+  - **Elementos:** Fogo, Moldura de fogo, Explosão (bola de fogo, fumaça, fagulhas, onda de choque e tremor),
+    Impacto (clarão, anéis e linhas de mangá), Raios, Faíscas, Fumaça, Linhas de velocidade, Debaixo d'água,
+    Gotas na lente e Respingo.
+  - **Distorção:** Ondulação, Redemoinho, Calor, Olho de peixe, Derreter, Gelatina e Respirar.
+  - **Câmera:** Câmera na mão, Pulo e Zoom dramático.
+- **Animações:** entradas novas (Cair e quicar, Quicar, Elástico, Balançar, Quicar ←/→, Subir com mola, Rodopiar),
+  saídas novas (Cair, Elástico, Balançar, Sugar, Subir e sumir, Quicar) e **animação contínua** durante o clipe
+  todo (Pulsar, Batida, Flutuar, Balançar, Mexer, Tremer, Girar sem parar, Zoom lento), com velocidade e
+  intensidade — combina com a entrada e a saída.
+- **YouTube: pesquisa e prévia.** Escreva o que procura (ou cole o link) e escolha nos resultados; o vídeo abre
+  numa janela com o player do YouTube para conferir se é o certo, marcar início e fim enquanto assiste (ou
+  arrastando as alças) e baixar **só o áudio ou o vídeo** (até 1080p), inteiro ou só o trecho.
+- **Instagram:** cole o link de um post ou reel para baixar o vídeo (ou só o áudio) direto para o projeto.
+- **Meus sons:** biblioteca pessoal na aba Sons, com categorias criadas por você (uma pasta para cada, em
+  Documentos\Munnin Cut\Meus sons). Adicione arquivos pelo botão ou arrastando; ouça, ponha no cursor ou arraste
+  para a linha do tempo.
+- **Prévia na biblioteca:** passar o mouse num vídeo mostra os quadros; o botão 👁 abre a mídia no reprodutor
+  (com som, barra de tempo e o corte marcado) sem pôr na linha do tempo. Espaço toca/pausa, Esc volta.
+- **Repetir trecho (loop):** botão 🔁 na barra da linha do tempo (usa os clipes selecionados) ou Shift+arrastar
+  na régua; a faixa amarela na régua pode ser movida e ajustada, clique duplo apaga.
+- **Mover pontos de modificação:** arraste o ◆ no clipe para outro momento (encaixa nos quadros; Shift = livre);
+  botão direito no ◆ apaga o ponto.
+- **Vários clipes de uma vez:** com vários selecionados, ajuste volume, escala e opacidade de todos juntos; com
+  textos, mude fonte, tamanho, cor, negrito, maiúsculas, contorno, fundo e sombra de todos.
+- **Legendas:** "Personalizar todas as legendas" muda o estilo de todas de uma vez.
+- **Capa do vídeo** (janela Exportar): o quadro da agulha ou uma imagem vira o 1º quadro do arquivo — a miniatura
+  que Instagram, WhatsApp e o Windows mostram.
+
+### Corrigido
+- **Fotos HEIC do iPhone** apareciam com um pedaço só (512×512) e saíam diferentes na exportação: a foto vem em
+  ladrilhos que o FFmpeg não junta sozinho. Agora a foto é montada inteira, com o giro/espelho guardado no arquivo
+  e as cores convertidas de Display P3 para sRGB; a mesma cópia vale para a prévia e a exportação. Mídias antigas
+  são relidas sozinhas.
+- **Vídeos .mov/.mp4 do iPhone em HDR** (HLG/Dolby Vision) saíam com cores lavadas na exportação: agora são
+  convertidos para cores normais (SDR) na exportação, nas miniaturas e na cópia de prévia.
+- **Remover fundo branco apagava quase tudo:** com fundo neutro (branco, cinza, preto, bege) a comparação agora
+  inclui o claro/escuro (como o filtro colorkey), e não só a cor — antes tudo que era neutro na imagem sumia, e o
+  branco ainda tirava o verde da foto ("reflexo"). Em fotos, **"Só o fundo das bordas"** (ligado por padrão)
+  apaga só o fundo que encosta nas bordas: a mesma cor dentro do objeto fica. Botão "Branco" pronto.
+- **Ondas esticadas** em áudios longos (como os baixados): a onda era desenhada num quadro de no máximo 4000 px
+  esticado até o tamanho do bloco; agora é desenhada só na parte visível, na resolução da tela, e com zoom grande
+  a curva é suavizada.
+- **Fundo (Cor/Desfoque) "não funcionava":** ele só aparece onde o vídeo não cobre a tela; quando cobre tudo, o
+  painel agora explica e diz como fazer aparecer.
+- Na prévia do YouTube, digitar o trecho antes do player carregar não perde mais o início/fim.
+
+### Testes
+- `autotest-v18` (36 checagens): HEIC (tamanho, giro, prévia = exportação), HDR, fundo branco (prévia e arquivo),
+  Fundo Cor/Desfoque pela interface, pesquisa e player do YouTube, Meus sons, prévia da biblioteca, arrastar ◆,
+  loop, edição em lote, capa e animação contínua.
+- `autotest-fx18`: folha de quadros dos efeitos novos + exportação comparada.
+- `autotest-v15` atualizado para o fluxo novo do YouTube.
+
 ## [1.7.1] — 2026-10-21
 
 ### Corrigido

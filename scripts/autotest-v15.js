@@ -147,7 +147,8 @@ await sleep(600);
 [...document.querySelectorAll('.lp-body .btn.small')].find((x) => x.textContent === 'Transições')?.click();
 await sleep(200);
 const cats = [...document.querySelectorAll('.lp-body .btn.small')].map((x) => x.textContent);
-check('sfx_categorias', cats.length === 9 && cats.includes('Transições') && cats.includes('Natureza'), cats);
+// 1.8: + "Meus sons" (biblioteca pessoal) antes das 9 categorias do app
+check('sfx_categorias', cats.length === 10 && /Meus sons/.test(cats[0]) && cats.includes('Transições') && cats.includes('Natureza'), cats);
 check('sfx_cartoes', document.querySelectorAll('.sfx-card').length === 13, document.querySelectorAll('.sfx-card').length);
 await shot('v15_04_sons_transicoes');
 const whoosh = document.querySelector('.sfx-card[data-sfx="whoosh"]');
@@ -184,18 +185,28 @@ await shot('v15_06_sons_games');
 // ---- 8) áudio do YouTube ----
 useStore.setState((st) => ({ leftTab: 'audio', ytFocus: st.ytFocus + 1 }));
 await sleep(600);
-const yin = document.querySelector('input[placeholder="Cole o link do YouTube"]');
+// 1.8: o link abre a prévia (player do YouTube) e o trecho é escolhido lá
+const yin = document.querySelector('.yt-box input[type=text]');
 check('youtube_campo_focado', document.activeElement === yin);
 await shot('v15_07_youtube_painel');
 setInput(yin, 'https://www.youtube.com/watch?v=aqz-KE-bpKQ');
-const toggles = [...document.querySelectorAll('.yt-opt')];
-toggles.find((x) => /trecho/.test(x.textContent))?.querySelector('.toggle')?.click();
-await sleep(150);
-const [ia, ib] = [...document.querySelectorAll('.yt-box input[placeholder="1:30"], .yt-box input[placeholder="2:10"]')];
-setInput(ia, '0:30'); setInput(ib, '0:41');
+await sleep(100);
+[...document.querySelectorAll('.yt-box .btn')].find((x) => /Ver/.test(x.textContent))?.click();
+await waitFor(() => document.querySelector('.modal .yt-player webview'), 8000);
+[...document.querySelectorAll('.modal .yt-opt')].find((x) => /trecho/.test(x.textContent))?.querySelector('.toggle')?.click();
+await sleep(200);
+const campo = (rot) => [...document.querySelectorAll('.modal label')].find((l) => l.textContent.trim().startsWith(rot))?.querySelector('input');
+for (const [rot, v] of [['Início', '0:30'], ['Fim', '0:41']]) {
+  const inp = campo(rot);
+  inp?.focus();
+  if (inp) setInput(inp, v);
+  await sleep(50);
+  inp?.blur();   // o campo de tempo confirma ao sair dele
+  await sleep(100);
+}
 S().setTime(3);
 const nY = S().project.media.length;
-[...document.querySelectorAll('.yt-box .btn')].find((x) => /Baixar/.test(x.textContent))?.click();
+[...document.querySelectorAll('.modal-foot .btn.primary')].find((x) => /Baixar/.test(x.textContent))?.click();
 await sleep(1500);
 await shot('v15_08_youtube_baixando');
 let ym = await waitFor(() => S().project.media.length > nY && S().project.media.find((m) => /Áudios do YouTube/.test(m.path)), 180000);
@@ -209,16 +220,17 @@ await shot('v15_09_youtube_pronto');
 const st = await window.api.ytStatus();
 check('youtube_status', st.installed && !!st.version && Date.now() - st.checkedAt < 86400e3, st);
 setInput(yin, 'https://vimeo.com/1');
-[...document.querySelectorAll('.yt-box .btn')].find((x) => /Baixar/.test(x.textContent))?.click();
+await sleep(100);
+[...document.querySelectorAll('.yt-box .btn')].find((x) => /Pesquisar|Ver/.test(x.textContent))?.click();
 await waitFor(() => document.querySelector('.yt-err'), 5000);
-check('youtube_erro_amigavel', /link do YouTube/.test(document.querySelector('.yt-err')?.textContent || ''), document.querySelector('.yt-err')?.textContent);
+check('youtube_erro_amigavel', /YouTube e do Instagram/.test(document.querySelector('.yt-err')?.textContent || ''), document.querySelector('.yt-err')?.textContent);
 
 // ---- 9) painel Mídia: botão YouTube leva ao campo ----
 useStore.setState({ leftTab: 'media' });
 await sleep(300);
 [...document.querySelectorAll('.lp-row .btn')].find((x) => /YouTube/.test(x.textContent))?.click();
 await sleep(500);
-check('botao_youtube_na_midia', S().leftTab === 'audio' && document.activeElement?.placeholder === 'Cole o link do YouTube');
+check('botao_youtube_na_midia', S().leftTab === 'audio' && document.activeElement === document.querySelector('.yt-box input[type=text]'));
 
 log(res);
 return res;

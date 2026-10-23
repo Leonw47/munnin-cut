@@ -8,7 +8,7 @@ import { spawn } from 'node:child_process';
 import { Readable } from 'node:stream';
 import { fileURLToPath } from 'node:url';
 import { createMedia } from './media.js';
-import { createYtdlp } from './ytdlp.js';
+import { createYtdlp, youtubeId } from './ytdlp.js';
 import { createVoz } from './voz.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -129,6 +129,7 @@ function createWindow() {
       sandbox: true,
       spellcheck: false,
       backgroundThrottling: false,
+      webviewTag: true, // só para o player do YouTube na prévia da busca (travado em web-contents-created)
     },
   });
   win.once('ready-to-show', () => { win.maximize(); win.show(); });
@@ -231,6 +232,7 @@ function scopeDir(scope) {
     return d;
   }
   if (scope === 'recordings') return recordingsDir;
+  if (scope === 'capas') { const d = path.join(docsRoot, 'Capas'); fs.mkdirSync(d, { recursive: true }); return d; }
   if (scope === 'voz') return voz.dir;
   if (typeof scope === 'string' && scope.startsWith('job:')) {
     const id = scope.slice(4).replace(/[^a-z0-9_-]/gi, '');
@@ -345,10 +347,90 @@ ipcMain.handle('sfx:materialize', async (_e, id, fileName) => {
   return dst;
 });
 
+// ---------- Meus sons: biblioteca pessoal (uma pasta por categoria em Documentos\Munnin Cut\Meus sons) ----------
+// Sons baixados de sites que não permitem redistribuir (ficam só no computador de quem baixou).
+const meusSonsDir = path.join(docsRoot, 'Meus sons');
+const SOM_EXT = new Set(['.mp3', '.wav', '.m4a', '.aac', '.ogg', '.oga', '.opus', '.flac', '.wma', '.aiff', '.aif', '.amr', '.weba', '.webm']);
+const durSom = new Map(); // caminho|tamanho|data → duração
+const dentroDeMeusSons = (p) => {
+  const r = path.relative(meusSonsDir, path.resolve(String(p || '')));
+  return !!r && !r.startsWith('..') && !path.isAbsolute(r);
+};
+const nomeSeguro = (s) => String(s || '').replace(/[<>:"/\\|?*\u0000-\u001f]/g, '').replace(/\s+/g, ' ').trim().replace(/[. ]+$/, '').slice(0, 80);
+async function lerSons(dir) {
+  let ents = [];
+  try { ents = await fsp.readdir(dir, { withFileTypes: true }); } catch { return []; }
+  const sons = [];
+  for (const e of ents) {
+    if (!e.isFile() || !SOM_EXT.has(path.extname(e.name).toLowerCase())) continue;
+    const p = path.join(dir, e.name);
+    let st;
+    try { st = await fsp.stat(p); } catch { continue; }
+    const k = `${p}|${st.size}|${st.mtimeMs}`;
+    if (!durSom.has(k)) durSom.set(k, media.probe(p).then((i) => i.duration || 0).catch(() => 0));
+    sons.push({ path: p, name: e.name.replace(/\.[^.]+$/, ''), k });
+  }
+  for (const s of sons) { s.dur = await durSom.get(s.k); delete s.k; }
+  return sons.sort((a, b) => a.name.localeCompare(b.name, 'pt-BR', { numeric: true }));
+}
+ipcMain.handle('meussons:list', async () => {
+  await fsp.mkdir(meusSonsDir, { recursive: true });
+  const ents = await fsp.readdir(meusSonsDir, { withFileTypes: true });
+  const cats = [];
+  for (const e of ents) if (e.isDirectory()) cats.push({ name: e.name, dir: path.join(meusSonsDir, e.name), sons: await lerSons(path.join(meusSonsDir, e.name)) });
+  cats.sort((a, b) => a.name.localeCompare(b.name, 'pt-BR'));
+  const soltos = await lerSons(meusSonsDir);
+  if (soltos.length) cats.unshift({ name: 'Geral', dir: meusSonsDir, sons: soltos });
+  return { dir: meusSonsDir, cats };
+});
+ipcMain.handle('meussons:categoria', async (_e, nome) => {
+  const n = nomeSeguro(nome);
+  if (!n) throw new Error('Nome de categoria inválido.');
+  const d = path.join(meusSonsDir, n);
+  await fsp.mkdir(d, { recursive: true });
+  return d;
+});
+// copia arquivos de áudio escolhidos pelo usuário para a categoria (nome repetido com conteúdo diferente ganha " (2)")
+ipcMain.handle('meussons:adicionar', async (_e, catDir, files) => {
+  const dest = path.resolve(String(catDir || meusSonsDir));
+  if (dest !== meusSonsDir && !dentroDeMeusSons(dest)) throw new Error('Categoria inválida.');
+  await fsp.mkdir(dest, { recursive: true });
+  let n = 0;
+  for (const f of Array.isArray(files) ? files : []) {
+    const src = String(f || '');
+    if (!SOM_EXT.has(path.extname(src).toLowerCase())) continue;
+    let st;
+    try { st = await fsp.stat(src); } catch { continue; }
+    if (!st.isFile()) continue;
+    const ext = path.extname(src), base = nomeSeguro(path.basename(src, ext)) || 'som';
+    let dst = path.join(dest, base + ext);
+    for (let i = 2; fs.existsSync(dst); i++) {
+      if (fs.statSync(dst).size === st.size) { dst = null; break; } // já está lá
+      dst = path.join(dest, `${base} (${i})${ext}`);
+    }
+    if (dst) { await fsp.copyFile(src, dst); n++; }
+  }
+  return n;
+});
+// remove para a Lixeira (dá para recuperar)
+ipcMain.handle('meussons:remover', async (_e, p) => {
+  if (!dentroDeMeusSons(p)) throw new Error('Só dá para remover itens de Meus sons.');
+  await shell.trashItem(path.resolve(p));
+  return true;
+});
+ipcMain.handle('meussons:escolher', async () => {
+  const r = await dialog.showOpenDialog(win, {
+    title: 'Adicionar sons', properties: ['openFile', 'multiSelections'],
+    filters: [{ name: 'Áudio', extensions: [...SOM_EXT].map((x) => x.slice(1)) }],
+  });
+  return r.canceled ? [] : r.filePaths;
+});
+
 // ---------- Áudio do YouTube (yt-dlp, sempre atualizado) ----------
 const youtubeDir = path.join(docsRoot, 'Áudios do YouTube');
+const youtubeVideoDir = path.join(docsRoot, 'Vídeos baixados');
 const yt = createYtdlp({
-  binDir: path.join(userDir, 'bin'), ffmpegDir: binDir, nodeExe: process.execPath, outDir: youtubeDir,
+  binDir: path.join(userDir, 'bin'), ffmpegDir: binDir, nodeExe: process.execPath, outDir: youtubeDir, videoDir: youtubeVideoDir,
   log: (m) => fs.appendFile(path.join(logsDir, 'youtube.txt'), `${new Date().toISOString()} ${m}\n`, () => {}),
 });
 const ytSend = (e) => (p) => { if (!e.sender.isDestroyed()) e.sender.send('yt:progress', p); };
@@ -356,7 +438,45 @@ ipcMain.handle('yt:status', () => yt.status());
 ipcMain.handle('yt:update', (e) => yt.update({ onStage: ytSend(e) }));
 ipcMain.handle('yt:download', (e, opts) => yt.download(opts || {}, ytSend(e)));
 ipcMain.handle('yt:cancel', () => { yt.cancel(); return true; });
-ipcMain.handle('yt:folder', () => youtubeDir);
+ipcMain.handle('yt:folder', (_e, kind) => (kind === 'video' ? youtubeVideoDir : youtubeDir));
+ipcMain.handle('yt:search', (_e, q) => yt.search(q));
+// título e canal de um link colado (oEmbed: rápido, sem abrir o vídeo)
+ipcMain.handle('yt:titulo', async (_e, url) => {
+  const id = youtubeId(url);
+  if (!id) return null;
+  try {
+    const r = await fetch(`https://www.youtube.com/oembed?format=json&url=${encodeURIComponent(`https://www.youtube.com/watch?v=${id}`)}`, { signal: AbortSignal.timeout(8000) });
+    const j = r.ok ? await r.json() : {};
+    return { id, title: j.title || '', channel: j.author_name || '' };
+  } catch { return { id, title: '', channel: '' }; }
+});
+
+// O player do YouTube (prévia da busca) roda num <webview> isolado: sem preload, sem Node, sessão própria
+// sem permissões, só páginas do YouTube; links para fora abrem no navegador.
+const YT_PAGINA = /^https:\/\/(www\.)?(youtube\.com|youtube-nocookie\.com)\//;
+app.on('web-contents-created', (_e, contents) => {
+  contents.on('will-attach-webview', (ev, prefs, params) => {
+    delete prefs.preload;
+    prefs.nodeIntegration = false;
+    prefs.contextIsolation = true;
+    prefs.sandbox = true;
+    prefs.autoplayPolicy = 'no-user-gesture-required';
+    params.partition = 'yt';
+    if (!/^https:\/\/www\.youtube(-nocookie)?\.com\/embed\//.test(params.src || '')) ev.preventDefault();
+  });
+  if (contents.getType() === 'webview') {
+    contents.setWindowOpenHandler(({ url }) => {
+      if (/^https:\/\//.test(url)) shell.openExternal(url);
+      return { action: 'deny' };
+    });
+    contents.on('will-navigate', (ev, url) => { if (!YT_PAGINA.test(url)) ev.preventDefault(); });
+  }
+});
+app.whenReady().then(() => {
+  const ytSessao = session.fromPartition('yt');
+  ytSessao.setPermissionRequestHandler((_wc, perm, cb) => cb(perm === 'fullscreen'));
+  ytSessao.setPermissionCheckHandler((_wc, perm) => perm === 'fullscreen');
+});
 // verificação diária em segundo plano — só se o baixador já foi usado alguma vez
 app.whenReady().then(() => setTimeout(() => { if (!AUTOTEST && yt.isInstalled()) yt.ensure(() => {}).catch(() => {}); }, 20000));
 

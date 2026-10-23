@@ -1,11 +1,12 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Download, FolderOpen, Play, CheckCircle2, AlertTriangle, FileText, HardDrive } from 'lucide-react';
+import { Download, FolderOpen, Play, CheckCircle2, AlertTriangle, FileText, HardDrive, Image as ImageIcon, Crosshair, X, Loader2 } from 'lucide-react';
 import { useStore } from '../store.js';
 import { engine } from '../engine/index.js';
 import { EXPORT_FORMATS, RESOLUTIONS, FPS_LIST, QUALITIES, CONTAINERS, videoKbps, audioKbps, estimateBytes, fmtBytes } from '../shared/defs.js';
 import { exportSize } from '../shared/graph.js';
 import { projectDuration, fmtTime } from '../shared/timeline.js';
 import { startExport } from '../exporter.js';
+import { mediaUrl } from '../engine/util.js';
 import { Modal, Seg, Toggle, Slider } from './ui.jsx';
 
 const OTHER = EXPORT_FORMATS.filter((f) => !['mp4', 'mp4_hevc', 'mov', 'mov_hevc', 'prores'].includes(f.id));
@@ -178,6 +179,11 @@ export default function ExportDialog() {
             </div>
           </>}
 
+          {fmt.kind === 'video' && <>
+            <label>Capa</label>
+            <CapaEscolha />
+          </>}
+
           {hwUsable && <>
             <label>Placa de vídeo</label>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -226,5 +232,49 @@ export default function ExportDialog() {
         </div>
       )}
     </Modal>
+  );
+}
+
+// Capa do vídeo: um quadro do próprio projeto (o da agulha) ou uma imagem; entra no 1º quadro do arquivo.
+const IMG_CAPA = /\.(jpe?g|png|webp|bmp|heic|heif|hif|avif|tiff?)$/i;
+function CapaEscolha() {
+  const cover = useStore((s) => s.project.cover);
+  const time = useStore((s) => s.time);
+  const [ocupado, setOcupado] = useState(false);
+  const s = useStore.getState;
+  const salvar = (c) => s().commit((p) => { p.cover = c; }, { keepTracks: true });
+  const doQuadro = async () => {
+    setOcupado(true);
+    try {
+      const png = await engine.snapshotPng();
+      if (!png) throw new Error('sem quadro');
+      const path = await window.api.writeFile('capas', `${s().project.id || 'projeto'}_${Date.now()}.png`, png);
+      salvar({ path, origem: 'quadro', t: s().time });
+    } catch (e) { s().toastMsg(`Não foi possível pegar o quadro: ${e.message || e}`, 'err'); } finally { setOcupado(false); }
+  };
+  const doImagem = async () => {
+    const paths = await window.api.openMediaDialog();
+    const p = paths.find((x) => IMG_CAPA.test(x));
+    if (!p) { if (paths.length) s().toastMsg('Escolha uma imagem (JPG, PNG, WEBP, HEIC…).', 'err'); return; }
+    setOcupado(true);
+    try {
+      // HEIC e outros que o FFmpeg não lê inteiros: usa a cópia em JPG/PNG
+      const final = /\.(heic|heif|hif|tiff?|avif)$/i.test(p) ? await window.api.proxy(p, 'image', 'capa') : p;
+      salvar({ path: final, origem: 'imagem' });
+    } catch (e) { s().toastMsg(`Não foi possível usar a imagem: ${e.message || e}`, 'err'); } finally { setOcupado(false); }
+  };
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+      {cover?.path && <img src={mediaUrl(cover.path)} alt="" style={{ height: 44, maxWidth: 80, objectFit: 'cover', borderRadius: 5, border: '1px solid var(--line-2)' }} />}
+      <button className="btn small" disabled={ocupado} onClick={doQuadro} title="Usa o quadro que está no reprodutor agora (posicione a agulha antes)">
+        {ocupado ? <Loader2 size={13} className="spin" /> : <Crosshair size={13} />} Quadro da agulha ({fmtTime(time)})
+      </button>
+      <button className="btn small" disabled={ocupado} onClick={doImagem}><ImageIcon size={13} /> Imagem…</button>
+      {cover?.path && <button className="btn small ghost" onClick={() => salvar(null)} title="Sem capa"><X size={13} /></button>}
+      <div className="hint" style={{ flexBasis: '100%' }}>
+        {cover?.path ? (cover.origem === 'quadro' ? `Capa: quadro de ${fmtTime(cover.t || 0)}.` : 'Capa: imagem escolhida.') : 'Sem capa: a miniatura será o primeiro quadro do vídeo.'}
+        {' '}A capa ocupa só o 1º quadro (1/{useStore.getState().project.fps || 30} s) — é a miniatura que Instagram, WhatsApp e o Windows mostram.
+      </div>
+    </div>
   );
 }

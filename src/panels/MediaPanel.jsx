@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from 'react';
-import { Upload, Plus, Film, Image as ImageIcon, Music, Loader2, AlertTriangle, Search, Layers, Trash2, FolderOpen, Link, Scissors, Replace, Download } from 'lucide-react';
+import { Upload, Plus, Film, Image as ImageIcon, Music, Loader2, AlertTriangle, Search, Layers, Trash2, FolderOpen, Link, Scissors, Replace, Download, Eye } from 'lucide-react';
 import { useStore, libView } from '../store.js';
 import { fmtTime } from '../shared/timeline.js';
 import { mediaUrl } from '../engine/util.js';
@@ -56,10 +56,12 @@ export function dragMedia(e, m, order) {
 
 function MediaCard({ m, mt, used, selected, multi, order, onMenu }) {
   const [scrub, setScrub] = useState(null);
+  const [hover, setHover] = useState(null); // passar o mouse no vídeo mostra o quadro daquele ponto
   const s = useStore.getState;
   const st = statusText(mt);
   const ready = mt?.status === 'ready';
   const trimming = selected && !multi && ready && (m.type === 'video' || m.type === 'audio') && m.duration > 0;
+  const varre = m.type === 'video' && ready && !trimming && m.duration > 0 && mt?.thumbs;
   return (
     <div className={`media-card ${selected ? 'selected' : ''} ${selected && multi ? 'multi' : ''} ${trimming ? 'trimming' : ''}`} data-id={m.id} draggable={ready}
       onDragStart={(e) => dragMedia(e, m, order)}
@@ -72,11 +74,15 @@ function MediaCard({ m, mt, used, selected, multi, order, onMenu }) {
         onMenu({ x: e.clientX, y: e.clientY, m });
       }}
       title={`${m.name}${m.width ? ` · ${m.width}×${m.height}` : ''} — clique para selecionar (Ctrl/Shift: vários), clique duplo para adicionar`}>
-      <div className="thumb">
-        <MediaThumb m={m} meta={mt} at={scrub} />
+      <div className="thumb"
+        onMouseMove={varre ? (e) => { const r = e.currentTarget.getBoundingClientRect(); setHover(Math.max(0, Math.min(1, (e.clientX - r.left) / r.width)) * m.duration); } : undefined}
+        onMouseLeave={() => setHover(null)}>
+        <MediaThumb m={m} meta={mt} at={scrub ?? (varre ? hover : null)} />
+        {varre && hover != null && <div className="hover-line" style={{ left: `${(hover / m.duration) * 100}%` }} />}
         {!trimming && <span className="kind">{m.type === 'video' ? <Film size={12} /> : m.type === 'image' ? <ImageIcon size={12} /> : <Music size={12} />}</span>}
-        {!trimming && m.type !== 'image' && m.duration > 0 && !m.trim && <span className="badge">{fmtTime(m.duration)}</span>}
+        {!trimming && m.type !== 'image' && m.duration > 0 && !m.trim && <span className="badge">{varre && hover != null ? fmtTime(hover) : fmtTime(m.duration)}</span>}
         {!trimming && used && <span className="used" title="Em uso na linha do tempo" />}
+        {ready && <button className="see" title="Ver no reprodutor (prévia, sem pôr na linha do tempo)" onClick={(e) => { e.stopPropagation(); s().openLibPreview(m.id); }}><Eye size={13} /></button>}
         {ready && <button className="add" title="Adicionar à linha do tempo" onClick={(e) => { e.stopPropagation(); s().addMedia(m.id); }}><Plus size={14} /></button>}
         {!trimming && m.trim && <span className="trim-badge" title="Corte definido antes de inserir"><Scissors size={10} /> {fmtTime(m.trim.in)}–{fmtTime(m.trim.out)}</span>}
         {trimming && <InlineTrim m={m} meta={mt} full={m.type === 'audio'} onScrub={m.type === 'video' ? setScrub : undefined} />}

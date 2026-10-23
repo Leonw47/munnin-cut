@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useSta
 import {
   Undo2, Redo2, Scissors, Trash2, CopyPlus, AudioLines, FlipHorizontal2, RotateCw, Magnet, ZoomIn, ZoomOut, MoveHorizontal,
   Lock, LockOpen, Eye, EyeOff, Volume2, VolumeX, Film, Type, Sparkles, Music, Layers, Copy, Clipboard, ArrowLeftRight, Smile, Palette, Rewind,
-  DiamondPlus, ChevronLeft, ChevronRight,
+  DiamondPlus, ChevronLeft, ChevronRight, Repeat,
 } from 'lucide-react';
 import { useStore, kindFor, placeInTrack, selIds } from '../store.js';
 import { mainTrack, findClip, projectDuration, fmtTime, MIN_CLIP, maxDurationFor, transitionDuration, nextAdjacent, overlayTransDur } from '../shared/timeline.js';
@@ -11,7 +11,7 @@ import { EFFECTS } from '../shared/effects.js';
 import { mediaUrl } from '../engine/util.js';
 import { dnd } from '../dnd.js';
 import { shapeName } from '../engine/shapes.js';
-import { sliceKf, kfTimes } from '../shared/keyframes.js';
+import { sliceKf, kfTimes, moveKfTime, removeKfTime } from '../shared/keyframes.js';
 import { ContextMenu, MenuItem } from './ui.jsx';
 
 
@@ -44,33 +44,49 @@ export function useWave(path) {
   return data;
 }
 
-function Wave({ path, clip, width, height, color = '#7ff0bf' }) {
+// Desenha só o trecho visível do bloco (em pedaços de 1024 px), na resolução da tela. Antes era um canvas
+// de no máximo 4000 px esticado até a largura do bloco: em músicas longas ou com zoom a onda ficava esticada.
+const WAVE_PASSO = 1024;
+function Wave({ path, clip, width, height, viewL = 0, viewW = 4000, color = '#7ff0bf' }) {
   const data = useWave(path);
   const ref = useRef(null);
+  const x0 = Math.max(0, Math.floor(viewL / WAVE_PASSO) * WAVE_PASSO - WAVE_PASSO);
+  const x1 = Math.min(Math.ceil(width), Math.ceil((viewL + viewW) / WAVE_PASSO) * WAVE_PASSO + WAVE_PASSO);
+  const cw = Math.max(0, x1 - x0);
   useEffect(() => {
     const c = ref.current;
-    if (!c || !data) return;
-    const w = Math.max(1, Math.min(4000, Math.round(width)));
-    c.width = w;
-    c.height = height;
+    if (!c || !data || cw <= 0) return;
+    const dpr = Math.min(2, window.devicePixelRatio || 1);
+    const pw = Math.max(1, Math.min(16000, Math.round(cw * dpr))), ph = Math.max(1, Math.round(height * dpr));
+    c.width = pw;
+    c.height = ph;
     const ctx = c.getContext('2d');
-    ctx.clearRect(0, 0, w, height);
+    ctx.clearRect(0, 0, pw, ph);
     ctx.fillStyle = color;
     const sp = clip.speed || 1;
     const t0 = clip.in || 0;
     const span = clip.duration * sp;
     const vol = Math.min(2, clip.muted ? 0 : clip.volume ?? 1);
-    for (let x = 0; x < w; x++) {
-      const fx = clip.reverse ? w - 1 - x : x; // invertido: a onda aparece espelhada
-      const a = Math.floor((t0 + (fx / w) * span) * 100);
-      const b = Math.max(a + 1, Math.floor((t0 + ((fx + 1) / w) * span) * 100));
+    const k = Math.min(1, 0.85 * vol);
+    const W = Math.max(1, width);
+    const at = (px) => { const f = (x0 + (px / pw) * cw) / W; return t0 + (clip.reverse ? 1 - f : f) * span; }; // invertido: espelhada
+    for (let x = 0; x < pw; x++) {
+      const ta = at(x) * 100, tb = at(x + 1) * 100;
+      const a = Math.min(ta, tb), b = Math.max(ta, tb);
       let mx = 0;
-      for (let i = a; i < b && i < data.length; i++) if (data[i] > mx) mx = data[i];
-      const h = Math.max(1, (mx / 255) * height * Math.min(1, 0.85 * vol));
-      ctx.fillRect(x, height - h, 1, h);
+      if (b - a < 1) {
+        // zoom grande: menos de um pico (10 ms) por pixel → interpola entre os picos vizinhos
+        const i = Math.floor(a), fr = a - i;
+        mx = i < data.length ? (data[i] * (1 - fr) + (data[Math.min(data.length - 1, i + 1)] * fr)) : 0;
+      } else {
+        for (let i = Math.floor(a); i < Math.ceil(b) && i < data.length; i++) if (data[i] > mx) mx = data[i];
+      }
+      const h = Math.max(dpr, (mx / 255) * ph * k);
+      ctx.fillRect(x, ph - h, 1, h);
     }
-  }, [data, width, height, clip.in, clip.duration, clip.speed, clip.volume, clip.muted, clip.reverse, color]);
-  return <canvas ref={ref} className="wave" style={{ height }} />;
+  }, [data, width, height, x0, cw, clip.in, clip.duration, clip.speed, clip.volume, clip.muted, clip.reverse, color]);
+  if (cw <= 0) return null;
+  return <canvas ref={ref} className="wave" style={{ left: x0, width: cw, height }} />;
 }
 
 function Thumbs({ clip, media, meta, width, height, zoom }) {
@@ -163,6 +179,37 @@ function Ruler({ zoom, scrollLeft, width, fps, onScrub }) {
   return (
     <div className="tl-ruler" onPointerDown={onScrub}>
       <canvas ref={ref} style={{ position: 'absolute', left: scrollLeft, top: 0 }} />
+      <LoopBand zoom={zoom} />
+    </div>
+  );
+}
+
+// Trecho repetido (loop): faixa na régua; arrastar as bordas muda o trecho, arrastar o meio move,
+// clique duplo apaga. Shift+arrastar na régua cria um trecho novo.
+function LoopBand({ zoom }) {
+  const loop = useStore((s) => s.loop);
+  if (!loop) return null;
+  const down = (e, modo) => {
+    if (e.button !== 0) return;
+    e.stopPropagation();
+    e.preventDefault();
+    const x0 = e.clientX, l0 = { ...loop };
+    const move = (ev) => {
+      const dt = (ev.clientX - x0) / zoom;
+      if (modo === 'a') useStore.getState().setLoop(Math.min(l0.a + dt, l0.b - 0.1), l0.b, l0.on);
+      else if (modo === 'b') useStore.getState().setLoop(l0.a, Math.max(l0.b + dt, l0.a + 0.1), l0.on);
+      else { const len = l0.b - l0.a; const a = Math.max(0, l0.a + dt); useStore.getState().setLoop(a, a + len, l0.on); }
+    };
+    const up = () => { window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); };
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', up);
+  };
+  return (
+    <div className={`loop-band ${loop.on ? 'on' : ''}`} style={{ left: loop.a * zoom + PAD, width: (loop.b - loop.a) * zoom }}
+      title={`Trecho repetido ${fmtTime(loop.a)}–${fmtTime(loop.b)} · arraste para mover, bordas para ajustar, clique duplo apaga`}
+      onPointerDown={(e) => down(e, 'move')} onDoubleClick={(e) => { e.stopPropagation(); useStore.getState().clearLoop(); }}>
+      <div className="lb-h a" onPointerDown={(e) => down(e, 'a')} />
+      <div className="lb-h b" onPointerDown={(e) => down(e, 'b')} />
     </div>
   );
 }
@@ -202,8 +249,44 @@ export default function Timeline({ height }) {
   const [trimTip, setTrimTip] = useState(null);
   const [marquee, setMarquee] = useState(null);
   const [groupDx, setGroupDx] = useState(null);
+  const [kfDrag, setKfDrag] = useState(null); // { clipId, t } — ponto de modificação sendo arrastado
+  const loopOn = useStore((s) => !!s.loop?.on);
   const S = useStore.getState;
   const selSet = useMemo(() => new Set(selIds(sel)), [sel]);
+
+  // Ponto de modificação: clique leva a agulha até ele; arrastar muda o momento (todas as propriedades juntas).
+  const dragKf = (e, c, kt) => {
+    if (e.button !== 0) return;
+    e.stopPropagation();
+    e.preventDefault();
+    const s = S();
+    s.select({ type: 'clip', id: c.id });
+    s.pause();
+    s.setTime(c.start + kt);
+    const x0 = e.clientX;
+    let cur = kt, moved = false;
+    const outros = kfTimes(c).filter((t) => Math.abs(t - kt) > 1e-6);
+    const move = (ev) => {
+      if (!moved && Math.abs(ev.clientX - x0) < 3) return;
+      if (!moved) { moved = true; s.checkpoint(); }
+      let t = Math.max(0, Math.min(c.duration, kt + (ev.clientX - x0) / S().zoom));
+      if (!ev.shiftKey) t = Math.round(t * fps) / fps;          // encaixa nos quadros (Shift = livre)
+      for (const o of outros) if (Math.abs(o - t) < 4 / S().zoom) t = o; // gruda nos outros pontos
+      const atual = findClip(S().project, c.id)?.clip;
+      if (!atual) return;
+      S().updateClip(c.id, (d) => { moveKfTime(d, cur, t); }, { silent: true });
+      cur = t;
+      setKfDrag({ clipId: c.id, t });
+      S().setTime(c.start + t);
+    };
+    const up = () => {
+      window.removeEventListener('pointermove', move);
+      window.removeEventListener('pointerup', up);
+      setKfDrag(null);
+    };
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', up);
+  };
 
   const mediaMap = useMemo(() => Object.fromEntries(project.media.map((m) => [m.id, m])), [project.media]);
   const duration = projectDuration(project);
@@ -301,6 +384,16 @@ export default function Timeline({ height }) {
     window.addEventListener('tl-scrub', h);
     return () => window.removeEventListener('tl-scrub', h);
   }, [scrub]);
+  // Shift+arrastar na régua: marca o trecho que vai se repetir (loop) e já liga
+  const marcarLoop = (e) => {
+    const s = S();
+    s.pause();
+    const a = xToTime(e.clientX);
+    const move = (ev) => S().setLoop(a, xToTime(ev.clientX), true);
+    const up = () => { window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); };
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', up);
+  };
 
   // ---------- Área vazia: clique leva o cursor; arrastar desenha um retângulo de seleção ----------
   const startMarquee = (e) => {
@@ -564,6 +657,7 @@ export default function Timeline({ height }) {
         break;
       }
       case 'sfx': s.addSfx(item.id, opts('audio')); break;
+      case 'usersfx': s.addUserSfx(item.path, opts('audio')); break;
       case 'text': s.addText(item.preset, opts('text')); break;
       case 'sticker': s.addSticker(item.emoji, opts('text')); break;
       case 'shape': s.addShape(item.id, opts('text')); break;
@@ -635,6 +729,9 @@ export default function Timeline({ height }) {
         <button className="icon-btn kf-main" title="Adicionar/remover ponto de modificação no cursor (K)" disabled={!selClip || selClip.clip.type === 'effect'}
           onClick={() => S().toggleKeyframes()}><DiamondPlus size={16} /></button>
         <button className="icon-btn" title="Próximo ponto de modificação" disabled={!selClip?.clip.kf} onClick={() => S().jumpKeyframe(1)}><ChevronRight size={15} /></button>
+        <span className="sep" />
+        <button className={`icon-btn ${loopOn ? 'active' : ''}`} title={loopOn ? 'Repetindo o trecho — clique para desligar' : 'Repetir um trecho em loop (usa os clipes selecionados; ou Shift+arrastar na régua)'}
+          onClick={() => S().toggleLoop()}><Repeat size={16} /></button>
         <div className="grow" />
         <span className="timecode" style={{ marginRight: 10 }}>{fmtTime(duration, fps, true)}</span>
         <button className={`icon-btn ${snapping ? 'active' : ''}`} title="Ímã (encaixar nas bordas)" onClick={() => useStore.setState({ snapping: !snapping })}><Magnet size={16} /></button>
@@ -680,7 +777,7 @@ export default function Timeline({ height }) {
           <div className="tl-content" ref={contentRef} style={{ width: contentW, height: contentH }}
             onPointerDown={(e) => { if (e.button === 0) startMarquee(e); }}
             onDragOver={onDragOver} onDragLeave={onDragLeave} onDrop={onDrop}>
-            <Ruler zoom={zoom} scrollLeft={scroll.left} width={scroll.w} fps={fps} onScrub={(e) => { e.stopPropagation(); scrub(e); }} />
+            <Ruler zoom={zoom} scrollLeft={scroll.left} width={scroll.w} fps={fps} onScrub={(e) => { e.stopPropagation(); if (e.shiftKey) marcarLoop(e); else scrub(e); }} />
             {rows.map(({ track, top, h }) => (
               <div key={track.id} className={`track-row ${track.main ? 'main' : ''}`} style={{ position: 'absolute', left: 0, right: 0, top, height: h, opacity: track.hidden ? 0.45 : 1 }}>
                 {track.clips.map((c, i) => {
@@ -703,7 +800,7 @@ export default function Timeline({ height }) {
                       onDoubleClick={() => { if (c.type === 'text') window.dispatchEvent(new Event('focus-text-editor')); }}
                       onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); if (!selSet.has(c.id)) S().select({ type: 'clip', id: c.id }); setMenu({ x: e.clientX, y: e.clientY, clip: c, track }); }}>
                       {(c.type === 'video' || c.type === 'image') && <Thumbs clip={c} media={media} meta={mt} width={w} height={ch} zoom={zoom} />}
-                      {showWave && <Wave path={mt.waveform} clip={c} width={w} height={waveH} color={c.type === 'audio' ? '#8af5c6' : '#ffffffaa'} />}
+                      {showWave && <Wave path={mt.waveform} clip={c} width={w} height={waveH} viewL={scroll.left - x} viewW={scroll.w} color={c.type === 'audio' ? '#8af5c6' : '#ffffffaa'} />}
                       <div className="clabel">
                         {c.type === 'effect' && (c.effect.kind === 'filter' ? <Palette size={11} /> : <Sparkles size={11} />)}
                         {c.type === 'text' && !c.sticker && <Type size={11} />}
@@ -713,9 +810,12 @@ export default function Timeline({ height }) {
                         {w > 120 && <span className="dur">{fmtTime(c.duration, fps, false)}</span>}
                       </div>
                       {c.kf && kfTimes(c).map((kt) => (
-                        <div key={kt} className={`kf-dot ${selected ? 'sel' : ''}`} style={{ left: kt * zoom }} title="Ponto de modificação (clique para ir até ele)"
-                          onPointerDown={(e) => { e.stopPropagation(); S().select({ type: 'clip', id: c.id }); S().pause(); S().setTime(c.start + kt); }} />
+                        <div key={kt} className={`kf-dot ${selected ? 'sel' : ''} ${kfDrag?.clipId === c.id && Math.abs(kfDrag.t - kt) < 1e-6 ? 'drag' : ''}`} style={{ left: kt * zoom }}
+                          title="Ponto de modificação — clique para ir até ele, arraste para mudar o momento, botão direito para apagar"
+                          onPointerDown={(e) => dragKf(e, c, kt)}
+                          onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); S().updateClip(c.id, (d) => { removeKfTime(d, kt); }); }} />
                       ))}
+                      {kfDrag?.clipId === c.id && <div className="kf-tip" style={{ left: kfDrag.t * zoom }}>{fmtTime(c.start + kfDrag.t, fps, false)}</div>}
                       {c.fadeIn > 0 && <div className="fade" style={{ left: 0, width: c.fadeIn * zoom }} />}
                       {c.fadeOut > 0 && <div className="fade out" style={{ right: 0, width: c.fadeOut * zoom }} />}
                       {overlapPx > 0 && <div className="overlap" style={{ left: 0, width: overlapPx }} />}

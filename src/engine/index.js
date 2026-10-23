@@ -112,7 +112,12 @@ class Engine {
       const dur = projectDuration(project);
       t = s.anchor.t + (performance.now() - s.anchor.now) / 1000;
       const end = s.stopAt != null ? Math.min(dur, s.stopAt) : dur;
-      if (t >= end) {
+      const lp = s.loop?.on ? s.loop : null;
+      if (lp && t >= Math.min(lp.b, dur)) {
+        // repetir trecho: volta ao início (os vídeos/áudios se reposicionam no sync)
+        t = lp.a;
+        useStore.setState({ time: t, anchor: { t, now: performance.now() } });
+      } else if (t >= end) {
         t = end;
         useStore.setState({ playing: false, anchor: null, time: end, stopAt: null });
       } else useStore.setState({ time: t });
@@ -159,6 +164,30 @@ class Engine {
       const blob = await new Promise((r) => c.toBlob(r, 'image/jpeg', 0.8));
       return blob ? new Uint8Array(await blob.arrayBuffer()) : null;
     } catch { return null; }
+  }
+
+  /**
+   * Quadro da agulha no tamanho cheio do projeto (capa do vídeo): o mesmo desenho da prévia, num canvas à
+   * parte. Espera os vídeos terminarem de buscar o quadro antes de desenhar. Devolve PNG (bytes).
+   */
+  async snapshotPng() {
+    const s = useStore.getState();
+    const project = s.project;
+    if (!project || !this.pool) return null;
+    s.pause();
+    this.invalidate();
+    await new Promise((r) => setTimeout(r, 200));
+    for (let i = 0; i < 60; i++) {
+      const ocupado = [...this.pool.els.values()].some((e) => e.kind === 'video' && (e.el.seeking || e.el.readyState < 2));
+      if (!ocupado) break;
+      await new Promise((r) => setTimeout(r, 50));
+    }
+    const st = useStore.getState();
+    const c = makeCanvas(project.width, project.height);
+    const comp = new Compositor(c);
+    comp.render({ project, mediaMap: this.mediaMap(project), metaMap: st.meta, t: st.time, source: (clip, media) => this.source(clip, media, st.meta[media.id]) });
+    const blob = await new Promise((r) => c.toBlob(r, 'image/png'));
+    return blob ? new Uint8Array(await blob.arrayBuffer()) : null;
   }
 }
 

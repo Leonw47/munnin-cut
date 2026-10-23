@@ -92,6 +92,27 @@ export function removeKfAt(clip, prop, t) {
   if (!Object.keys(clip.kf).length) delete clip.kf;
 }
 
+/**
+ * Move os pontos de um instante (todas as propriedades) para outro instante do clipe. Se já havia um ponto da
+ * mesma propriedade no destino, o movido fica no lugar dele.
+ */
+export function moveKfTime(clip, from, to) {
+  if (!clip.kf) return;
+  to = Math.max(0, Math.min(clip.duration, to));
+  const kf = {};
+  for (const [prop, list] of Object.entries(clip.kf)) {
+    const movido = list.find((k) => Math.abs(k.t - from) < SAME_T);
+    if (!movido) { kf[prop] = list; continue; }
+    kf[prop] = [...list.filter((k) => Math.abs(k.t - from) >= SAME_T && Math.abs(k.t - to) >= SAME_T), { t: to, v: movido.v }].sort((a, b) => a.t - b.t);
+  }
+  clip.kf = kf;
+}
+
+/** Tira todos os pontos de um instante (de todas as propriedades). */
+export function removeKfTime(clip, t) {
+  for (const prop of Object.keys(clip.kf || {})) removeKfAt(clip, prop, t);
+}
+
 export const hasKfAt = (clip, prop, t) => !!clip?.kf?.[prop]?.some((k) => Math.abs(k.t - t) < SAME_T);
 
 // Valor novo de uma propriedade: com pontos, cria/atualiza o ponto em lt; sem pontos, muda o valor fixo.

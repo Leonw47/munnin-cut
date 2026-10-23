@@ -205,6 +205,25 @@ export const useStore = create((set, get) => ({
   libFocus: false, // a biblioteca recebe as teclas (Delete, Ctrl+A, Esc) em vez da linha do tempo
   ytFocus: 0, // pedido para focar o campo de link do YouTube (painel Áudio)
   vozOriginal: false, // "Ouvir original": a prévia toca sem a limpeza da voz (comparar)
+  loop: null, // { a, b, on } — trecho da linha do tempo repetido na reprodução
+  setLoop(a, b, on = true) {
+    const d = projectDuration(get().project || { tracks: [] });
+    const x = Math.max(0, Math.min(a, b)), y = Math.min(Math.max(d, 0.1), Math.max(a, b));
+    if (y - x < 0.1) return;
+    set({ loop: { a: x, b: y, on } });
+  },
+  // botão "Repetir trecho": liga/desliga; sem trecho, usa os clipes selecionados (ou 5 s a partir da agulha)
+  toggleLoop() {
+    const s = get();
+    if (s.loop) { set({ loop: { ...s.loop, on: !s.loop.on } }); return; }
+    const sel = selIds(s.selection).map((id) => findClip(s.project, id)?.clip).filter(Boolean);
+    if (sel.length) get().setLoop(Math.min(...sel.map((c) => c.start)), Math.max(...sel.map((c) => c.start + c.duration)));
+    else get().setLoop(s.time, s.time + 5);
+  },
+  clearLoop() { set({ loop: null }); },
+  libPreview: null, // { mediaId } — mídia da biblioteca aberta no reprodutor (sem pôr na linha do tempo)
+  openLibPreview(mediaId) { get().pause(); set({ libPreview: { mediaId } }); },
+  closeLibPreview() { if (get().libPreview) set({ libPreview: null }); },
 
   toastMsg(text, kind = 'info', ms = 3500) {
     clearTimeout(toastTimer);
@@ -215,7 +234,7 @@ export const useStore = create((set, get) => ({
   // ---------- Telas ----------
   openEditor(project) {
     if (!project.tracks?.some((t) => t.main)) project.tracks = [newTrack('video', true), ...(project.tracks || [])];
-    set({ screen: 'editor', project: layoutProject(project), past: [], future: [], selection: null, time: 0, playing: false, anchor: null, meta: {}, zoom: 60, libSel: [], libAnchor: null, libFocus: false });
+    set({ screen: 'editor', project: layoutProject(project), past: [], future: [], selection: null, time: 0, playing: false, anchor: null, meta: {}, zoom: 60, libSel: [], libAnchor: null, libFocus: false, loop: null, libPreview: null });
     get().prepareAll();
   },
   newProject(ratioId) { get().openEditor(createProject(ratioId)); },
@@ -278,7 +297,11 @@ export const useStore = create((set, get) => ({
     let stopAt = null;
     // Com um áudio selecionado, o play toca só o trecho dele (do início ao fim do bloco).
     const sel = s.selection?.type === 'clip' ? findClip(s.project, s.selection.id)?.clip : null;
-    if (sel && sel.type === 'audio') {
+    const lp = s.loop?.on ? s.loop : null;
+    if (lp) {
+      // repetir trecho: começa no início do trecho se a agulha estiver fora dele (o motor volta ao início no fim)
+      if (t < lp.a || t >= Math.min(lp.b, d) - 0.02) t = lp.a;
+    } else if (sel && sel.type === 'audio') {
       const end = sel.start + sel.duration;
       if (t < sel.start || t >= end - 0.05) t = sel.start;
       stopAt = end;
@@ -286,7 +309,7 @@ export const useStore = create((set, get) => ({
     set({ playing: true, time: t, anchor: { t, now: performance.now() }, stopAt });
   },
   pause() { set({ playing: false, anchor: null, stopAt: null }); },
-  togglePlay() { if (get().playing) get().pause(); else get().play(); },
+  togglePlay() { get().closeLibPreview(); if (get().playing) get().pause(); else get().play(); },
   stepFrames(n) {
     const fps = get().project?.fps || 30;
     get().pause();
@@ -397,11 +420,15 @@ export const useStore = create((set, get) => ({
       if (get().mediaNotices.some((n) => n.id === id && n.kind === 'missing')) {
         set((s) => ({ mediaNotices: s.mediaNotices.filter((n) => !(n.id === id && n.kind === 'missing')) }));
       }
-      if (doProbe || (!m.width && m.type !== 'audio') || (!m.duration && m.type !== 'image')) {
+      // leitura antiga (antes da v1.8): fotos HEIC saíam com o tamanho de um ladrilho e vídeos HDR sem o aviso
+      const leituraVelha = (m.pv || 1) < 2 && /\.(heic|heif|hif|mov|mp4|m4v)$/i.test(m.path);
+      if (doProbe || leituraVelha || (!m.width && m.type !== 'audio') || (!m.duration && m.type !== 'image')) {
         get().setMeta(id, { status: 'probing' });
         const info = await api.probe(m.path);
-        get().updateMediaSilent(id, { ...info, fp: { size: st.size, mtimeMs: st.mtimeMs } });
+        const mudouTam = leituraVelha && (info.width !== m.width || info.height !== m.height);
+        get().updateMediaSilent(id, { ...info, ...(leituraVelha ? { renderPath: undefined } : {}), fp: { size: st.size, mtimeMs: st.mtimeMs } });
         m = get().project.media.find((x) => x.id === id);
+        if (mudouTam && !changed) get().adjustClipsForMedia(id);
         if (changed) {
           get().adjustClipsForMedia(id);
           if (!get().mediaNotices.some((n) => n.id === id && n.kind === 'relocated')) get().noteMedia('updated', m);
@@ -413,9 +440,12 @@ export const useStore = create((set, get) => ({
       const res = await canPlay(m);
       let proxy = null;
       const badAudio = m.type !== 'image' && m.hasAudio && m.acodec && !OK_AUDIO.has(m.acodec);
-      if (!res.ok || badAudio) {
+      const heif = m.type === 'image' && /\.(heic|heif|hif)$/i.test(m.path);
+      if (!res.ok || badAudio || heif) {
         get().setMeta(id, { status: 'proxy', progress: 0 });
         proxy = await api.proxy(m.path, m.type, id);
+        // HEIC: a cópia é a foto inteira (o FFmpeg sozinho só lê um pedaço) — a exportação usa ela também
+        if (heif && m.renderPath !== proxy) get().updateMediaSilent(id, { renderPath: proxy });
       } else if (m.type === 'image' && res.w && m.width && res.w !== m.width && Math.abs(res.w - m.height) <= 2) {
         // foto com rotação EXIF: salva uma cópia já girada para a exportação ficar igual
         const c = makeCanvas(res.w, res.h);
@@ -606,6 +636,12 @@ export const useStore = create((set, get) => ({
       return null;
     }
   },
+  // som de "Meus sons" (arquivo do usuário): importa e põe numa faixa de áudio
+  async addUserSfx(path, opts = {}) {
+    const [mid] = await get().importPaths([path]);
+    if (!mid) return null;
+    return get().addMedia(mid, { target: 'audio', time: opts.time ?? get().time, trackId: opts.trackId });
+  },
 
   // ---------- Adicionar à linha do tempo ----------
   // opts: { target: 'main' | 'overlay' | 'audio', time, index, trackId, newTrackPos }
@@ -673,6 +709,7 @@ export const useStore = create((set, get) => ({
     const clip = newEffectClip(kind, id, { start: Math.max(0, opts.time ?? get().time), duration: dur });
     get().commit((p) => placeInTrack(p, clip, opts.trackId, opts.newTrackPos ?? null));
     set({ selection: { type: 'clip', id: clip.id } });
+    return clip.id;
   },
   // Legendas automáticas: substitui as anteriores (se pedido) e cria uma faixa só para elas.
   applyCaptions(caps, style, { replace = true, y = 0.32 } = {}) {

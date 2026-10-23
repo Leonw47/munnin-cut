@@ -18,10 +18,19 @@ const DAY = 24 * 3600 * 1000;
 // falhas que normalmente somem atualizando o yt-dlp (o YouTube muda e o yt-dlp acompanha)
 const UPDATABLE = /HTTP Error 403|HTTP Error 400|nsig|n challenge|signature|Unable to extract|Requested format is not available|PO Token|JavaScript runtime|jsc|Precondition check failed|Failed to extract any player response|unable to download video data|Some formats may be missing|Only images are available/i;
 
+// id de 11 caracteres de um link do YouTube (watch?v=, youtu.be/, shorts/, embed/, live/)
+export function youtubeId(u) {
+  const m = /(?:[?&]v=|youtu\.be\/|\/shorts\/|\/embed\/|\/live\/)([\w-]{11})/.exec(String(u || ''));
+  return m ? m[1] : null;
+}
+
+export const isInstagramUrl = (u) => /^https?:\/\/(www\.)?instagram\.com\/(p|reel|reels|tv)\/[\w-]+/i.test(String(u || '').trim());
+
 export const isYoutubeUrl = (u) => /^https?:\/\/([a-z0-9-]+\.)?(youtube\.com|youtu\.be|youtube-nocookie\.com)\//i.test(String(u || '').trim());
 
 export function friendlyError(raw) {
   const e = String(raw || '');
+  if (/instagram/i.test(e) && /login|log in|cookies|rate-limit|empty media response|not available/i.test(e)) return 'O Instagram não liberou esse post sem login (é privado, tem restrição ou o Instagram bloqueou por excesso de pedidos). Posts e reels públicos costumam funcionar; tente de novo mais tarde ou salve o vídeo pelo app do Instagram.';
   if (/Private video/i.test(e)) return 'Esse vídeo é privado.';
   if (/confirm your age|age-restricted|inappropriate for some users/i.test(e)) return 'Vídeo com restrição de idade: o YouTube só libera com login.';
   if (/members-only|Join this channel/i.test(e)) return 'Vídeo exclusivo para membros do canal.';
@@ -39,7 +48,7 @@ const hhmmss = (s) => {
   return `${Math.floor(s / 3600)}:${String(Math.floor((s % 3600) / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`;
 };
 
-export function createYtdlp({ binDir, ffmpegDir, nodeExe, outDir, log = () => {} }) {
+export function createYtdlp({ binDir, ffmpegDir, nodeExe, outDir, videoDir = outDir, log = () => {} }) {
   const exe = path.join(binDir, 'yt-dlp.exe');
   const statePath = path.join(binDir, 'yt-dlp.json');
   let proc = null, abortCtl = null, cancelled = false, busy = null;
@@ -47,14 +56,14 @@ export function createYtdlp({ binDir, ffmpegDir, nodeExe, outDir, log = () => {}
   const readState = () => { try { return JSON.parse(fs.readFileSync(statePath, 'utf8')); } catch { return {}; } };
   const writeState = (p) => { fs.mkdirSync(binDir, { recursive: true }); fs.writeFileSync(statePath, JSON.stringify({ ...readState(), ...p })); };
 
-  function run(args, { onLine, timeout = 0 } = {}) {
+  function run(args, { onLine, timeout = 0, track = true } = {}) {
     return new Promise((resolve) => {
       let out = '', err = '', bufO = '', bufE = '';
       const p = spawn(exe, args, {
         windowsHide: true,
         env: { ...process.env, ELECTRON_RUN_AS_NODE: '1', PYTHONIOENCODING: 'utf-8', PYTHONUTF8: '1' },
       });
-      proc = p;
+      if (track) proc = p;
       const feed = (chunk, which) => {
         const txt = chunk.toString('utf8');
         if (which === 'out') { out += txt; bufO += txt; } else { err += txt; bufE += txt; }
@@ -140,30 +149,37 @@ export function createYtdlp({ binDir, ffmpegDir, nodeExe, outDir, log = () => {}
     return { installed, version: installed ? st.version || await version() : null, checkedAt: st.checkedAt || null, channel: st.channel || 'stable' };
   }
 
-  async function once({ url, start, end }, onProgress) {
-    fs.mkdirSync(outDir, { recursive: true });
+  async function once({ url, start, end, kind }, onProgress) {
+    const video = kind === 'video';
+    const dir = video ? videoDir : outDir;
+    fs.mkdirSync(dir, { recursive: true });
     const printFile = path.join(os.tmpdir(), `munnin-yt-${crypto.randomUUID()}.txt`);
-    const sect = Number.isFinite(start) && Number.isFinite(end) && end > start;
-    const suffix = sect ? ` [${hhmmss(start).replace(/:/g, '.')}-${hhmmss(end).replace(/:/g, '.')}]` : '';
+    // trecho: início e/ou fim (sem fim = até o final do vídeo)
+    const ini = Number.isFinite(start) && start > 0 ? start : 0;
+    const temFim = Number.isFinite(end) && end > ini;
+    const sect = ini > 0 || temFim;
+    const suffix = sect ? ` [${hhmmss(ini).replace(/:/g, '.')}-${temFim ? hhmmss(end).replace(/:/g, '.') : 'fim'}]` : '';
     const args = [
       '--ignore-config', '--no-playlist', '--no-mtime', '--newline', '--progress',
       '--progress-template', 'download:MCPROG %(progress._percent_str)s',
       '--js-runtimes', `node:${nodeExe}`,
       '--ffmpeg-location', ffmpegDir,
-      '-f', 'bestaudio[ext=m4a]/bestaudio/best',
-      '-x', '--audio-format', 'm4a', '--audio-quality', '0',
+      // vídeo: até 1080p, de preferência H.264 + AAC (abre em qualquer lugar), juntado em MP4
+      ...(video
+        ? ['-f', 'bv*[height<=1080]+ba/b[height<=1080]/b', '-S', 'res:1080,vcodec:h264,acodec:m4a', '--merge-output-format', 'mp4']
+        : ['-f', 'bestaudio[ext=m4a]/bestaudio/best', '-x', '--audio-format', 'm4a', '--audio-quality', '0']),
       '--windows-filenames', '--trim-filenames', '150',
-      '-o', path.join(outDir, `%(title)s${suffix}.%(ext)s`),
+      '-o', path.join(dir, `%(title)s${suffix}.%(ext)s`),
       '--print-to-file', 'after_move:filepath', printFile,
     ];
-    if (sect) args.push('--download-sections', `*${start}-${end}`, '--force-keyframes-at-cuts');
+    if (sect) args.push('--download-sections', `*${ini}-${temFim ? end : 'inf'}`, '--force-keyframes-at-cuts');
     args.push('--', url.trim());
     let lastErr = '';
     const r = await run(args, {
       onLine: (line, which) => {
         const m = /^MCPROG\s+([\d.]+)%/.exec(line);
-        if (m) onProgress?.({ stage: 'download', text: 'Baixando o áudio…', pct: Math.min(1, Number(m[1]) / 100) });
-        else if (/^\[(ExtractAudio|FixupM4a|ffmpeg|Merger)\]/.test(line)) onProgress?.({ stage: 'convert', text: 'Preparando o arquivo de áudio…' });
+        if (m) onProgress?.({ stage: 'download', text: video ? 'Baixando o vídeo…' : 'Baixando o áudio…', pct: Math.min(1, Number(m[1]) / 100) });
+        else if (/^\[(ExtractAudio|FixupM4a|ffmpeg|Merger)\]/.test(line)) onProgress?.({ stage: 'convert', text: video ? 'Juntando imagem e som…' : 'Preparando o arquivo de áudio…' });
         else if (/^\[youtube\]/.test(line)) onProgress?.({ stage: 'info', text: 'Lendo o vídeo no YouTube…' });
         if (which === 'err' && /^ERROR:/.test(line)) lastErr = line;
       },
@@ -175,10 +191,10 @@ export function createYtdlp({ binDir, ffmpegDir, nodeExe, outDir, log = () => {}
     return { ok: false, err: `${lastErr}\n${r.err}`.trim(), code: r.code };
   }
 
-  /** baixa o áudio de um link do YouTube; start/end (s) opcionais para baixar só um trecho */
-  async function download({ url, start, end }, onProgress) {
+  /** baixa o áudio (ou o vídeo, kind: 'video') de um link do YouTube; start/end (s) opcionais para só um trecho */
+  async function download({ url, start, end, kind }, onProgress) {
     if (busy) throw new Error('Já existe um download em andamento.');
-    if (!isYoutubeUrl(url)) throw new Error('Cole um link do YouTube (youtube.com ou youtu.be).');
+    if (!isYoutubeUrl(url) && !isInstagramUrl(url)) throw new Error('Cole um link do YouTube (youtube.com ou youtu.be) ou do Instagram (post ou reel).');
     cancelled = false;
     busy = true;
     try {
@@ -186,7 +202,7 @@ export function createYtdlp({ binDir, ffmpegDir, nodeExe, outDir, log = () => {}
       if (cancelled) throw new Error('Download cancelado.');
       for (let attempt = 0; ; attempt++) {
         onProgress?.({ stage: 'info', text: 'Lendo o vídeo no YouTube…' });
-        const r = await once({ url, start, end }, onProgress);
+        const r = await once({ url, start, end, kind }, onProgress);
         if (r.ok) return r;
         if (cancelled) throw new Error('Download cancelado.');
         log(`falha no download (tentativa ${attempt + 1}): ${r.err.slice(-600)}`);
@@ -200,11 +216,37 @@ export function createYtdlp({ binDir, ffmpegDir, nodeExe, outDir, log = () => {}
     } finally { busy = null; }
   }
 
+  /** pesquisa no YouTube (só a lista, sem abrir cada vídeo — é rápido) */
+  async function search(q, n = 15) {
+    q = String(q || '').trim();
+    if (!q) return [];
+    await ensure();
+    for (let attempt = 0; ; attempt++) {
+      const r = await run(['--ignore-config', '--flat-playlist', '-J', '--js-runtimes', `node:${nodeExe}`, '--', `ytsearch${n}:${q}`], { timeout: 60000, track: false });
+      if (r.code === 0) {
+        let j = null;
+        try { j = JSON.parse(r.out); } catch { /* saída inesperada */ }
+        return (j?.entries || []).filter((e) => e && /^[\w-]{11}$/.test(e.id || '')).map((e) => ({
+          id: e.id,
+          title: e.title || '(sem título)',
+          channel: e.channel || e.uploader || '',
+          duration: Number(e.duration) || 0,
+          views: Number(e.view_count) || 0,
+          live: e.live_status === 'is_live' || e.live_status === 'is_upcoming',
+          url: `https://www.youtube.com/watch?v=${e.id}`,
+        }));
+      }
+      log(`falha na pesquisa (tentativa ${attempt + 1}): ${r.err.slice(-400)}`);
+      if (UPDATABLE.test(r.err) && attempt < 1) { await update({}); continue; }
+      throw new Error(friendlyError(r.err).replace('Não foi possível baixar', 'Não foi possível pesquisar'));
+    }
+  }
+
   function cancel() {
     cancelled = true;
     abortCtl?.abort();
     killTree(proc);
   }
 
-  return { status, update, ensure, download, cancel, isInstalled: () => fs.existsSync(exe) };
+  return { status, update, ensure, download, search, cancel, isInstalled: () => fs.existsSync(exe) };
 }

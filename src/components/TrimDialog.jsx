@@ -7,18 +7,18 @@ import { fmtTime, MIN_CLIP } from '../shared/timeline.js';
 import { Modal } from './ui.jsx';
 import { useWave } from './Timeline.jsx';
 
-const fmtPrec = (t) => {
+export const fmtPrec = (t) => {
   t = Math.max(0, t || 0);
   const m = Math.floor(t / 60), s = t - m * 60;
   return `${String(m).padStart(2, '0')}:${s.toFixed(2).padStart(5, '0')}`;
 };
-const parseTime = (txt) => {
+export const parseTime = (txt) => {
   const p = String(txt).trim().replace(',', '.').split(':').map(Number);
   if (p.some((x) => Number.isNaN(x))) return null;
   return p.length === 1 ? p[0] : p.length === 2 ? p[0] * 60 + p[1] : p[0] * 3600 + p[1] * 60 + p[2];
 };
 
-function TimeField({ label, value, onCommit }) {
+export function TimeField({ label, value, onCommit }) {
   const [txt, setTxt] = useState(fmtPrec(value));
   const focused = useRef(false);
   useEffect(() => { if (!focused.current) setTxt(fmtPrec(value)); }, [value]);

@@ -1306,3 +1306,661 @@ EFFECTS.push(
   },
 );
 setLayerRes({ goldenHour: 0.25, heavenly: 0.35, windowLight: 0.35, softLeak: 0.25, softBokeh: 0.3, haze: 0.25, edgeGlow: 0.25, dawn: 0.25, sparkSoft: 0.5 });
+
+
+// =====================================================================================
+// v1.8 — Elementos (fogo, explosão, impacto, raios, água), Distorção e mais movimento de câmera
+// =====================================================================================
+FX_CATS.splice(FX_CATS.findIndex((c) => c.id === 'camera') + 1, 0, { id: 'elements', name: 'Elementos' });
+FX_CATS.splice(FX_CATS.findIndex((c) => c.id === 'glitch') + 1, 0, { id: 'distort', name: 'Distorção' });
+
+const sm01 = (x) => { x = clamp01(x); return x * x * (3 - 2 * x); };
+const rgba = (c, a) => `rgba(${c[0] | 0},${c[1] | 0},${c[2] | 0},${Math.max(0, Math.min(1, a)).toFixed(3)})`;
+// cor do fogo pela idade (0 = nasce quente, 1 = some): branco-amarelo → laranja → vermelho escuro
+const FOGO = [[0, [255, 248, 215]], [0.16, [255, 214, 92]], [0.42, [255, 128, 32]], [0.72, [205, 44, 12]], [1, [70, 12, 6]]];
+function fogoRgb(a) {
+  a = clamp01(a);
+  for (let i = 1; i < FOGO.length; i++) {
+    if (a <= FOGO[i][0]) {
+      const [p0, c0] = FOGO[i - 1], [p1, c1] = FOGO[i];
+      const f = (a - p0) / (p1 - p0);
+      return [c0[0] + (c1[0] - c0[0]) * f, c0[1] + (c1[1] - c0[1]) * f, c0[2] + (c1[2] - c0[2]) * f];
+    }
+  }
+  return FOGO[FOGO.length - 1][1];
+}
+// mancha redonda suave (centro forte, borda transparente)
+function mancha(ctx, x, y, r, cor, a, meio = 0.45) {
+  if (a <= 0.003 || r <= 0.5) return;
+  const g = ctx.createRadialGradient(x, y, 0, x, y, r);
+  g.addColorStop(0, rgba(cor, a));
+  g.addColorStop(meio, rgba(cor, a * 0.55));
+  g.addColorStop(1, rgba(cor, 0));
+  ctx.fillStyle = g;
+  ctx.fillRect(x - r, y - r, r * 2, r * 2);
+}
+
+// Canvas de rascunho reaproveitado (camadas que precisam desenhar à parte e depois suavizar).
+const rascunhos = new Map();
+function rascunho(W, H, id = 0) {
+  let c = rascunhos.get(id);
+  if (!c) { c = document.createElement('canvas'); rascunhos.set(id, c); }
+  if (c.width !== W || c.height !== H) { c.width = W; c.height = H; }
+  const x = c.getContext('2d');
+  x.setTransform(1, 0, 0, 1, 0, 0);
+  x.globalAlpha = 1;
+  x.globalCompositeOperation = 'source-over';
+  x.filter = 'none';
+  x.clearRect(0, 0, W, H);
+  return x;
+}
+// desenha num rascunho e passa para ctx suavizado (desfoque) + uma cópia nítida por cima (núcleo)
+function suave(ctx, W, H, blurPx, modo, nitido, desenha, id = 0) {
+  const b = rascunho(W, H, id);
+  desenha(b);
+  ctx.save();
+  ctx.globalCompositeOperation = modo;
+  ctx.filter = `blur(${Math.max(0.5, blurPx).toFixed(1)}px)`;
+  ctx.drawImage(b.canvas, 0, 0);
+  ctx.filter = 'none';
+  if (nitido > 0) { ctx.globalAlpha *= nitido; ctx.drawImage(b.canvas, 0, 0); }
+  ctx.restore();
+}
+
+// Chamas subindo a partir de uma linha (base): partículas agrupadas em "línguas" de fogo que tremulam;
+// cada partícula nasce quente (branco-amarelo) na base, sobe afinando em direção à ponta da língua,
+// esfria (laranja → vermelho) e some. Desenhadas esticadas na vertical e suavizadas.
+function chamas(ctx, W, H, t, k, seed, { n, x0, y0, x1, y1, alt, larg, salto = 0 }) {
+  const m = Math.min(W, H);
+  const base = Math.hypot(x1 - x0, y1 - y0);
+  const nl = Math.max(3, Math.round(base / (larg * 2.4)));
+  suave(ctx, W, H, m * 0.007, 'lighter', 0.5, (b) => {
+    b.globalCompositeOperation = 'lighter';
+    for (let i = 0; i < n; i++) {
+      const vida = 0.55 + 0.55 * rnd(seed, i + salto, 1);
+      const fase = t / vida + rnd(seed, i + salto, 2);
+      const ph = fase % 1;
+      const ciclo = Math.floor(fase);
+      const lg = Math.floor(rnd(seed, i + salto + ciclo * 131, 7) * nl);
+      const meio = (lg + 0.5 + 0.35 * Math.sin(t * 0.7 + lg * 1.3)) / nl;          // a língua anda devagar
+      const u = meio + (rnd(seed, i + salto + ciclo * 131, 3) - 0.5) * (1.1 / nl);
+      const bx = x0 + (x1 - x0) * u, by = y0 + (y1 - y0) * u;
+      const cx = x0 + (x1 - x0) * meio;
+      // altura da língua tremula (cada língua no seu ritmo)
+      const altL = alt * (0.55 + 0.55 * rnd(seed, lg + salto, 8)) * (0.8 + 0.2 * Math.sin(t * (6 + 4 * rnd(seed, lg + salto, 9)) + lg * 2.1));
+      const sobe = altL * (0.7 + 0.45 * rnd(seed, i + salto + ciclo * 17, 4));
+      const ondula = Math.sin(t * (3 + 3 * rnd(seed, lg + salto, 5)) + lg) * m * 0.018 * ph;
+      const x = bx + (cx - bx) * ph * 0.8 + ondula;   // afina em direção à ponta
+      const y = by - ph * sobe;
+      const r = larg * (0.45 + 0.55 * rnd(seed, i + salto, 6)) * (1 - 0.72 * ph);
+      const a = Math.pow(1 - ph, 1.1) * sm01(ph * 9) * (0.32 + 0.2 * k);
+      if (r < 0.5 || a < 0.004) continue;
+      b.save();
+      b.translate(x, y);
+      b.scale(1, 1.9);
+      mancha(b, 0, 0, r, fogoRgb(ph * 1.08), a, 0.5);
+      b.restore();
+    }
+  }, 1);
+}
+function fagulhas(ctx, W, H, t, k, seed, n, x0, x1, yBase, alt) {
+  const m = Math.min(W, H);
+  for (let i = 0; i < n; i++) {
+    const vida = 1.2 + 1.3 * rnd(seed, i, 11);
+    const fase = t / vida + rnd(seed, i, 12);
+    const ph = fase % 1, ciclo = Math.floor(fase);
+    const x = x0 + (x1 - x0) * rnd(seed, i + ciclo * 53, 13) + Math.sin(t * 3 + i * 1.7) * m * 0.04 * ph;
+    const y = yBase - ph * alt * (0.8 + 0.8 * rnd(seed, i, 14));
+    const pisca = 0.55 + 0.45 * Math.sin(t * 23 + i * 3.1);
+    mancha(ctx, x, y, m * (0.004 + 0.004 * rnd(seed, i, 15)), [255, 200, 110], (1 - ph) * pisca * (0.7 + 0.3 * k), 0.3);
+  }
+}
+
+// Tremor que vai sumindo (explosão/impacto): mesmas contas na prévia e no FFmpeg (T = tempo local)
+const tremorJs = (A, R, f, dec) => (t) => {
+  const e = Math.exp(-dec * t);
+  const s = shakeJs(A * e, R * e, f)(t);
+  return { ...s, Z: 1 + 2.5 * A + 0.04 };
+};
+const tremorFf = (A, R, f, dec) => {
+  const e = `exp(-${n4(dec)}*T)`;
+  const s = shakeFf(1, 1, f);
+  return { Z: n4(1 + 2.5 * A + 0.04), tx: `${n4(A)}*${e}*${s.tx.replace(/^1\*/, '')}`, ty: `${n4(A)}*${e}*${s.ty.replace(/^1\*/, '')}`, th: `${n4(R)}*${e}*${s.th.replace(/^1\*/, '')}` };
+};
+
+// ---------- Distorção: cada pixel busca a cor em (x+dx, y+dy) ----------
+// js(x, y, W, H, t, D, k) → [dx, dy] (pixels no tamanho W×H dado; as contas são relativas, valem em
+// qualquer resolução) · ff(D, k) → [dx, dy] em sintaxe FFmpeg com X, Y, W, H, T (filtro geq).
+// A prévia remapeia os pixels numa cópia reduzida (até 720 px); a exportação usa a fórmula exata.
+function distort(js, ff) {
+  return {
+    prev(env) {
+      const { ctx, W, H, t, D, k } = env;
+      const src = env.snapshot();
+      const s = Math.min(1, 720 / Math.max(W, H));
+      const w = Math.max(2, Math.round(W * s)), h = Math.max(2, Math.round(H * s));
+      const a = env.scratch(w, h, 16);
+      a.ctx.drawImage(src, 0, 0, w, h);
+      let inp;
+      try { inp = a.ctx.getImageData(0, 0, w, h); } catch { return; }
+      const out = a.ctx.createImageData(w, h);
+      const I = inp.data, O = out.data;
+      for (let y = 0; y < h; y++) {
+        for (let x = 0; x < w; x++) {
+          const d = js(x, y, w, h, t, D, k);
+          let sx = Math.round(x + d[0]), sy = Math.round(y + d[1]);
+          sx = sx < 0 ? 0 : sx >= w ? w - 1 : sx;
+          sy = sy < 0 ? 0 : sy >= h ? h - 1 : sy;
+          const i = (y * w + x) * 4, j = (sy * w + sx) * 4;
+          O[i] = I[j]; O[i + 1] = I[j + 1]; O[i + 2] = I[j + 2]; O[i + 3] = 255;
+        }
+      }
+      a.ctx.putImageData(out, 0, 0);
+      ctx.save();
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+      ctx.imageSmoothingEnabled = true;
+      ctx.drawImage(a.canvas, 0, 0, W, H);
+      ctx.restore();
+    },
+    ff({ inL, outL, D, k }) {
+      const [ex, ey] = ff(D, k);
+      const p = (pl) => `${pl}(X+(${ex}),Y+(${ey}))`;
+      return `[${inL}]format=gbrp,geq=r='${p('r')}':g='${p('g')}':b='${p('b')}'[${outL}]`;
+    },
+  };
+}
+// expressões auxiliares (FFmpeg): distância ao centro, menor lado
+const fR = 'hypot(X-W/2,Y-H/2)';
+const fM = 'min(W,H)';
+
+EFFECTS.push(
+  // ---------------- Elementos ----------------
+  {
+    id: 'fire', name: 'Fogo', cat: 'elements',
+    layer: {
+      blend: 'screen',
+      draw(ctx, W, H, t, D, k, seed) {
+        const m = Math.min(W, H);
+        const entra = sm01(t / 0.4);
+        const alt = H * (0.2 + 0.22 * k);
+        ctx.globalCompositeOperation = 'lighter';
+        const g = ctx.createLinearGradient(0, H, 0, H - alt * 1.3);
+        g.addColorStop(0, `rgba(255,110,25,${0.5 * entra * (0.6 + 0.4 * k)})`);
+        g.addColorStop(1, 'rgba(255,70,15,0)');
+        ctx.fillStyle = g;
+        ctx.fillRect(0, H - alt * 1.3, W, alt * 1.3);
+        ctx.globalAlpha = entra;
+        chamas(ctx, W, H, t, k, seed, { n: Math.round(150 + 130 * k), x0: -m * 0.05, y0: H + m * 0.03, x1: W + m * 0.05, y1: H + m * 0.03, alt, larg: m * 0.07 });
+        fagulhas(ctx, W, H, t, k, seed, Math.round(12 + 18 * k), 0, W, H, alt * 1.6);
+        ctx.globalAlpha = 1;
+        ctx.globalCompositeOperation = 'source-over';
+      },
+    },
+  },
+  {
+    id: 'fireFrame', name: 'Moldura de fogo', cat: 'elements',
+    layer: {
+      blend: 'screen',
+      draw(ctx, W, H, t, D, k, seed) {
+        const m = Math.min(W, H);
+        const entra = sm01(t / 0.4);
+        const alt = m * (0.16 + 0.12 * k);
+        ctx.globalCompositeOperation = 'lighter';
+        ctx.globalAlpha = entra;
+        // brilho nas bordas
+        for (const [x, y, w, h, gx0, gy0, gx1, gy1] of [
+          [0, H - alt, W, alt, 0, H, 0, H - alt], [0, 0, alt, H, 0, 0, alt, 0], [W - alt, 0, alt, H, W, 0, W - alt, 0], [0, 0, W, alt * 0.6, 0, 0, 0, alt * 0.6],
+        ]) {
+          const g = ctx.createLinearGradient(gx0, gy0, gx1, gy1);
+          g.addColorStop(0, `rgba(255,100,20,${0.38 * (0.6 + 0.4 * k)})`);
+          g.addColorStop(1, 'rgba(255,70,10,0)');
+          ctx.fillStyle = g;
+          ctx.fillRect(x, y, w, h);
+        }
+        const n = Math.round(80 + 70 * k);
+        chamas(ctx, W, H, t, k, seed, { n, x0: 0, y0: H + m * 0.02, x1: W, y1: H + m * 0.02, alt, larg: m * 0.06 });
+        chamas(ctx, W, H, t, k, seed, { n: Math.round(n * 0.8), x0: -m * 0.01, y0: H, x1: -m * 0.01, y1: 0, alt: alt * 0.9, larg: m * 0.05, salto: 1000 });
+        chamas(ctx, W, H, t, k, seed, { n: Math.round(n * 0.8), x0: W + m * 0.01, y0: H, x1: W + m * 0.01, y1: 0, alt: alt * 0.9, larg: m * 0.05, salto: 2000 });
+        ctx.globalAlpha = 1;
+        ctx.globalCompositeOperation = 'source-over';
+      },
+    },
+  },
+  {
+    id: 'explosion', name: 'Explosão', cat: 'elements', dur: 2.5, thumbT: 0.3,
+    ...camera((t, D, k) => tremorJs(0.03 * k, 0.012 * k, 1.3, 3.5)(t), (D, k) => tremorFf(0.03 * k, 0.012 * k, 1.3, 3.5)),
+    layer: {
+      blend: 'normal',
+      draw(ctx, W, H, t, D, k, seed) {
+        const m = Math.min(W, H);
+        const cx = W * (0.5 + 0.1 * (rnd(seed, 1, 1) - 0.5)), cy = H * (0.55 + 0.06 * (rnd(seed, 1, 2) - 0.5));
+        const fim = Math.max(1.2, D);
+        const some = 1 - sm01((t - (fim - 0.6)) / 0.6);           // tudo some no fim do clipe
+        const R = m * (0.22 + 0.16 * k) * (1 - Math.exp(-t * 5));
+        // fumaça escura (fica depois do fogo e sobe)
+        const nf = 26;
+        suave(ctx, W, H, m * 0.012, 'source-over', 0.35, (ctx) => { for (let i = 0; i < nf; i++) {
+          const ang = TAU * rnd(seed, i, 21), dist = Math.sqrt(rnd(seed, i, 22));
+          const sobe = m * (0.05 + 0.12 * rnd(seed, i, 23)) * t;
+          const x = cx + Math.cos(ang) * dist * R * 1.15, y = cy + Math.sin(ang) * dist * R * 0.9 - sobe;
+          const r = m * (0.07 + 0.08 * rnd(seed, i, 24)) * (0.5 + 0.9 * (1 - Math.exp(-t * 2.5)));
+          const a = sm01((t - 0.12) / 0.35) * 0.55 * some;
+          mancha(ctx, x, y, r, [38 + 20 * rnd(seed, i, 25), 34, 32], a, 0.55);
+        } }, 2);
+        // bola de fogo
+        const nb = 40;
+        suave(ctx, W, H, m * 0.008, 'lighter', 0.45, (ctx) => { ctx.globalCompositeOperation = 'lighter'; for (let i = 0; i < nb; i++) {
+          const ang = TAU * rnd(seed, i, 31), dist = Math.pow(rnd(seed, i, 32), 0.6);
+          const x = cx + Math.cos(ang) * dist * R, y = cy + Math.sin(ang) * dist * R * 0.85 - m * 0.04 * t;
+          const r = m * (0.05 + 0.06 * rnd(seed, i, 33)) * (0.4 + (1 - Math.exp(-t * 4)));
+          const calor = Math.exp(-t * (1.6 + 1.4 * dist));
+          const a = clamp01(calor * 1.3) * (0.55 + 0.25 * k) * some;
+          mancha(ctx, x, y, r, fogoRgb(1 - calor), a);
+        } }, 3);
+        ctx.globalCompositeOperation = 'lighter';
+        // fagulhas voando (com gravidade)
+        const nd = Math.round(26 + 30 * k);
+        for (let i = 0; i < nd; i++) {
+          const ang = TAU * rnd(seed, i, 41), v = m * (0.6 + 1.4 * rnd(seed, i, 42));
+          const tt = Math.min(t, 1.6);
+          const x = cx + Math.cos(ang) * v * tt, y = cy + Math.sin(ang) * v * tt * 0.8 + 0.5 * m * 1.4 * tt * tt;
+          const a = (1 - tt / 1.6) * (0.85 + 0.15 * k) * some;
+          if (a <= 0.01) continue;
+          const vx = Math.cos(ang) * v, vy = Math.sin(ang) * v * 0.8 + m * 1.4 * tt;
+          ctx.strokeStyle = rgba([255, 190, 90], a);
+          ctx.lineWidth = Math.max(1, m * 0.004);
+          ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x - vx * 0.03, y - vy * 0.03); ctx.stroke();
+        }
+        ctx.globalCompositeOperation = 'source-over';
+        // onda de choque
+        if (t < 0.55) {
+          const p = t / 0.55;
+          ctx.strokeStyle = `rgba(255,240,220,${(0.55 * (1 - p)).toFixed(3)})`;
+          ctx.lineWidth = m * 0.025 * (1 - p) + 1;
+          ctx.beginPath(); ctx.ellipse(cx, cy, m * (0.08 + 0.9 * p), m * (0.06 + 0.6 * p), 0, 0, TAU); ctx.stroke();
+        }
+        // clarão
+        const fl = 1 - t / 0.2;
+        if (fl > 0) { ctx.fillStyle = `rgba(255,246,225,${(0.85 * fl * (0.6 + 0.4 * k)).toFixed(3)})`; ctx.fillRect(0, 0, W, H); }
+      },
+    },
+  },
+  {
+    id: 'impactBurst', name: 'Impacto', cat: 'elements', dur: 1, thumbT: 0.1,
+    ...camera((t, D, k) => tremorJs(0.022 * k, 0.01 * k, 1.6, 5)(t), (D, k) => tremorFf(0.022 * k, 0.01 * k, 1.6, 5)),
+    layer: {
+      blend: 'normal',
+      draw(ctx, W, H, t, D, k, seed) {
+        const m = Math.min(W, H), cx = W / 2, cy = H / 2;
+        const fl = 1 - t / 0.12;
+        if (fl > 0) { ctx.fillStyle = `rgba(255,255,255,${(0.9 * fl).toFixed(3)})`; ctx.fillRect(0, 0, W, H); }
+        for (let r = 0; r < 2; r++) {
+          const p = (t - r * 0.08) / 0.45;
+          if (p <= 0 || p >= 1) continue;
+          ctx.strokeStyle = `rgba(255,255,255,${(0.7 * (1 - p)).toFixed(3)})`;
+          ctx.lineWidth = m * 0.02 * (1 - p) + 1;
+          ctx.beginPath(); ctx.arc(cx, cy, m * (0.05 + 0.75 * sm01(p)), 0, TAU); ctx.stroke();
+        }
+        // linhas de impacto (estilo mangá), piscando em janelas de 1/15 s
+        if (t < 0.5) {
+          const w = Math.floor(t * 15), a = (1 - t / 0.5) * (0.6 + 0.4 * k);
+          const n = 40, R0 = Math.hypot(W, H) * 0.55;
+          ctx.fillStyle = `rgba(255,255,255,${a.toFixed(3)})`;
+          for (let i = 0; i < n; i++) {
+            const ang = TAU * (i + rnd(seed, i, w)) / n;
+            const r1 = m * (0.18 + 0.2 * rnd(seed, i, w + 50));
+            const largura = 0.012 + 0.02 * rnd(seed, i, w + 90);
+            ctx.beginPath();
+            ctx.moveTo(cx + Math.cos(ang - largura) * R0, cy + Math.sin(ang - largura) * R0);
+            ctx.lineTo(cx + Math.cos(ang) * r1, cy + Math.sin(ang) * r1);
+            ctx.lineTo(cx + Math.cos(ang + largura) * R0, cy + Math.sin(ang + largura) * R0);
+            ctx.closePath(); ctx.fill();
+          }
+        }
+      },
+    },
+  },
+  {
+    id: 'lightning', name: 'Raios', cat: 'elements', thumbT: 0.04,
+    layer: {
+      blend: 'screen',
+      draw(ctx, W, H, t, D, k, seed) {
+        const m = Math.min(W, H);
+        const periodo = 1.1 - 0.4 * k;
+        const n = Math.floor(t / periodo), dt = t - n * periodo;
+        if (dt > 0.32) return;
+        // pisca duas vezes, como raio de verdade
+        const br = dt < 0.06 ? 1 : dt < 0.1 ? 0.25 : dt < 0.18 ? 0.85 : Math.max(0, 1 - (dt - 0.18) / 0.14);
+        ctx.fillStyle = `rgba(200,210,255,${(0.35 * br).toFixed(3)})`;
+        ctx.fillRect(0, 0, W, H);
+        const raio = (x, y, ang, comp, larg, nivel, sem) => {
+          ctx.lineCap = 'round';
+          let px = x, py = y;
+          const passos = 14;
+          const pts = [[px, py]];
+          for (let j = 1; j <= passos; j++) {
+            const a = ang + (rnd(sem, j, 1) - 0.5) * 0.9;
+            px += Math.cos(a) * comp / passos; py += Math.sin(a) * comp / passos;
+            pts.push([px, py]);
+            if (nivel < 2 && rnd(sem, j, 2) > 0.82) raio(px, py, a + (rnd(sem, j, 3) - 0.5) * 1.4, comp * 0.4, larg * 0.55, nivel + 1, sem * 7 + j);
+          }
+          for (const [lw, cor] of [[larg * 6, `rgba(120,140,255,${(0.25 * br).toFixed(3)})`], [larg * 2.5, `rgba(180,200,255,${(0.55 * br).toFixed(3)})`], [larg, `rgba(255,255,255,${br.toFixed(3)})`]]) {
+            ctx.strokeStyle = cor; ctx.lineWidth = lw;
+            ctx.beginPath(); ctx.moveTo(pts[0][0], pts[0][1]);
+            for (const p of pts) ctx.lineTo(p[0], p[1]);
+            ctx.stroke();
+          }
+        };
+        const sem = (seed ^ (n * 2654435761)) >>> 0;
+        const x0 = W * (0.2 + 0.6 * rnd(sem, 1, 1));
+        raio(x0, -m * 0.02, Math.PI / 2 + (rnd(sem, 1, 2) - 0.5) * 0.5, H * (0.6 + 0.35 * rnd(sem, 1, 3)), Math.max(1.5, m * 0.004 * (0.7 + 0.6 * k)), 0, sem);
+      },
+    },
+  },
+  {
+    id: 'sparks', name: 'Faíscas', cat: 'elements',
+    layer: {
+      blend: 'screen',
+      draw(ctx, W, H, t, D, k, seed) {
+        const m = Math.min(W, H);
+        const n = Math.round(60 + 90 * k);
+        const ox = W / 2, oy = H * 0.98;
+        ctx.globalCompositeOperation = 'lighter';
+        mancha(ctx, ox, oy, m * 0.12, [255, 170, 70], 0.5 * (0.6 + 0.4 * k));
+        for (let i = 0; i < n; i++) {
+          const vida = 0.6 + 0.7 * rnd(seed, i, 1);
+          const fase = t / vida + rnd(seed, i, 2);
+          const ph = fase % 1, ciclo = Math.floor(fase);
+          const ang = -Math.PI / 2 + (rnd(seed, i + ciclo * 31, 3) - 0.5) * 1.6;
+          const v = m * (0.9 + 1.2 * rnd(seed, i + ciclo * 7, 4));
+          const tt = ph * vida;
+          const x = ox + Math.cos(ang) * v * tt, y = oy + Math.sin(ang) * v * tt + 0.5 * m * 2.2 * tt * tt;
+          const vx = Math.cos(ang) * v, vy = Math.sin(ang) * v + m * 2.2 * tt;
+          const a = (1 - ph) * (0.8 + 0.2 * k);
+          ctx.strokeStyle = rgba(fogoRgb(ph * 0.6), a);
+          ctx.lineWidth = Math.max(1.2, m * 0.005);
+          ctx.lineCap = 'round';
+          ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x - vx * 0.035, y - vy * 0.035); ctx.stroke();
+        }
+        ctx.globalCompositeOperation = 'source-over';
+      },
+    },
+  },
+  {
+    id: 'smoke', name: 'Fumaça', cat: 'elements',
+    layer: {
+      blend: 'normal',
+      draw(ctx, W, H, t, D, k, seed) {
+        const m = Math.min(W, H);
+        const entra = sm01(t / 0.8);
+        const n = Math.round(18 + 22 * k);
+        for (let i = 0; i < n; i++) {
+          const vida = 4 + 3 * rnd(seed, i, 1);
+          const fase = t / vida + rnd(seed, i, 2);
+          const ph = fase % 1, ciclo = Math.floor(fase);
+          const x = W * rnd(seed, i + ciclo * 19, 3) + Math.sin(t * 0.4 + i) * m * 0.08 + ph * m * 0.15 * (rnd(seed, i, 4) - 0.5);
+          const y = H + m * 0.1 - ph * H * (0.55 + 0.4 * rnd(seed, i, 5));
+          const r = m * (0.12 + 0.12 * rnd(seed, i, 6)) * (0.6 + ph);
+          const a = Math.sin(Math.PI * ph) * (0.22 + 0.18 * k) * entra;
+          const tom = 150 + 60 * rnd(seed, i, 7);
+          mancha(ctx, x, y, r, [tom, tom, tom + 6], a, 0.5);
+        }
+      },
+    },
+  },
+  {
+    id: 'speedLines', name: 'Linhas de velocidade', cat: 'elements',
+    layer: {
+      blend: 'normal',
+      draw(ctx, W, H, t, D, k, seed) {
+        const m = Math.min(W, H), cx = W / 2, cy = H / 2;
+        const w = Math.floor(t * 12);
+        const n = Math.round(50 + 50 * k), R0 = Math.hypot(W, H) * 0.6;
+        ctx.fillStyle = 'rgba(255,255,255,0.85)';
+        for (let i = 0; i < n; i++) {
+          const ang = TAU * (i + rnd(seed, i, w)) / n;
+          const r1 = m * (0.3 + 0.22 * rnd(seed, i, w + 40)) * (1.15 - 0.3 * k);
+          const larg = 0.004 + 0.01 * rnd(seed, i, w + 80);
+          ctx.beginPath();
+          ctx.moveTo(cx + Math.cos(ang - larg) * R0, cy + Math.sin(ang - larg) * R0);
+          ctx.lineTo(cx + Math.cos(ang) * r1, cy + Math.sin(ang) * r1);
+          ctx.lineTo(cx + Math.cos(ang + larg) * R0, cy + Math.sin(ang + larg) * R0);
+          ctx.closePath(); ctx.fill();
+        }
+      },
+    },
+  },
+  {
+    id: 'underwater', name: 'Debaixo d’água', cat: 'elements',
+    ops: [{ op: 'saturate', v: 0.85 }, { op: 'hue', v: -12 }, { op: 'brightness', v: 0.92 }],
+    ...distort(
+      (x, y, W, H, t, D, k) => {
+        const m = Math.min(W, H);
+        return [0.006 * k * m * Math.sin(TAU * (y / m * 2.2 + t * 0.6)), 0.004 * k * m * Math.sin(TAU * (x / m * 1.8 + t * 0.45) + 1)];
+      },
+      (D, k) => [`${n4(0.006 * k)}*${fM}*sin(${n4(TAU)}*(Y/${fM}*2.2+T*0.6))`, `${n4(0.004 * k)}*${fM}*sin(${n4(TAU)}*(X/${fM}*1.8+T*0.45)+1)`],
+    ),
+    layer: {
+      blend: 'screen',
+      draw(ctx, W, H, t, D, k, seed) {
+        const m = Math.min(W, H);
+        // tom azul-esverdeado e luz vindo de cima
+        const g = ctx.createLinearGradient(0, 0, 0, H);
+        g.addColorStop(0, `rgba(40,150,170,${0.35 * k})`);
+        g.addColorStop(1, `rgba(0,40,80,${0.15 * k})`);
+        ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+        // reflexos de luz (cáusticas) ondulando
+        ctx.lineWidth = Math.max(1, m * 0.006);
+        for (let i = 0; i < 9; i++) {
+          ctx.strokeStyle = `rgba(190,255,250,${(0.07 + 0.05 * k).toFixed(3)})`;
+          ctx.beginPath();
+          for (let x = -20; x <= W + 20; x += Math.max(6, W / 60)) {
+            const y = H * (0.05 + 0.1 * i) + Math.sin(x / m * 7 + t * 1.3 + i * 1.9) * m * 0.03 + Math.sin(x / m * 3.1 - t * 0.9 + i) * m * 0.02;
+            if (x < 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+          }
+          ctx.stroke();
+        }
+        // bolhas subindo
+        for (let i = 0; i < Math.round(10 + 14 * k); i++) {
+          const vida = 3 + 3 * rnd(seed, i, 1);
+          const fase = t / vida + rnd(seed, i, 2);
+          const ph = fase % 1, ciclo = Math.floor(fase);
+          const r = m * (0.006 + 0.012 * rnd(seed, i, 3));
+          const x = W * rnd(seed, i + ciclo * 11, 4) + Math.sin(t * 2 + i) * m * 0.015;
+          const y = H + r - ph * (H + r * 2);
+          ctx.strokeStyle = 'rgba(220,255,255,0.55)';
+          ctx.lineWidth = Math.max(1, r * 0.18);
+          ctx.beginPath(); ctx.arc(x, y, r, 0, TAU); ctx.stroke();
+          mancha(ctx, x - r * 0.35, y - r * 0.35, r * 0.35, [255, 255, 255], 0.7);
+        }
+      },
+    },
+  },
+  {
+    id: 'lensDrops', name: 'Gotas na lente', cat: 'elements',
+    layer: {
+      blend: 'normal',
+      draw(ctx, W, H, t, D, k, seed) {
+        const m = Math.min(W, H);
+        const n = Math.round(14 + 26 * k);
+        for (let i = 0; i < n; i++) {
+          const nasce = rnd(seed, i, 1) * Math.max(0.5, D * 0.6);
+          if (t < nasce) continue;
+          const r = m * (0.012 + 0.03 * rnd(seed, i, 2));
+          const escorre = rnd(seed, i, 3) > 0.65 ? Math.max(0, t - nasce - 0.6) * m * (0.05 + 0.1 * rnd(seed, i, 4)) : 0;
+          const x = W * rnd(seed, i, 5), y = H * rnd(seed, i, 6) + escorre;
+          const a = sm01((t - nasce) / 0.15);
+          // rastro de quem escorre
+          if (escorre > 0) {
+            const g = ctx.createLinearGradient(x, y - escorre, x, y);
+            g.addColorStop(0, 'rgba(255,255,255,0)'); g.addColorStop(1, `rgba(255,255,255,${(0.12 * a).toFixed(3)})`);
+            ctx.fillStyle = g; ctx.fillRect(x - r * 0.35, y - escorre, r * 0.7, escorre);
+          }
+          // corpo da gota: borda escura, centro claro e brilho
+          const g = ctx.createRadialGradient(x, y + r * 0.2, r * 0.2, x, y, r);
+          g.addColorStop(0, `rgba(255,255,255,${(0.10 * a).toFixed(3)})`);
+          g.addColorStop(0.75, `rgba(220,235,255,${(0.16 * a).toFixed(3)})`);
+          g.addColorStop(0.92, `rgba(0,0,0,${(0.28 * a).toFixed(3)})`);
+          g.addColorStop(1, 'rgba(0,0,0,0)');
+          ctx.fillStyle = g;
+          ctx.beginPath(); ctx.ellipse(x, y, r, r * 1.08, 0, 0, TAU); ctx.fill();
+          mancha(ctx, x - r * 0.38, y - r * 0.42, r * 0.28, [255, 255, 255], 0.85 * a, 0.3);
+        }
+      },
+    },
+  },
+  {
+    id: 'splash', name: 'Respingo', cat: 'elements', dur: 1.5, thumbT: 0.35,
+    layer: {
+      blend: 'normal',
+      draw(ctx, W, H, t, D, k, seed) {
+        const m = Math.min(W, H), ox = W / 2, oy = H * 0.92;
+        const n = Math.round(40 + 50 * k);
+        for (let i = 0; i < n; i++) {
+          const ang = -Math.PI / 2 + (rnd(seed, i, 1) - 0.5) * 2.2;
+          const v = m * (0.8 + 1.4 * rnd(seed, i, 2));
+          const tt = Math.max(0, t - 0.05 * rnd(seed, i, 3));
+          const x = ox + Math.cos(ang) * v * tt, y = oy + Math.sin(ang) * v * tt + 0.5 * m * 3 * tt * tt;
+          if (y > H + 20) continue;
+          const r = m * (0.006 + 0.012 * rnd(seed, i, 4)) * (1 - 0.3 * tt);
+          const a = clamp01(1.4 - tt) * (0.75 + 0.25 * k);
+          ctx.fillStyle = `rgba(210,235,255,${(0.75 * a).toFixed(3)})`;
+          ctx.beginPath(); ctx.arc(x, y, r, 0, TAU); ctx.fill();
+          mancha(ctx, x - r * 0.3, y - r * 0.3, r * 0.45, [255, 255, 255], a);
+        }
+        // coroa de água na base
+        if (t < 0.7) {
+          const p = t / 0.7;
+          ctx.strokeStyle = `rgba(220,240,255,${(0.6 * (1 - p)).toFixed(3)})`;
+          ctx.lineWidth = m * 0.01 * (1 - p) + 1;
+          ctx.beginPath(); ctx.ellipse(ox, oy, m * (0.05 + 0.4 * p), m * (0.012 + 0.08 * p), 0, 0, TAU); ctx.stroke();
+        }
+      },
+    },
+  },
+
+  // ---------------- Distorção ----------------
+  {
+    id: 'ripple', name: 'Ondulação', cat: 'distort',
+    ...distort(
+      (x, y, W, H, t, D, k) => {
+        const m = Math.min(W, H), ux = x - W / 2, uy = y - H / 2, r = Math.hypot(ux, uy) + 1e-3;
+        const d = 0.012 * k * m * Math.sin(TAU * (r / (0.09 * m) - 1.4 * t));
+        return [(d * ux) / r, (d * uy) / r];
+      },
+      (D, k) => {
+        const d = `${n4(0.012 * k)}*${fM}*sin(${n4(TAU)}*((${fR})/(0.09*${fM})-1.4*T))`;
+        return [`${d}*(X-W/2)/(${fR}+0.001)`, `${d}*(Y-H/2)/(${fR}+0.001)`];
+      },
+    ),
+  },
+  {
+    id: 'swirl', name: 'Redemoinho', cat: 'distort',
+    ...distort(
+      (x, y, W, H, t, D, k) => {
+        const m = Math.min(W, H), ux = x - W / 2, uy = y - H / 2, r = Math.hypot(ux, uy), RR = 0.6 * m;
+        if (r >= RR) return [0, 0];
+        const th = 2.8 * k * Math.sin(Math.PI * clamp01(t / Math.max(0.1, D))) * (1 - r / RR) * (1 - r / RR);
+        const c = Math.cos(th), s = Math.sin(th);
+        return [ux * c - uy * s - ux, ux * s + uy * c - uy];
+      },
+      (D, k) => {
+        const th = `if(lt(${fR},0.6*${fM}),${n4(2.8 * k)}*sin(PI*clip(T/${n4(Math.max(0.1, D))},0,1))*pow(1-(${fR})/(0.6*${fM}),2),0)`;
+        return [`(X-W/2)*cos(${th})-(Y-H/2)*sin(${th})-(X-W/2)`, `(X-W/2)*sin(${th})+(Y-H/2)*cos(${th})-(Y-H/2)`];
+      },
+    ),
+  },
+  {
+    id: 'heat', name: 'Calor', cat: 'distort',
+    ...distort(
+      (x, y, W, H, t, D, k) => {
+        const m = Math.min(W, H), a = 0.004 * k * m * (0.4 + 0.6 * (y / H));
+        return [a * Math.sin(TAU * (y / m * 9 - t * 2.3)) * Math.sin(TAU * (x / m * 3 + t * 0.7)), 0.6 * a * Math.sin(TAU * (x / m * 7 + t * 1.9))];
+      },
+      (D, k) => {
+        const a = `${n4(0.004 * k)}*${fM}*(0.4+0.6*Y/H)`;
+        return [`${a}*sin(${n4(TAU)}*(Y/${fM}*9-T*2.3))*sin(${n4(TAU)}*(X/${fM}*3+T*0.7))`, `0.6*${a}*sin(${n4(TAU)}*(X/${fM}*7+T*1.9))`];
+      },
+    ),
+  },
+  {
+    id: 'fisheye', name: 'Olho de peixe', cat: 'distort',
+    ...distort(
+      (x, y, W, H, t, D, k) => {
+        const ux = x - W / 2, uy = y - H / 2, R = Math.hypot(W, H) / 2, rho = Math.min(1, Math.hypot(ux, uy) / R);
+        const f = 1 - 0.5 * k * (1 - rho * rho);
+        return [ux * (f - 1), uy * (f - 1)];
+      },
+      (D, k) => {
+        const f = `(1-${n4(0.5 * k)}*(1-pow(min(1,${fR}/(hypot(W,H)/2)),2)))`;
+        return [`(X-W/2)*(${f}-1)`, `(Y-H/2)*(${f}-1)`];
+      },
+    ),
+  },
+  {
+    id: 'melt', name: 'Derreter', cat: 'distort',
+    ...distort(
+      (x, y, W, H, t, D, k) => {
+        const m = Math.min(W, H), p = clamp01(t / Math.max(0.1, D));
+        const pingo = 0.55 + 0.45 * Math.sin(x / m * 23) * Math.sin(x / m * 7.3 + 1);
+        return [0, -0.35 * k * H * Math.pow(p, 1.6) * pingo];
+      },
+      (D, k) => [`0`, `-${n4(0.35 * k)}*H*pow(clip(T/${n4(Math.max(0.1, D))},0,1),1.6)*(0.55+0.45*sin(X/${fM}*23)*sin(X/${fM}*7.3+1))`],
+    ),
+  },
+  {
+    id: 'jelly', name: 'Gelatina', cat: 'distort',
+    ...distort(
+      (x, y, W, H, t, D, k) => [0.03 * k * Math.min(W, H) * Math.sin(TAU * 1.8 * t) * (y / H - 0.5) * 2 * Math.cos(TAU * 0.6 * y / H), 0],
+      (D, k) => [`${n4(0.03 * k)}*${fM}*sin(${n4(TAU * 1.8)}*T)*(Y/H-0.5)*2*cos(${n4(TAU * 0.6)}*Y/H)`, '0'],
+    ),
+  },
+  {
+    id: 'breatheStretch', name: 'Respirar', cat: 'distort',
+    ...distort(
+      (x, y, W, H, t, D, k) => {
+        const s = 1 + 0.08 * k * Math.sin(TAU * 0.9 * t);
+        return [(x - W / 2) * (1 / s - 1), (y - H / 2) * (s - 1)];
+      },
+      (D, k) => {
+        const s = `(1+${n4(0.08 * k)}*sin(${n4(TAU * 0.9)}*T))`;
+        return [`(X-W/2)*(1/${s}-1)`, `(Y-H/2)*(${s}-1)`];
+      },
+    ),
+  },
+
+  // ---------------- Câmera (movimento) ----------------
+  {
+    id: 'handheld', name: 'Câmera na mão', cat: 'camera',
+    ...camera((t, D, k, W, H) => ({
+      Z: coverZoom(0.012 * k, W, H) + 0.04 * k,
+      tx: 0.012 * k * (Math.sin(TAU * 0.31 * t) + 0.5 * Math.sin(TAU * 0.73 * t + 1.1)),
+      ty: 0.01 * k * (Math.sin(TAU * 0.27 * t + 0.6) + 0.5 * Math.sin(TAU * 0.81 * t + 2.3)),
+      th: 0.008 * k * Math.sin(TAU * 0.21 * t + 0.3),
+    }), (D, k, W, H) => ({
+      Z: n4(coverZoom(0.012 * k, W, H) + 0.04 * k),
+      tx: `${n4(0.012 * k)}*(sin(${n4(TAU * 0.31)}*T)+0.5*sin(${n4(TAU * 0.73)}*T+1.1))`,
+      ty: `${n4(0.01 * k)}*(sin(${n4(TAU * 0.27)}*T+0.6)+0.5*sin(${n4(TAU * 0.81)}*T+2.3))`,
+      th: `${n4(0.008 * k)}*sin(${n4(TAU * 0.21)}*T+0.3)`,
+    })),
+  },
+  {
+    id: 'camBounce', name: 'Pulo', cat: 'camera',
+    ...camera((t, D, k) => {
+      const ph = (t * 1.6) % 1;
+      return { Z: 1 + 0.06 * k + 0.05 * k * Math.exp(-ph * 6), tx: 0, ty: -0.03 * k * Math.exp(-ph * 5) * Math.cos(ph * 12), th: 0 };
+    }, (D, k) => {
+      const ph = `(T*1.6-floor(T*1.6))`;
+      return { Z: `${n4(1 + 0.06 * k)}+${n4(0.05 * k)}*exp(-${ph}*6)`, ty: `-${n4(0.03 * k)}*exp(-${ph}*5)*cos(${ph}*12)` };
+    }),
+  },
+  {
+    id: 'dramaZoom', name: 'Zoom dramático', cat: 'camera',
+    ...camera((t, D, k) => ({ Z: 1 + 0.35 * k * ease(clamp01(t / Math.max(0.1, D))), tx: 0, ty: 0, th: 0 }),
+      (D, k) => {
+        const p = `clip(T/${n4(Math.max(0.1, D))},0,1)`;
+        return { Z: `1+${n4(0.35 * k)}*(${p}*${p}*(3-2*${p}))` };
+      }),
+  },
+);
+setLayerRes({ fire: 0.5, fireFrame: 0.5, smoke: 0.35, underwater: 0.5, sparks: 0.6, explosion: 0.6 });

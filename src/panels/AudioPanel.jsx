@@ -1,18 +1,14 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Mic, Square, Plus, Music, Upload, Info, Scissors, Download, X, RefreshCw, FolderOpen, Trash2, Loader2 } from 'lucide-react';
+import { Mic, Square, Plus, Music, Upload, Info, Scissors, Download, X, RefreshCw, FolderOpen, Trash2, Loader2, Search, Play } from 'lucide-react';
 import { useStore, libView } from '../store.js';
 import { fmtTime } from '../shared/timeline.js';
 import { endDrag } from '../dnd.js';
 import { ContextMenu, MenuItem, Toggle } from '../components/ui.jsx';
 import InlineTrim from '../components/InlineTrim.jsx';
+import YoutubePreview from '../components/YoutubePreview.jsx';
 import { dragMedia } from './MediaPanel.jsx';
 
 const cleanErr = (e) => String(e?.message || e).replace(/^Error invoking remote method '[^']+': (Error: )?/, '');
-const parseTime = (txt) => {
-  const p = String(txt).trim().replace(',', '.').split(':').map(Number);
-  if (!String(txt).trim() || p.some((x) => Number.isNaN(x))) return null;
-  return p.length === 1 ? p[0] : p.length === 2 ? p[0] * 60 + p[1] : p[0] * 3600 + p[1] * 60 + p[2];
-};
 
 function Recorder() {
   const [rec, setRec] = useState(null); // { mr, t0, startAt }
@@ -68,19 +64,24 @@ function Recorder() {
 }
 
 // Baixa o áudio de um vídeo do YouTube (yt-dlp, atualizado sozinho) e já põe no projeto.
+const isYtUrl = (u) => /^\s*(https?:\/\/)?([a-z0-9-]+\.)?(youtube\.com|youtu\.be|youtube-nocookie\.com)\//i.test(u || '');
+const isIgUrl = (u) => /^\s*(https?:\/\/)?(www\.)?instagram\.com\/(p|reel|reels|tv)\/[\w-]+/i.test(u || '');
+const fmtViews = (n) => (n >= 1e6 ? `${(n / 1e6).toFixed(n >= 1e7 ? 0 : 1).replace('.', ',')} mi` : n >= 1e3 ? `${Math.round(n / 1e3)} mil` : String(n || 0));
+
+// Link ou pesquisa do YouTube → prévia (para conferir o vídeo e escolher o trecho) → baixa áudio ou vídeo.
 export function YoutubeImport() {
   const ytFocus = useStore((s) => s.ytFocus);
   const inputRef = useRef(null);
-  const [url, setUrl] = useState('');
+  const [q, setQ] = useState('');
   const [busy, setBusy] = useState(false);
   const [prog, setProg] = useState(null);
   const [err, setErr] = useState('');
   const [status, setStatus] = useState(null);
-  const [sect, setSect] = useState(false);
-  const [a, setA] = useState('');
-  const [b, setB] = useState('');
-  const [toTimeline, setToTimeline] = useState(true);
   const [updating, setUpdating] = useState(false);
+  const [buscando, setBuscando] = useState(false);
+  const [res, setRes] = useState(null); // resultados da pesquisa
+  const [prev, setPrev] = useState(null); // vídeo aberto na prévia
+  const [ultimo, setUltimo] = useState(null); // escolhas da última prévia (áudio/vídeo, linha do tempo)
 
   const refresh = () => window.api.ytStatus().then(setStatus).catch(() => {});
   useEffect(() => { refresh(); }, []);
@@ -91,25 +92,21 @@ export function YoutubeImport() {
     if (el) { el.scrollIntoView({ block: 'center' }); setTimeout(() => el.focus(), 50); }
   }, [ytFocus]);
 
-  const go = async () => {
+  const baixar = async (opts) => {
     if (busy) return;
+    setPrev(null);
+    setUltimo({ kind: opts.kind, toTimeline: opts.toTimeline });
     setErr('');
     const at = useStore.getState().time;
-    const opts = { url: url.trim() };
-    if (!opts.url) { setErr('Cole o link do vídeo do YouTube.'); return; }
-    if (sect) {
-      const sa = parseTime(a), sb = parseTime(b);
-      if (sa == null || sb == null || sb <= sa) { setErr('Trecho inválido: escreva início e fim, por exemplo 1:30 e 2:10.'); return; }
-      opts.start = sa; opts.end = sb;
-    }
     setBusy(true);
     setProg({ stage: 'info', text: 'Preparando…' });
     try {
-      const r = await window.api.ytDownload(opts);
+      const url = /^https?:\/\//i.test(opts.url) ? opts.url : `https://${opts.url.replace(/^\/+/, '')}`;
+      const r = await window.api.ytDownload({ url, start: opts.start, end: opts.end, kind: opts.kind });
       const [id] = await useStore.getState().importPaths([r.path]);
-      if (id && toTimeline) useStore.getState().addMedia(id, { target: 'audio', time: at });
-      useStore.getState().toastMsg(`"${r.title}" ${toTimeline ? 'foi adicionado à linha do tempo' : 'está na biblioteca'}.`, 'info', 5000);
-      setUrl('');
+      if (id && opts.toTimeline) useStore.getState().addMedia(id, opts.kind === 'video' ? {} : { target: 'audio', time: at });
+      const onde = opts.toTimeline ? (opts.kind === 'video' ? 'foi para o fim da faixa principal' : 'foi adicionado à linha do tempo') : 'está na biblioteca';
+      useStore.getState().toastMsg(`"${r.title}" ${onde}.`, 'info', 5000);
     } catch (e) {
       setErr(cleanErr(e));
     } finally {
@@ -117,6 +114,24 @@ export function YoutubeImport() {
       setProg(null);
       refresh();
     }
+  };
+
+  const abrir = (v) => { setErr(''); setPrev(v); };
+  const ir = async () => {
+    const txt = q.trim();
+    setErr('');
+    if (!txt) { setErr('Cole um link do YouTube ou escreva o que quer procurar.'); return; }
+    if (isIgUrl(txt)) { baixar({ url: txt.startsWith('http') ? txt : `https://${txt}`, kind: 'video', toTimeline: true }); return; }
+    if (isYtUrl(txt)) {
+      const info = await window.api.ytTitulo(txt).catch(() => null);
+      if (!info?.id) { setErr('Link não reconhecido. Copie o endereço do vídeo no YouTube (barra do navegador ou "Compartilhar").'); return; }
+      abrir({ id: info.id, title: info.title, channel: info.channel, duration: 0 });
+      return;
+    }
+    // link de outro site: avisa em vez de pesquisar o endereço no YouTube
+    if (/^(https?:\/\/|www\.)\S+$/i.test(txt)) { setErr('Por enquanto dá para baixar só links do YouTube e do Instagram (post ou reel).'); return; }
+    setBuscando(true);
+    try { setRes(await window.api.ytSearch(txt)); } catch (e) { setErr(cleanErr(e)); setRes(null); } finally { setBuscando(false); refresh(); }
   };
   const update = async () => {
     setUpdating(true);
@@ -129,27 +144,43 @@ export function YoutubeImport() {
   };
   const pct = prog?.pct != null ? Math.round(prog.pct * 100) : null;
   const fmtDay = (ms) => new Date(ms).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' });
+  const ehLink = isYtUrl(q);
+  const ehIg = isIgUrl(q);
 
   return (
     <div className="yt-box">
       <div style={{ display: 'flex', gap: 6 }}>
-        <input ref={inputRef} type="text" placeholder="Cole o link do YouTube" value={url} disabled={busy}
-          onChange={(e) => setUrl(e.target.value)} style={{ flex: 1, minWidth: 0 }}
-          onKeyDown={(e) => { e.stopPropagation(); if (e.key === 'Enter') go(); }} />
+        <input ref={inputRef} type="text" placeholder="Link do YouTube/Instagram ou pesquise no YouTube" value={q} disabled={busy}
+          onChange={(e) => setQ(e.target.value)} style={{ flex: 1, minWidth: 0 }}
+          onKeyDown={(e) => { e.stopPropagation(); if (e.key === 'Enter') ir(); }} />
         {busy
           ? <button className="btn" title="Cancelar" onClick={() => window.api.ytCancel()}><X size={14} /> Cancelar</button>
-          : <button className="btn primary" onClick={go} disabled={updating}><Download size={14} /> Baixar</button>}
+          : ehIg ? (
+            <>
+              <button className="btn primary" onClick={() => baixar({ url: q.trim(), kind: 'video', toTimeline: true })} title="Baixa o vídeo do post/reel e põe no fim da faixa principal"><Download size={14} /> Vídeo</button>
+              <button className="btn" onClick={() => baixar({ url: q.trim(), kind: 'audio', toTimeline: true })} title="Baixa só o som e põe no cursor"><Music size={14} /> Áudio</button>
+            </>
+          ) : (
+            <button className="btn primary" onClick={ir} disabled={updating || buscando}>
+              {buscando ? <Loader2 size={14} className="spin" /> : ehLink ? <Play size={14} /> : <Search size={14} />} {ehLink ? 'Ver' : 'Pesquisar'}
+            </button>
+          )}
       </div>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 8, flexWrap: 'wrap' }}>
-        <label className="yt-opt"><Toggle on={toTimeline} onChange={setToTimeline} /> Pôr na linha do tempo (no cursor)</label>
-        <label className="yt-opt"><Toggle on={sect} onChange={setSect} /> Só um trecho</label>
-      </div>
-      {sect && (
-        <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 8 }}>
-          <span className="hint">De</span>
-          <input type="text" placeholder="1:30" value={a} onChange={(e) => setA(e.target.value)} onKeyDown={(e) => e.stopPropagation()} style={{ width: 70 }} />
-          <span className="hint">até</span>
-          <input type="text" placeholder="2:10" value={b} onChange={(e) => setB(e.target.value)} onKeyDown={(e) => e.stopPropagation()} style={{ width: 70 }} />
+      {res && (
+        <div className="yt-res">
+          {!res.length && <div className="hint" style={{ padding: 6 }}>Nada encontrado. Tente outras palavras.</div>}
+          {res.map((v) => (
+            <div key={v.id} className="yt-item" title="Ver o vídeo e escolher o trecho" onClick={() => !busy && abrir(v)}>
+              <div className="yt-thumb" style={{ backgroundImage: `url("https://i.ytimg.com/vi/${v.id}/mqdefault.jpg")` }}>
+                {v.live ? <span>AO VIVO</span> : v.duration ? <span>{fmtTime(v.duration)}</span> : null}
+              </div>
+              <div style={{ minWidth: 0, flex: 1 }}>
+                <div className="yt-title">{v.title}</div>
+                <div className="hint">{v.channel}{v.views ? ` · ${fmtViews(v.views)} visualizações` : ''}</div>
+              </div>
+            </div>
+          ))}
+          {!!res.length && <button className="btn small ghost" style={{ marginTop: 4 }} onClick={() => setRes(null)}>Fechar resultados</button>}
         </div>
       )}
       {(busy || updating) && prog && (
@@ -168,9 +199,11 @@ export function YoutubeImport() {
         <button className="btn small ghost" disabled={busy || updating} title="Procurar versão nova do yt-dlp agora (o app também confere sozinho todo dia)" onClick={update}>
           <RefreshCw size={12} className={updating ? 'spin' : ''} /> Atualizar
         </button>
-        <button className="btn small ghost" title="Abrir a pasta dos áudios baixados" onClick={async () => window.api.openPath(await window.api.ytFolder())}><FolderOpen size={12} /></button>
+        <button className="btn small ghost" title="Abrir a pasta dos áudios baixados" onClick={async () => window.api.openPath(await window.api.ytFolder('audio'))}><FolderOpen size={12} /></button>
+        <button className="btn small ghost" title="Abrir a pasta dos vídeos baixados (YouTube e Instagram)" onClick={async () => window.api.openPath(await window.api.ytFolder('video'))}>Vídeos</button>
       </div>
-      <div className="hint" style={{ marginTop: 4 }}>Use só áudios que você tem direito de usar (próprios, liberados ou com autorização).</div>
+      <div className="hint" style={{ marginTop: 4 }}>Use só o que você tem direito de usar (próprio, liberado ou com autorização).</div>
+      {prev && <YoutubePreview video={prev} inicial={ultimo} onClose={() => setPrev(null)} onBaixar={baixar} />}
     </div>
   );
 }
@@ -196,7 +229,7 @@ export default function AudioPanel() {
       <Recorder />
       <div className="hint" style={{ marginTop: 6 }}>A gravação começa no cursor da linha do tempo e o vídeo toca junto, para você narrar em cima.</div>
 
-      <div className="lp-section-title" style={{ marginTop: 18 }}>Áudio do YouTube</div>
+      <div className="lp-section-title" style={{ marginTop: 18 }}>YouTube e Instagram</div>
       <YoutubeImport />
 
       <div className="lp-section-title" style={{ marginTop: 18 }}>Músicas e sons do projeto</div>

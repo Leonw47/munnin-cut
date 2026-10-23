@@ -147,6 +147,14 @@ export const ANIMS_IN = [
   { id: 'slideDown', name: 'Entrar ↓' },
   { id: 'spin', name: 'Girar' },
   { id: 'flip', name: 'Virar' },
+  { id: 'drop', name: 'Cair e quicar' },
+  { id: 'bounceIn', name: 'Quicar' },
+  { id: 'elastic', name: 'Elástico' },
+  { id: 'swing', name: 'Balançar' },
+  { id: 'bounceLeft', name: 'Quicar ←' },
+  { id: 'bounceRight', name: 'Quicar →' },
+  { id: 'riseElastic', name: 'Subir com mola' },
+  { id: 'whirl', name: 'Rodopiar' },
 ];
 
 export const ANIMS_OUT = [
@@ -161,6 +169,25 @@ export const ANIMS_OUT = [
   { id: 'slideDown', name: 'Sair ↓' },
   { id: 'spin', name: 'Girar' },
   { id: 'flip', name: 'Virar' },
+  { id: 'drop', name: 'Cair' },
+  { id: 'elastic', name: 'Elástico' },
+  { id: 'swing', name: 'Balançar' },
+  { id: 'blackhole', name: 'Sugar' },
+  { id: 'riseFade', name: 'Subir e sumir' },
+  { id: 'bounceOut', name: 'Quicar' },
+];
+
+// Animação contínua: durante o clipe inteiro (combina com entrada e saída).
+export const ANIMS_LOOP = [
+  { id: 'none', name: 'Nenhuma' },
+  { id: 'pulse', name: 'Pulsar' },
+  { id: 'heartbeat', name: 'Batida' },
+  { id: 'float', name: 'Flutuar' },
+  { id: 'sway', name: 'Balançar' },
+  { id: 'wiggle', name: 'Mexer' },
+  { id: 'shake', name: 'Tremer' },
+  { id: 'spin', name: 'Girar sem parar' },
+  { id: 'kenburns', name: 'Zoom lento' },
 ];
 
 export const EXPORT_FORMATS = [

@@ -7,6 +7,7 @@ import { RATIOS, sizeFromMedia } from '../shared/defs.js';
 import { fmtTime, projectDuration, mainTrack, findClip } from '../shared/timeline.js';
 import { Dropdown, MenuItem } from './ui.jsx';
 import { resolveAt, setPropAt } from '../shared/keyframes.js';
+import LibPreview from './LibPreview.jsx';
 
 function useMediaMap(project) {
   const ref = useRef({ media: null, map: {} });
@@ -265,6 +266,7 @@ export default function Player() {
   const hasClips = project.tracks.some((t) => t.clips.length);
   const aspect = project.width / project.height;
   const pickColor = useStore((st) => st.pickColor);
+  const libPreview = useStore((st) => st.libPreview);
   const [isFs, setIsFs] = useState(false);
   const [idle, setIdle] = useState(false);
   const idleTimer = useRef(null);
@@ -347,6 +349,7 @@ export default function Player() {
           <FullscreenBar visible={!idle || !playing} onExit={toggleFs} />
         </>}
         {pickColor && !isFs && <ColorPicker canvasRef={canvasRef} clipId={pickColor.clipId} />}
+        {libPreview && !isFs && <LibPreview key={libPreview.mediaId} mediaId={libPreview.mediaId} />}
       </div>
       <div className="player-foot">
         <Timecode />

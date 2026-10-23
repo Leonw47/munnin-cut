@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { Plus } from 'lucide-react';
 import { useStore } from '../store.js';
 import { FILTERS, cssFilter, CSS_OPS, canonical } from '../shared/ops.js';
-import { EFFECTS, FX_CATS } from '../shared/effects.js';
+import { EFFECTS, FX_CATS, effectDef } from '../shared/effects.js';
 import { findClip } from '../shared/timeline.js';
 import { sharedSvg } from '../engine/svgFilters.js';
 import { startDrag, endDrag } from '../dnd.js';
@@ -91,7 +91,8 @@ export function EffectThumb({ id, kind = 'effect' }) {
     const eff = { kind, id, intensity: 100 };
     let raf = 0, t0 = 0, hover = false;
     const frame = () => {
-      renderFxThumb(c, eff, hover ? (performance.now() - t0) / 1000 : 1.2);
+      // parado: o instante que melhor mostra o efeito (explosão e raio duram pouco)
+      renderFxThumb(c, eff, hover ? (performance.now() - t0) / 1000 : (kind === 'effect' && effectDef(id)?.thumbT) || 1.2);
       if (hover) raf = requestAnimationFrame(frame);
     };
     const idle = (window.requestIdleCallback || setTimeout)(frame);
