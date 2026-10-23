@@ -101,7 +101,17 @@ const r = await evaluate(`
   const an17 = await window.api.vozAnalisar('${DIR}/m.mp3', 10);
   const rv = await startExport({ project: S().project, meta: S().meta, format: 'mp3', res: 480, fps: 30, quality: 'standard', aKbps: 128, outPath: '${DIR}/pacote_voz.mp3' }).promise;
   const v17 = { analise: Array.isArray(an17?.perfil) ? an17.perfil.length : null, exportVoz: rv.ok ? 'ok' : rv.error };
-  return { v14, v15, v17, meta: Object.values(S().meta).map((m) => m.status), size: [S().project.width, S().project.height], res, nvenc: nv, legendas, pid, drafts: info.draftsDir };
+  // 1.8: HEIC (grade montada pelo FFmpeg empacotado), efeito de camada novo e pesquisa no YouTube
+  const [h18] = await S().importPaths(['${DIR}/v18/IMG_3301.HEIC']);
+  for (let i = 0; i < 100 && S().meta[h18]?.status !== 'ready'; i++) await sleep(150);
+  const mh = S().project.media.find((m) => m.id === h18);
+  S().addEffect('effect', 'explosion', { time: 0 });
+  S().addEffect('effect', 'ripple', { time: 1 });
+  const r18 = await startExport({ project: S().project, meta: S().meta, format: 'mp4', res: 360, fps: 30, quality: 'small', outPath: '${DIR}/pacote_v18.mp4', endAt: 3 }).promise;
+  let busca = [];
+  try { busca = await window.api.ytSearch('big buck bunny'); } catch (e) { busca = [{ erro: e.message }]; }
+  const v18 = { heic: mh && [mh.width, mh.height, /_proxy\.jpg$/.test(mh.renderPath || '')], exportEfeitos: r18.ok ? 'ok' : r18.error, busca: busca.length };
+  return { v14, v15, v17, v18, meta: Object.values(S().meta).map((m) => m.status), size: [S().project.width, S().project.height], res, nvenc: nv, legendas, pid, drafts: info.draftsDir };
 `);
 console.log(JSON.stringify(r, null, 1));
 await shot('p2_editor');
