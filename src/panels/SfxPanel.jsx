@@ -1,9 +1,9 @@
 // Biblioteca de efeitos sonoros: categorias como em Efeitos/Transições; clique ouve, + (ou clique duplo)
 // põe no cursor, ou arraste até a linha do tempo.
 import React, { useEffect, useRef, useState } from 'react';
-import { Play, Square, Plus, Search, ArrowLeftRight, MousePointerClick, Bomb, Laugh, Gamepad2, WandSparkles, Trees, Drum, AlarmClock, Heart, FolderPlus, FolderOpen, FilePlus2, Trash2, Check, X } from 'lucide-react';
+import { Play, Square, Plus, Search, ArrowLeftRight, MousePointerClick, Bomb, Laugh, Gamepad2, WandSparkles, Trees, Drum, AlarmClock, Heart, FolderPlus, FolderOpen, FilePlus2, Trash2, Check, X, Users, PawPrint, Mountain, Car, House, Rocket, Trophy, Flame, Mic } from 'lucide-react';
 import { useStore } from '../store.js';
-import { SFX, SFX_CATS } from '../shared/sfx.js';
+import { SFX, SFX_CATS, sfxDef } from '../shared/sfx.js';
 import { mediaUrl } from '../engine/util.js';
 import { startDrag, endDrag } from '../dnd.js';
 import { ContextMenu, MenuItem } from '../components/ui.jsx';
@@ -18,9 +18,18 @@ const CAT_LOOK = {
   nature: { icon: Trees, bg: 'linear-gradient(135deg,#14532d,#0ea5e9)' },
   music: { icon: Drum, bg: 'linear-gradient(135deg,#7c2d12,#a855f7)' },
   alert: { icon: AlarmClock, bg: 'linear-gradient(135deg,#991b1b,#f97316)' },
+  people: { icon: Users, bg: 'linear-gradient(135deg,#9a3412,#fb923c)' },
+  animals: { icon: PawPrint, bg: 'linear-gradient(135deg,#365314,#a3e635)' },
+  ambience: { icon: Mountain, bg: 'linear-gradient(135deg,#134e4a,#5eead4)' },
+  city: { icon: Car, bg: 'linear-gradient(135deg,#1e293b,#eab308)' },
+  home: { icon: House, bg: 'linear-gradient(135deg,#78350f,#d6a36b)' },
+  scifi: { icon: Rocket, bg: 'linear-gradient(135deg,#0c4a6e,#818cf8)' },
+  sports: { icon: Trophy, bg: 'linear-gradient(135deg,#166534,#facc15)' },
+  weapons: { icon: Flame, bg: 'linear-gradient(135deg,#450a0a,#dc2626)' },
+  voice: { icon: Mic, bg: 'linear-gradient(135deg,#312e81,#22d3ee)' },
 };
 
-let lib = null; // { dir, index } — lido uma vez
+let lib = null; // { dir, index, livresDir, livresIndex } — lido uma vez
 const player = { el: null, id: null, timer: 0 };
 
 export default function SfxPanel() {
@@ -49,7 +58,7 @@ export default function SfxPanel() {
     if (!player.el) player.el = new Audio();
     const el = player.el;
     el.pause();
-    el.src = mediaUrl(arquivo || `${info.dir}\\${id}.wav`);
+    el.src = mediaUrl(arquivo || (sfxDef(id)?.livre ? `${info.livresDir}\\${id}.ogg` : `${info.dir}\\${id}.wav`));
     el.currentTime = 0;
     el.onended = () => { if (player.id === id) stop(); };
     player.id = id;
@@ -89,9 +98,9 @@ export default function SfxPanel() {
         {list.map((x) => {
           const look = CAT_LOOK[x.cat] || CAT_LOOK.ui;
           const Icon = look.icon;
-          const d = info?.index?.[x.id]?.dur;
+          const d = (x.livre ? info?.livresIndex : info?.index)?.[x.id]?.dur;
           return (
-            <div key={x.id} className={`fx-card sfx-card ${playing === x.id ? 'active' : ''}`} data-sfx={x.id} title={`${x.name}${d ? ` · ${d.toFixed(1).replace('.', ',')} s` : ''}`}
+            <div key={x.id} className={`fx-card sfx-card ${playing === x.id ? 'active' : ''}`} data-sfx={x.id} title={`${x.name}${d ? ` · ${d.toFixed(1).replace('.', ',')} s` : ''}${x.livre ? ` · ${x.fonte} (domínio público)` : ''}`}
               draggable onDragStart={(e) => startDrag(e, { kind: 'sfx', id: x.id }, x.name)} onDragEnd={endDrag}
               onClick={() => preview(x.id)} onDoubleClick={() => add(x.id)}>
               <div className="sw sfx-sw" style={{ background: look.bg }}>
@@ -105,8 +114,13 @@ export default function SfxPanel() {
           );
         })}
       </div>
-      {term && !list.length && <div className="hint">Nenhum som do Munnin Cut com “{q}”.</div>}
-      {cat !== 'meus' && <div className="hint" style={{ marginTop: 12 }}>Todos os sons são gerados pelo próprio Munnin Cut — pode usar à vontade, inclusive em vídeos monetizados.</div>}
+      {term && !list.length && <div className="hint">Nenhum som da biblioteca com “{q}”.</div>}
+      {cat !== 'meus' && (
+        <div className="hint" style={{ marginTop: 12 }}>
+          Sons criados pelo Munnin Cut e de domínio público (CC0) da Kenney (kenney.nl) e do BigSoundBank (Joseph Sardin, bigsoundbank.com):
+          pode usar à vontade, inclusive em vídeos monetizados.
+        </div>
+      )}
     </div>
   );
 }

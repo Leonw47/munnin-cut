@@ -324,21 +324,21 @@ ipcMain.handle('dialog:replace', async (_e, name) => {
   return r.canceled ? null : r.filePaths[0];
 });
 
-// ---------- Efeitos sonoros (sintetizados no build: resources/sfx) ----------
+// ---------- Efeitos sonoros (sintetizados no build: resources/sfx; livres CC0 no repositório: resources/sfx-livres) ----------
 const sfxDir = app.isPackaged ? path.join(process.resourcesPath, 'sfx') : path.join(__dirname, '..', 'resources', 'sfx');
+const sfxLivresDir = app.isPackaged ? path.join(process.resourcesPath, 'sfx-livres') : path.join(__dirname, '..', 'resources', 'sfx-livres');
 const sfxUserDir = path.join(docsRoot, 'Efeitos sonoros');
-ipcMain.handle('sfx:list', () => {
-  let index = {};
-  try { index = JSON.parse(fs.readFileSync(path.join(sfxDir, 'index.json'), 'utf8')); } catch { /* sem biblioteca */ }
-  return { dir: sfxDir, index };
-});
+const lerIndice = (d) => { try { return JSON.parse(fs.readFileSync(path.join(d, 'index.json'), 'utf8')); } catch { return {}; } };
+ipcMain.handle('sfx:list', () => ({ dir: sfxDir, index: lerIndice(sfxDir), livresDir: sfxLivresDir, livresIndex: lerIndice(sfxLivresDir) }));
 // copia o som para Documentos\Munnin Cut\Efeitos sonoros (caminho estável para o projeto) e devolve o caminho
 ipcMain.handle('sfx:materialize', async (_e, id, fileName) => {
-  if (!/^[A-Za-z0-9]+$/.test(String(id))) throw new Error('som inválido');
-  const src = path.join(sfxDir, `${id}.wav`);
+  if (!/^[A-Za-z0-9_]+$/.test(String(id))) throw new Error('som inválido');
+  const livre = path.join(sfxLivresDir, `${id}.ogg`);
+  const ext = fs.existsSync(livre) ? '.ogg' : '.wav';
+  const src = ext === '.ogg' ? livre : path.join(sfxDir, `${id}.wav`);
   if (!fs.existsSync(src)) throw new Error('som não encontrado na biblioteca');
-  let safe = path.basename(String(fileName || `${id}.wav`)).replace(/[<>:"|?*]/g, '_');
-  if (!safe.toLowerCase().endsWith('.wav')) safe += '.wav';
+  let safe = path.basename(String(fileName || `${id}${ext}`)).replace(/[<>:"|?*]/g, '_');
+  if (!safe.toLowerCase().endsWith(ext)) safe += ext;
   await fsp.mkdir(sfxUserDir, { recursive: true });
   const dst = path.join(sfxUserDir, safe);
   let same = false;

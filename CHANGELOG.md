@@ -3,6 +3,30 @@
 Formato baseado em [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/) e versões no padrão
 [SemVer](https://semver.org/lang/pt-BR/): MAJOR.MINOR.PATCH — correções sobem o PATCH, recursos novos o MINOR.
 
+## [1.9.0] — 2026-10-24
+
+### Adicionado
+- **Biblioteca de sons livres (domínio público, CC0) embutida no app:** 1027 sons novos na aba Sons, somando
+  1124 com os sintetizados. Pode usar à vontade, inclusive em vídeos monetizados, sem crédito obrigatório.
+  - **BigSoundBank** (Joseph Sardin, bigsoundbank.com): 397 gravações reais escolhidas para vídeo — aplausos,
+    risadas, crianças, gritos, coração batendo, animais (galo, cachorro, gato, vaca, cavalo, pássaros…), chuva,
+    trovão, vento, mar, fogo, ambientes de 30 s (floresta, cidade, bar, feira, escola…), portas, passos, cozinha,
+    sirenes, buzinas, carros, trem, helicóptero, alarmes, sinos, relógios, bipe de censura, boings e buzinas de
+    desenho, pum, língua de sogra, "tu-dum-tss", socos, tiros, explosões, fogos e mais.
+  - **Kenney** (kenney.nl): 630 sons — cliques e avisos de interface, impactos (vidro, metal, madeira, socos),
+    passos em vários pisos, cartas e dados, ficção científica (lasers, naves, campo de força), sons 8-bit,
+    85 vinhetas musicais curtas e locuções em inglês ("Fight!", "You win!", "Game over", contagem 1–10…).
+  - Categorias novas: Pessoas e público, Animais, Ambientes, Cidade e veículos, Casa/objetos/passos, Ficção
+    científica, Esportes, Armas e explosões e Locução (inglês).
+  - Todos foram cortados (sem silêncio sobrando; ambientes com 30 s e final suave), nivelados no mesmo volume
+    dos sons do app e convertidos para OGG. A curadoria fica em `scripts/sfx/livres.mjs` e o gerador
+    (`node scripts/gen-sfx-livres.mjs`) refaz tudo a partir das fontes; créditos em `resources/sfx-livres/CREDITOS.txt`.
+  - Ficaram de fora sons que, mesmo marcados como livres no site, reproduzem obras com dono (toques do iPhone,
+    voz do Google, "Star Wars", "White Christmas", grito Wilhelm, jogos de marca).
+
+### Testes
+- `autotest-v18` ganhou a parte "sons livres" (prévia, pôr no cursor como OGG em Documentos, categorias); `autotest-v15` atualizado.
+
 ## [1.8.0] — 2026-10-23
 
 ### Adicionado

@@ -343,5 +343,29 @@ if (parte('capa')) {
   check('capa_quadro_da_agulha', !!png && png.length > 1000, png?.length);
 }
 
+// ---------- 9) sons livres (CC0): prévia, pôr no cursor (OGG copiado para Documentos) ----------
+if (parte('livres')) {
+  S().newProject('16:9');
+  await sleep(300);
+  useStore.setState({ leftTab: 'sfx' });
+  await sleep(300);
+  clickEl([...document.querySelectorAll('.lp-body .btn.small')].find((b) => b.textContent === 'Animais'));
+  await sleep(300);
+  const galo = document.querySelector('.sfx-card[data-sfx="b0283"]');
+  check('livres_cartao', !!galo && /Galo cantando/.test(galo.textContent) && /\d s/.test(galo.textContent), galo?.textContent);
+  if (galo) {
+    clickEl(galo);
+    await sleep(500);
+    check('livres_previa_toca', galo.classList.contains('active'));
+    clickEl(galo);
+    galo.querySelector('button.plus').click();
+    const c = await waitFor(() => allClips().find((x) => x.type === 'audio'), 10000);
+    const m = c && S().project.media.find((x) => x.id === c.mediaId);
+    check('livres_no_cursor', !!m && /Efeitos sonoros[\\/]Galo cantando\.ogg$/.test(m.path) && m.duration > 1, m && { path: m.path, dur: m.duration });
+  }
+  const nCats = [...document.querySelectorAll('.lp-body .btn.small')].filter((b) => !/Categoria|Adicionar/.test(b.textContent)).length;
+  check('livres_categorias', nCats >= 19, nCats);
+}
+
 log(res);
 return res;

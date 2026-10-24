@@ -1,19 +1,32 @@
-// Biblioteca de efeitos sonoros. Todos os sons são sintetizados pelo próprio app
-// (scripts/gen-sfx.mjs → resources/sfx/<id>.wav): não há direitos de terceiros envolvidos.
+// Biblioteca de efeitos sonoros:
+//  - sintetizados pelo próprio app (scripts/gen-sfx.mjs → resources/sfx/<id>.wav);
+//  - de domínio público (CC0), da Kenney e do BigSoundBank (scripts/gen-sfx-livres.mjs → resources/sfx-livres/<id>.ogg).
+// Nenhum tem direitos de terceiros que impeçam o uso, inclusive em vídeos monetizados.
+import { SFX_LIVRES } from './sfxLivres.js';
 
 export const SFX_CATS = [
   { id: 'trans', name: 'Transições' },
-  { id: 'ui', name: 'Interface' },
+  { id: 'ui', name: 'Interface e celular' },
   { id: 'impact', name: 'Impactos' },
   { id: 'funny', name: 'Engraçados' },
-  { id: 'game', name: 'Games 8-bit' },
-  { id: 'magic', name: 'Magia e brilhos' },
-  { id: 'nature', name: 'Natureza' },
-  { id: 'music', name: 'Música e percussão' },
+  { id: 'people', name: 'Pessoas e público' },
+  { id: 'animals', name: 'Animais' },
+  { id: 'nature', name: 'Natureza e clima' },
+  { id: 'ambience', name: 'Ambientes' },
+  { id: 'city', name: 'Cidade e veículos' },
+  { id: 'home', name: 'Casa, objetos e passos' },
   { id: 'alert', name: 'Tempo e alertas' },
+  { id: 'music', name: 'Música e vinhetas' },
+  { id: 'magic', name: 'Magia e brilhos' },
+  { id: 'game', name: 'Games 8-bit' },
+  { id: 'scifi', name: 'Ficção científica' },
+  { id: 'sports', name: 'Esportes' },
+  { id: 'weapons', name: 'Armas e explosões' },
+  { id: 'voice', name: 'Locução (inglês)' },
 ];
 
-export const SFX = [
+// sintetizados (cada um tem uma receita em scripts/sfx/recipes.mjs)
+export const SFX_SINT = [
   // Transições
   { id: 'whoosh', name: 'Whoosh', cat: 'trans' },
   { id: 'whooshLow', name: 'Whoosh grave', cat: 'trans' },
@@ -122,6 +135,9 @@ export const SFX = [
   { id: 'siren', name: 'Sirene', cat: 'alert' },
 ];
 
+// todos: sintetizados + livres (CC0); os livres são OGG em outra pasta
+export const SFX = [...SFX_SINT, ...SFX_LIVRES.map((s) => ({ ...s, livre: true }))];
+
 export const sfxDef = (id) => SFX.find((s) => s.id === id) || null;
 // nome do arquivo quando o som entra no projeto (Documentos\Munnin Cut\Efeitos sonoros)
-export const sfxFileName = (id) => `${(sfxDef(id)?.name || id).replace(/[<>:"/\\|?*!]/g, '').trim()}.wav`;
+export const sfxFileName = (id) => `${(sfxDef(id)?.name || id).replace(/[<>:"/\\|?*!“”]/g, '').trim()}.${sfxDef(id)?.livre ? 'ogg' : 'wav'}`;

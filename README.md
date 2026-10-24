@@ -35,9 +35,11 @@ clique em **Mais informações → Executar assim mesmo**.
   da biblioteca (clique e arraste as alças; Shift = ajuste fino) ou na janela de corte (botão direito; teclas I e O).
 - Biblioteca de mídia com seleção de vários itens (clique, Ctrl+clique, Shift+clique, Ctrl+A): Delete remove do
   projeto; arrastar leva todos para a linha do tempo.
-- 97 efeitos sonoros em 9 categorias (transições, interface, impactos, engraçados, games 8-bit, magia, natureza,
-  música e percussão, tempo e alertas) — todos sintetizados pelo próprio app, sem direitos de terceiros — e "Meus sons",
-  a biblioteca pessoal com categorias suas (pastas em Documentos\Munnin Cut\Meus sons).
+- 1124 efeitos sonoros em 18 categorias (transições, interface, impactos, engraçados, pessoas, animais, natureza,
+  ambientes, cidade, casa, alertas, música e vinhetas, games, ficção científica, esportes, armas, locução…): 97
+  sintetizados pelo próprio app e 1027 de domínio público (CC0) da Kenney e do BigSoundBank — créditos em
+  `resources/sfx-livres/CREDITOS.txt` — e "Meus sons", a biblioteca pessoal com categorias suas (pastas em
+  Documentos\Munnin Cut\Meus sons).
 - YouTube e Instagram: pesquisa no YouTube, prévia com o player oficial para conferir e marcar o trecho, e download do
   áudio ou do vídeo (inteiro ou só o trecho) direto para o projeto; links de posts/reels do Instagram. Usa o yt-dlp oficial,
   instalado na primeira vez (com conferência SHA-256) e atualizado sozinho: confere todo dia e, se o YouTube
@@ -83,6 +85,7 @@ npm run ffmpeg            # baixa ffmpeg.exe/ffprobe.exe para resources/bin (nã
 npm run whisper           # baixa o whisper.cpp (legendas) para resources/whisper
 npm start                 # compila a interface e abre o app
 npm run dist              # gera o instalador em release/
+node scripts/gen-sfx-livres.mjs                      # refaz os sons livres (CC0) a partir da curadoria em scripts/sfx/livres.mjs
 node scripts/test-graph.mjs mp4 webm gif mp3 prores   # testa o montador de exportação
 node scripts/test-effects.mjs                         # exporta cada efeito animado e gera uma folha de amostras
 node scripts/test-transitions.mjs                     # exporta cada transição de câmera

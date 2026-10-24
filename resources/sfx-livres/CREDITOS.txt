@@ -1,0 +1,408 @@
+Sons de domínio público (Creative Commons Zero, CC0) incluídos no Munnin Cut
+
+Kenney — www.kenney.nl (630 sons): pacotes Casino Audio, Sci-fi Sounds, Interface Sounds, Impact Sounds,
+  Voiceover Pack, Voiceover Pack (Fighter), Music Jingles, RPG Audio, Digital Audio e UI Audio.
+  Licença: Creative Commons Zero (CC0) — http://creativecommons.org/publicdomain/zero/1.0/
+
+BigSoundBank — Joseph SARDIN — https://bigsoundbank.com (397 sons).
+  Licença: Creative Commons CC0 1.0 Universal / domínio público — https://bigsoundbank.com/licenses.html
+  Sons usados (número no site → nome no app):
+    #1796  Whoosh de corda 1
+    #1795  Whoosh de corda 2
+    #1801  Whoosh de tubo de metal 1
+    #1800  Whoosh de tubo de metal 2
+    #1798  Whoosh de bambu
+    #1797  Whoosh de vara de madeira
+    #1799  Whoosh de chapa de madeira 1
+    #1802  Whoosh de chapa de madeira 2
+    #0128  Espada cortando o ar
+    #0573  Whoosh de flecha
+    #2032  Bumerangue passando
+    #2961  Chicote
+    #1399  Ideia! (desenho animado) 1
+    #1398  Ideia! (desenho animado) 2
+    #2063  Notificação 1
+    #2064  Notificação 2
+    #2065  Notificação 3
+    #2066  Notificação 4
+    #2067  Notificação 5
+    #2059  Notificação 6
+    #2060  Notificação 7
+    #1616  Bipe de secretária eletrônica
+    #2645  Ligação encerrada
+    #2394  Clique de câmera fotográfica
+    #0253  Telefone fixo tocando
+    #0375  Telefone sem fio tocando
+    #0001  Telefone antigo tocando
+    #1035  Celular vibrando na mão
+    #0312  Chiado de rádio 1
+    #0313  Chiado de rádio 2
+    #2174  Fita cassete rebobinando
+    #2547  Disco de vinil chiando
+    #0158  Internet discada
+    #2841  Máquina de escrever (gravação)
+    #0229  Teclado de computador
+    #1734  Digitação rápida
+    #1735  Clique de mouse
+    #0029  Mouse: clique duplo
+    #0026  Interruptor de luz
+    #0036  Interruptor de abajur
+    #1311  Bipe de censura longo
+    #2943  Bipe de censura curto
+    #1417  Bipe de caixa de supermercado 1
+    #3527  Bipe de caixa de supermercado 2
+    #1631  Ding do micro-ondas
+    #2460  Soco 1
+    #2461  Soco 2
+    #2465  Soco 3
+    #2468  Soco 4
+    #0444  Sequência de socos
+    #0806  Socos (foley)
+    #0597  Tapas
+    #2452  Corpo caindo no chão 1
+    #2453  Corpo caindo no chão 2
+    #2456  Corpo caindo no chão 3
+    #1588  Martelo de juiz
+    #1774  Barra de aço caindo
+    #1776  Duas barras de aço caindo
+    #0148  Copo estourando
+    #0387  Espelho quebrando
+    #1591  Taça de champanhe quebrando
+    #1121  Bola de Natal quebrando
+    #0771  Vidro quebrado
+    #1643  Prato quebrando 1
+    #1644  Prato quebrando 2
+    #2277  Boing de desenho 1
+    #2278  Boing de desenho 2
+    #2281  Boing de desenho 3
+    #2284  Boing de desenho 4
+    #1827  Buzina de ar
+    #1830  Buzina de ar dupla 1
+    #1832  Buzina de ar dupla 2
+    #1950  Flecha cravando (desenho) 1
+    #1952  Flecha cravando (desenho) 2
+    #1959  Flecha cravando (desenho) 3
+    #2054  Fantasma na flauta 1
+    #2055  Fantasma na flauta 2
+    #1074  Bolhas estourando (boca)
+    #1261  Ventosa no plástico
+    #0928  Ventosa no espelho
+    #0241  Pum 1
+    #1031  Pum discreto
+    #0240  Pum 2
+    #0111  Pum 3
+    #0866  Sequência de puns
+    #1553  Língua de sogra 1
+    #1554  Língua de sogra 2
+    #1556  Língua de sogra 3
+    #0364  Patinho de borracha
+    #3338  Brinquedo apertado 1
+    #3331  Brinquedo apertado 2
+    #0879  Brinquedo de bebê
+    #0633  Mola maluca
+    #0433  Tu-dum-tss (piada)
+    #0417  Pato de pelúcia
+    #0551  Balões estourando
+    #1709  Arroto
+    #1086  Buzina de bicicleta (fom-fom)
+    #0475  Risada horrível
+    #0489  Risada de bruxa
+    #0490  Risada de ogro
+    #2093  Risada delirante
+    #2363  Aplausos (gravação)
+    #2479  Aplausos de show
+    #0019  Aplausos de 150 pessoas
+    #0021  Aplausos de 600 pessoas
+    #3523  Aplausos de 40 pessoas
+    #0237  Adolescentes gritando e aplaudindo 1
+    #0236  Adolescentes gritando e aplaudindo 2
+    #1660  Crianças rindo
+    #0980  Bebê rindo
+    #1148  Crianças gritando
+    #0218  Coração batendo
+    #1930  Coração acelerado
+    #1929  Coração lento
+    #0243  Uma batida do coração
+    #1103  Homem ofegante
+    #0170  Homem roncando
+    #1405  Suspiro
+    #1406  Bocejo
+    #0178  Beijinhos
+    #2183  Tosse
+    #1603  Sopro forte
+    #0663  Esfregando as mãos
+    #1427  Dedos tamborilando
+    #0483  Estalar de dedos
+    #2190  Dentes batendo de frio
+    #1076  Shhh! (pedindo silêncio)
+    #1095  Fungando
+    #3591  Grito "Fah!"
+    #1662  Menina gritando
+    #1664  Menino gritando
+    #0233  Bebê chorando
+    #2552  Criança chorando
+    #2361  Grito de dor
+    #3534  Exclamação de surpresa
+    #2194  Parabéns pra você (cantado)
+    #1173  Assobio com a boca
+    #1170  Assobio para chamar
+    #2193  Parabéns pra você (assobiado)
+    #2047  Fantasma uivando
+    #2112  Rosnado de zumbi
+    #2106  Zumbi
+    #0283  Galo cantando
+    #0440  Cocoricó
+    #2954  Cachorro latindo
+    #0288  Cachorros latindo
+    #0112  Cachorro latindo dentro de casa
+    #0546  Vaca mugindo
+    #2386  Mugido
+    #1890  Gato miando
+    #0494  Miadinho
+    #1010  Gato ronronando
+    #0817  Gatos brigando
+    #0863  Cavalo relinchando
+    #0284  Relincho
+    #0611  Cavalo galopando
+    #1551  Burro zurrando
+    #0276  Patos
+    #0978  Galinhas cacarejando
+    #0279  Bode berrando
+    #2343  Ovelha
+    #1659  Porco grunhindo
+    #1020  Grilo
+    #2397  Cigarra
+    #3002  Cigarras
+    #1764  Coruja piando 1
+    #1763  Coruja piando 2
+    #0956  Corvos
+    #1670  Pisco cantando
+    #3503  Melro cantando
+    #3087  Rouxinol
+    #1762  Pássaro gritador (piha)
+    #1000  Abelhão
+    #0101  Abelhas e moscas
+    #0840  Pombo levantando voo
+    #2891  Pássaro batendo asas
+    #0266  Ondas do mar (gravação)
+    #1354  Riacho (gravação)
+    #0507  Pequena cachoeira
+    #1386  Gotas de água
+    #0183  Bolhas na água
+    #1521  Splash grande 1
+    #1519  Splash grande 2
+    #1529  Splash pequeno
+    #1019  Chuva de verão
+    #1290  Chuva nas poças
+    #2679  Chuva no guarda-chuva
+    #1296  Trovão e chuva
+    #0595  Vento (gravação)
+    #0908  Vento no capim
+    #0155  Vento assobiando
+    #0146  Vento forte
+    #0987  Fogueira grande
+    #2857  Lareira
+    #1341  Gasolina pegando fogo
+    #2131  Acendendo um cigarro
+    #0004  Fósforo
+    #2127  Gelo no copo
+    #2205  Gelo rachando
+    #1299  Galhos quebrando
+    #0100  Floresta
+    #0267  Mar com gaivotas
+    #0097  Campo
+    #1880  Campo à noite
+    #2722  Rua com trânsito
+    #2573  Gaivotas no porto
+    #2136  Caverna
+    #0680  Cidade à noite
+    #0480  Bar
+    #1470  Insetos noturnos
+    #0998  Sapos
+    #2728  Feira livre
+    #0222  Pássaros ao amanhecer
+    #3515  Multidão conversando
+    #3542  Restaurante
+    #1072  Recreio da escola
+    #3543  Pista de skate
+    #2746  Pátio de creche
+    #2969  Conversa de multidão ao ar livre
+    #0684  Burburinho de grupo
+    #2368  Pneus cantando 1
+    #2371  Pneus cantando 2
+    #1464  Sirene de ambulância
+    #0886  Sirene de polícia
+    #2731  Sirene de caminhão de bombeiros
+    #0189  Carro dando partida e saindo
+    #0600  Carro esportivo acelerando
+    #0258  Buzina de carro
+    #3594  Buzina de ônibus
+    #3593  Buzinadas de ônibus
+    #2721  Buzina de caminhão
+    #1526  Porta de carro
+    #0281  Moto
+    #2996  Carro passando
+    #1145  Motor de caminhão
+    #0228  Vapor de trem
+    #2847  Buzina de trem
+    #3596  Metrô passando
+    #0263  Helicóptero (por dentro)
+    #0264  Helicóptero (por fora)
+    #2478  Avião pequeno passando
+    #3552  Drone
+    #0261  Apito de navio
+    #1049  Buzina de neblina
+    #1298  Caminhão dando ré (bipe)
+    #1703  Porta abrindo
+    #1704  Porta fechando
+    #3205  Porta rangendo ao abrir
+    #3211  Porta rangendo ao fechar
+    #1501  Porta batendo 1
+    #0103  Porta batendo 2
+    #0015  Batendo na porta
+    #0320  Batendo na porta de vidro
+    #0198  Toc-toc na janela
+    #0039  Janela abrindo e fechando
+    #0303  Portão rangendo
+    #1320  Chave abrindo a porta
+    #0445  Molho de chaves
+    #2425  Chaves e fechadura
+    #1499  Gaveta abrindo
+    #1500  Gaveta fechando
+    #0193  Moedas caindo no chão
+    #0339  Moeda no copo
+    #0164  Virar página
+    #0362  Virar página de livro grande
+    #0018  Rasgar papel
+    #1223  Amassar papel
+    #0221  Lápis escrevendo
+    #3312  Água quente na caneca
+    #1114  Mordida na maçã
+    #0211  Rolha de champanhe
+    #0143  Fritando na frigideira
+    #0410  Mexendo o café
+    #1431  Abrindo pacote de salgadinho
+    #3247  Bebendo da garrafa
+    #1335  Brinde com taças
+    #2888  Brinde (tim-tim)
+    #2376  Micro-ondas funcionando
+    #0722  Aspirador de pó
+    #1157  Geladeira
+    #1116  Máquina de costura
+    #0718  Escovando os dentes
+    #0024  Vassoura
+    #0005  Martelando prego
+    #0559  Serrote
+    #0454  Motosserra
+    #0008  Tesoura
+    #0184  Furadeira
+    #0629  Velcro
+    #0013  Rasgar pano
+    #0581  Dados na mesa
+    #1274  Pisando em peças de montar
+    #2118  Zumbido de lâmpada fluorescente
+    #0134  Choque elétrico
+    #0359  Corrente pesada
+    #1130  Enchendo balão
+    #1486  Vazamento de ar
+    #0166  Passos de salto alto
+    #0165  Passos no assoalho
+    #0514  Correndo de tênis
+    #0137  Passos em folhas secas
+    #0208  Passos na neve
+    #3447  Tênis rangendo
+    #0518  Assoalho rangendo
+    #1025  Três batidas (teatro)
+    #0035  Alarme eletrônico 1
+    #0173  Alarme eletrônico 2
+    #3411  Alarme de evacuação
+    #2814  Despertador mecânico
+    #1153  Detector de fumaça
+    #1592  Alarme piezo
+    #3513  Pager
+    #2365  Campainha de casa
+    #2880  Campainha grande
+    #3588  Sino de porta de loja
+    #3046  Campainha mecânica
+    #0135  Sino de igreja (gravação)
+    #0292  Sininho
+    #1102  Campainha de bicicleta
+    #2531  Sino de balcão
+    #2533  Sino de balcão duplo
+    #1482  Gongo suave
+    #2816  Tique-taque de despertador
+    #0007  Relógio
+    #1567  Relógio de pêndulo
+    #3360  Badalada de relógio de pêndulo
+    #0082  Timer de cozinha
+    #2138  Cronômetro
+    #0457  Monitor cardíaco
+    #1309  Parada cardíaca (monitor)
+    #2256  Alarme de relógio digital
+    #1017  Apito de plástico
+    #1105  Apitos
+    #3263  Toque de alvorada (corneta)
+    #2402  Rufar de tambor (gravação)
+    #2406  Rufar curto
+    #1110  Tigela tibetana
+    #1109  Tigela tibetana cantando
+    #0920  Glockenspiel
+    #2338  Tom grave
+    #2314  Prato de bateria
+    #2310  Caixa de bateria
+    #1970  Baquetas
+    #0468  Metrônomo
+    #1674  Caixinha de música (dando corda)
+    #2524  Corneta 1
+    #2520  Corneta 2
+    #2086  Sininhos de sonho 1
+    #2079  Sininhos de sonho 2
+    #2687  Sinos de vento
+    #2036  Nave espacial passando 1
+    #2035  Nave espacial passando 2
+    #1971  Nave espacial passando 3
+    #1972  Disco voador passando
+    #2122  Disco voador girando
+    #0338  Veículo futurista 1
+    #0337  Veículo futurista 2
+    #0336  Porta automática
+    #1388  Zumbido no ouvido (depois da explosão)
+    #3569  Escala de Shepard (tensão)
+    #2911  Servomotor
+    #0950  Solda elétrica
+    #0335  Linguagem de máquina
+    #1975  Voz de robô
+    #1920  Sonar
+    #1044  Chute na bola
+    #1045  Bola quicando
+    #0584  Bola de tênis quicando
+    #2239  Bolinha de pingue-pongue
+    #0537  Badminton
+    #2445  Treino de boxe
+    #0938  Tênis rangendo na quadra
+    #1825  Bola na parede
+    #1808  Explosão próxima
+    #1807  Explosão a média distância
+    #1023  Explosão distante 1
+    #1806  Explosão distante 2
+    #0437  Tiro de submetralhadora
+    #0438  Tiro de revólver
+    #0397  Tiro de rifle
+    #2854  Tiro de espingarda 1
+    #2853  Tiro de espingarda 2
+    #0532  Tiros de espingarda
+    #1987  Engatilhar pistola
+    #1989  Carregar pente
+    #1355  Cápsula caindo
+    #1140  Bombinha 1
+    #1137  Bombinha 2
+    #2672  Fogos de artifício
+    #1306  Pavio queimando
+    #1278  Vela de faísca
+    #0129  Espada deslizando
+    #0127  Espada cortando
+    #0549  Arco e flecha
+    #0548  Flecha no alvo
+    #0832  Afiando faca
+
+Os arquivos foram cortados (silêncio e excesso), tiveram o volume nivelado e foram convertidos para OGG.

@@ -148,8 +148,9 @@ await sleep(600);
 await sleep(200);
 const cats = [...document.querySelectorAll('.lp-body .btn.small')].map((x) => x.textContent);
 // 1.8: + "Meus sons" (biblioteca pessoal) antes das 9 categorias do app
-check('sfx_categorias', cats.length === 10 && /Meus sons/.test(cats[0]) && cats.includes('Transições') && cats.includes('Natureza'), cats);
-check('sfx_cartoes', document.querySelectorAll('.sfx-card').length === 13, document.querySelectorAll('.sfx-card').length);
+// 1.9: + categorias dos sons livres (CC0)
+check('sfx_categorias', cats.length === 19 && /Meus sons/.test(cats[0]) && cats.includes('Transições') && cats.includes('Natureza e clima') && cats.includes('Animais'), cats);
+check('sfx_cartoes', document.querySelectorAll('.sfx-card').length >= 25 && !!document.querySelector('.sfx-card[data-sfx="whoosh"]') && !!document.querySelector('.sfx-card[data-sfx="b1796"]'), document.querySelectorAll('.sfx-card').length);
 await shot('v15_04_sons_transicoes');
 const whoosh = document.querySelector('.sfx-card[data-sfx="whoosh"]');
 clickEl(whoosh);
@@ -176,7 +177,7 @@ dropOnTimeline(document.querySelector('.sfx-card[data-sfx="churchBell"]'), 0.5);
 await waitFor(() => allClips().length > nB, 8000);
 check('sfx_arrastar', allClips().length === nB + 1 && S().project.media.some((m) => m.name === 'Sino de igreja.wav'));
 setInput(search, '');
-for (const catName of ['Natureza', 'Games 8-bit']) {
+for (const catName of ['Natureza e clima', 'Games 8-bit']) {
   [...document.querySelectorAll('.lp-body .btn.small')].find((x) => x.textContent === catName)?.click();
   await sleep(250);
 }

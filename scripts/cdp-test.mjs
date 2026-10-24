@@ -52,6 +52,8 @@ const DIR = 'C:/Users/leona/AppData/Local/Temp/munnin-cut-test';
 const docsRoot = path.dirname(await evaluate('return (await window.api.info()).draftsDir;'));
 const sfxTeste = path.join(docsRoot, 'Efeitos sonoros', 'Sino de igreja.wav');
 const sfxJaExistia = fs.existsSync(sfxTeste);
+const galoTeste = path.join(docsRoot, 'Efeitos sonoros', 'Galo cantando.ogg');
+const galoJaExistia = fs.existsSync(galoTeste);
 const r = await evaluate(`
   const { useStore, startExport } = window.__mc;
   const S = () => useStore.getState();
@@ -111,7 +113,10 @@ const r = await evaluate(`
   let busca = [];
   try { busca = await window.api.ytSearch('big buck bunny'); } catch (e) { busca = [{ erro: e.message }]; }
   const v18 = { heic: mh && [mh.width, mh.height, /_proxy\.jpg$/.test(mh.renderPath || '')], exportEfeitos: r18.ok ? 'ok' : r18.error, busca: busca.length };
-  return { v14, v15, v17, v18, meta: Object.values(S().meta).map((m) => m.status), size: [S().project.width, S().project.height], res, nvenc: nv, legendas, pid, drafts: info.draftsDir };
+  // 1.9: sons livres (CC0) empacotados
+  const galo = await window.api.sfxMaterialize('b0283', 'Galo cantando.ogg').catch((e) => 'ERRO ' + e.message);
+  const v19 = { livres: Object.keys(sfxL.livresIndex || {}).length, galo };
+  return { v14, v15, v17, v18, v19, meta: Object.values(S().meta).map((m) => m.status), size: [S().project.width, S().project.height], res, nvenc: nv, legendas, pid, drafts: info.draftsDir };
 `);
 console.log(JSON.stringify(r, null, 1));
 await shot('p2_editor');
@@ -121,5 +126,6 @@ await evaluate(`await window.api.deleteDraft('${r?.pid}'); return true;`);
 proc.kill();
 await sleep(800);
 if (!sfxJaExistia) fs.rmSync(sfxTeste, { force: true });
+if (!galoJaExistia) fs.rmSync(galoTeste, { force: true });
 if (r?.v15?.yt?.path) fs.rmSync(r.v15.yt.path, { force: true });
 process.exit(0);

@@ -2,7 +2,7 @@
 // Uso: node scripts/gen-sfx.mjs [ids separados por vírgula]
 import fs from 'node:fs';
 import path from 'node:path';
-import { SFX } from '../src/shared/sfx.js';
+import { SFX_SINT as SFX } from '../src/shared/sfx.js';
 import { RECIPES, LOUDNESS, LOUDNESS_DEFAULT, KEEP_TAIL } from './sfx/recipes.mjs';
 import { SR, dcBlock, trimTail, fade, peak, mul } from './sfx/dsp.mjs';
 
