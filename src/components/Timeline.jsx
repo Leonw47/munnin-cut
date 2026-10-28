@@ -905,6 +905,7 @@ export default function Timeline({ height }) {
             <MenuItem icon={<AudioLines size={14} />} label="Separar áudio" onClick={() => S().extractAudio(menu.clip.id)} />
           </>}
           {(menu.clip.type === 'video' || menu.clip.type === 'audio') && <>
+            {mediaMap[menu.clip.mediaId]?.hasAudio && <MenuItem icon={<Scissors size={14} />} label="Cortar silêncios…" onClick={() => S().openSilencios(menu.clip.id)} />}
             <MenuItem icon={menu.clip.muted ? <Volume2 size={14} /> : <VolumeX size={14} />} label={menu.clip.muted ? 'Ativar som' : 'Silenciar'} onClick={() => S().updateClip(menu.clip.id, { muted: !menu.clip.muted })} />
             <MenuItem icon={<Rewind size={14} />} on={!!menu.clip.reverse} label={menu.clip.reverse ? 'Tocar normal (desfazer reverso)' : 'Reverter (de trás para frente)'} onClick={() => S().toggleReverse(menu.clip.id)} />
           </>}

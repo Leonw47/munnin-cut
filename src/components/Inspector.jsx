@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { FlipHorizontal2, FlipVertical2, RotateCcw, AlignLeft, AlignCenter, AlignRight, Italic, CaseUpper, AudioLines, Trash2, Link, Pipette, Loader2, Headphones } from 'lucide-react';
+import { FlipHorizontal2, FlipVertical2, RotateCcw, AlignLeft, AlignCenter, AlignRight, Italic, CaseUpper, AudioLines, Trash2, Link, Pipette, Loader2, Headphones, Scissors } from 'lucide-react';
 import { DEFAULT_CHROMA, chromaParams } from '../shared/chroma.js';
+import { AREA_PADRAO } from '../shared/area.js';
 import { AUDIO_FX, DEFAULT_AUDIO_FX } from '../shared/audiofx.js';
 import { AMBIENTES, PRESETS_VOZ, VOZ_PADRAO, vozDoClipe, temVoz } from '../shared/voz.js';
 import { hasKf, hasKfAt, propAt, upsertKf, removeKfAt, setPropAt, scaleKf, KF_PROPS } from '../shared/keyframes.js';
@@ -193,11 +194,11 @@ function BasicTab({ clip, isMain }) {
               options={[{ value: 'contain', label: 'Ajustar' }, { value: 'cover', label: 'Preencher' }]} />
           </Field>
         )}
-        <KfSlider clip={clip} prop="scale" label="Escala" min={1} max={500} toUi={(v) => Math.round(v * 100)} fromUi={(x) => x / 100} />
-        <KfSlider clip={clip} prop="scaleX" label="Largura X" min={1} max={500} toUi={(v) => Math.round(v * 100)} fromUi={(x) => x / 100} />
-        <KfSlider clip={clip} prop="scaleY" label="Altura Y" min={1} max={500} toUi={(v) => Math.round(v * 100)} fromUi={(x) => x / 100} />
-        <KfSlider clip={clip} prop="x" label="Posição X" min={-100} max={100} step={0.1} {...pct} />
-        <KfSlider clip={clip} prop="y" label="Posição Y" min={-100} max={100} step={0.1} {...pct} />
+        <KfSlider clip={clip} prop="scale" label="Escala" min={1} max={2000} toUi={(v) => Math.round(v * 100)} fromUi={(x) => x / 100} />
+        <KfSlider clip={clip} prop="scaleX" label="Largura X" min={1} max={2000} toUi={(v) => Math.round(v * 100)} fromUi={(x) => x / 100} />
+        <KfSlider clip={clip} prop="scaleY" label="Altura Y" min={1} max={2000} toUi={(v) => Math.round(v * 100)} fromUi={(x) => x / 100} />
+        <KfSlider clip={clip} prop="x" label="Posição X" min={-300} max={300} step={0.1} {...pct} />
+        <KfSlider clip={clip} prop="y" label="Posição Y" min={-300} max={300} step={0.1} {...pct} />
         <KfSlider clip={clip} prop="rotation" label="Rotação" min={-180} max={180} toUi={(v) => Math.round(v)} />
         <KfSlider clip={clip} prop="opacity" label="Opacidade" min={0} max={100} toUi={(v) => Math.round(v * 100)} fromUi={(x) => x / 100} />
         <div className="hint" style={{ marginBottom: 8 }}>◆ marca um ponto de modificação no momento da agulha (ou use a tecla K). Com dois pontos ou mais, o valor muda suavemente entre eles.</div>
@@ -318,9 +319,10 @@ function AudioTab({ clip }) {
       </Section>
       <VozSection clip={clip} />
       <AudioFxSection clip={clip} />
-      {clip.type === 'video' && (
-        <button className="btn" onClick={() => s().extractAudio(id)}><AudioLines size={14} /> Separar áudio</button>
-      )}
+      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+        {clip.type === 'video' && <button className="btn" onClick={() => s().extractAudio(id)}><AudioLines size={14} /> Separar áudio</button>}
+        <button className="btn" onClick={() => s().openSilencios(id)} title="Tira as pausas e silêncios automaticamente"><Scissors size={14} /> Cortar silêncios</button>
+      </div>
     </>
   );
 }
@@ -667,8 +669,34 @@ function EffectTab({ clip }) {
         {!isFilter && <div className="hint" style={{ marginTop: 8 }}>Outras categorias ficam na aba Efeitos, à esquerda.</div>}
       </Section>
       <Field label="Intensidade"><Slider value={fx.intensity ?? 100} min={0} max={100} onChange={(v) => editClip(id, (c) => { c.effect.intensity = v; })} /></Field>
+      {!isFilter && <AreaSection clip={clip} />}
       <div className="hint" style={{ marginTop: 8 }}>Vale para todas as faixas abaixo, de {fmtTime(clip.start, 30, true)} a {fmtTime(clip.start + clip.duration, 30, true)}.</div>
     </>
+  );
+}
+
+// Onde o efeito vale: a tela inteira ou só uma área (arrastada e redimensionada no reprodutor, como uma imagem).
+function AreaSection({ clip }) {
+  const id = clip.id;
+  const a = { ...AREA_PADRAO, ...(clip.area || {}), on: !!clip.area?.on };
+  const set = (fn) => editClip(id, (c) => { c.area = { ...AREA_PADRAO, ...(c.area || {}) }; fn(c.area); });
+  return (
+    <Section title="Onde aplicar">
+      <Field label="Aplicar em">
+        <Seg value={a.on ? 'area' : 'tudo'} onChange={(v) => useStore.getState().updateClip(id, (c) => { c.area = { ...AREA_PADRAO, ...(c.area || {}), on: v === 'area' }; })}
+          options={[{ value: 'tudo', label: 'Tela inteira' }, { value: 'area', label: 'Só uma área' }]} />
+      </Field>
+      {a.on && <>
+        <Field label="Forma">
+          <Seg value={a.forma} onChange={(v) => set((x) => { x.forma = v; })} options={[{ value: 'ellipse', label: 'Oval' }, { value: 'rect', label: 'Retângulo' }]} />
+        </Field>
+        <Field label="Largura"><Slider value={Math.round(a.w * 100)} min={2} max={200} onChange={(v) => set((x) => { x.w = v / 100; })} /></Field>
+        <Field label="Altura"><Slider value={Math.round(a.h * 100)} min={2} max={200} onChange={(v) => set((x) => { x.h = v / 100; })} /></Field>
+        <Field label="Bordas suaves"><Slider value={a.suave} min={0} max={100} onChange={(v) => set((x) => { x.suave = v; })} /></Field>
+        <Field label="Inverter" title="O efeito vale em tudo, MENOS na área"><Toggle on={!!a.inverter} onChange={(v) => set((x) => { x.inverter = v; })} /></Field>
+        <div className="hint">Arraste a área no reprodutor para pôr no lugar certo (ex.: no rosto) e puxe os cantos para mudar o tamanho. O efeito é calculado só dentro dela — uma torção fica centrada na área.</div>
+      </>}
+    </Section>
   );
 }
 
@@ -754,7 +782,7 @@ function MultiPanel({ ids }) {
         {(sound.length > 0 || visual.length > 0) && (
           <Section title="Ajustar todos de uma vez">
             {sound.length > 0 && <BatchSlider ids={sound.map((c) => c.id)} prop="volume" label="Volume" min={0} max={200} toUi={(v) => Math.round(v * 100)} fromUi={(x) => x / 100} />}
-            {visual.length > 0 && <BatchSlider ids={visual.map((c) => c.id)} prop="scale" label="Escala" min={1} max={500} toUi={(v) => Math.round(v * 100)} fromUi={(x) => x / 100} />}
+            {visual.length > 0 && <BatchSlider ids={visual.map((c) => c.id)} prop="scale" label="Escala" min={1} max={2000} toUi={(v) => Math.round(v * 100)} fromUi={(x) => x / 100} />}
             {visual.length > 0 && <BatchSlider ids={visual.map((c) => c.id)} prop="opacity" label="Opacidade" min={0} max={100} toUi={(v) => Math.round(v * 100)} fromUi={(x) => x / 100} />}
             <div className="hint">Vale para todos os clipes selecionados que têm essa opção. Quem tem pontos de modificação mantém a animação, só que proporcional ao novo valor.</div>
           </Section>

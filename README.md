@@ -19,7 +19,10 @@ clique em **Mais informações → Executar assim mesmo**.
 - Voz — limpar e realçar, em tempo real: reduzir ruído, realçar a voz, clareza e ambientes (sala, auditório, igreja,
   chorus, voz dupla), com atalhos prontos e "comparar com o original"; a exportação usa a mesma cadeia.
 - Formas padrão (quadrado, círculo, estrela, coração, seta, balão…) com cor, contorno, cantos e sombra.
-- Prévia de filtros e efeitos ao passar o mouse; tela cheia com controles.
+- Prévia de filtros e efeitos ao passar o mouse; tela cheia com controles; zoom para fora no reprodutor (Ctrl + roda) para
+  mexer no que está fora da tela, com a cor do fundo em volta configurável.
+- Efeito aplicado só numa área (oval/retângulo, bordas suaves, inverter), mexida no reprodutor como uma imagem.
+- Cortar silêncios automaticamente; biblioteca em páginas para muitas mídias; escala/largura/altura até 2000%.
 - Transições (24, via `xfade`), animações de entrada/saída, filtros de cor, ajustes (brilho, contraste,
   saturação, temperatura, matiz, nitidez, vinheta, desfoque) e efeitos (VHS, granulado, flash, barras de cinema…).
 - 115 efeitos no estilo CapCut, em categorias: Elementos (fogo, explosão, impacto, raios, faíscas, fumaça, debaixo
@@ -93,5 +96,5 @@ node scripts/test-size.mjs                            # compara o tamanho estima
 node scripts/test-bordas.mjs                          # confere que nada deixa barra preta na lateral (1080 de largura)
 node scripts/test-youtube.mjs                         # baixador do YouTube: instalação, atualização, trecho, erros
 ```
-Testes de interface: `MC_AUTOTEST=scripts/autotest-ui.js npx electron .` (também `autotest-interact.js`, `autotest-fx.js`, `autotest-v12.js`, `autotest-v13.js`, `autotest-v14.js`, `autotest-v15.js`, `autotest-v16.js`, `autotest-v17.js`, `autotest-v18.js`, `autotest-fx18.js` e `autotest-scroll.js`).
+Testes de interface: `MC_AUTOTEST=scripts/autotest-ui.js npx electron .` (também `autotest-interact.js`, `autotest-fx.js`, `autotest-v12.js`, `autotest-v13.js`, `autotest-v14.js`, `autotest-v15.js`, `autotest-v16.js`, `autotest-v17.js`, `autotest-v18.js`, `autotest-fx18.js`, `autotest-v110.js` e `autotest-scroll.js`).
 O FFmpeg fica em `resources/bin/` (não versionado). Histórico de versões em [CHANGELOG.md](CHANGELOG.md).

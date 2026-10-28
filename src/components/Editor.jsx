@@ -7,6 +7,7 @@ import Inspector from './Inspector.jsx';
 import Timeline from './Timeline.jsx';
 import ExportDialog from './ExportDialog.jsx';
 import TrimDialog from './TrimDialog.jsx';
+import CortarSilencios from './CortarSilencios.jsx';
 import MediaStatusBar from './MediaStatusBar.jsx';
 import { Modal } from './ui.jsx';
 
@@ -67,6 +68,7 @@ export default function Editor() {
       <Timeline height={tlH} />
       {modal === 'export' && <ExportDialog />}
       {modal === 'trim' && <TrimDialog />}
+      {modal === 'silencios' && <CortarSilencios />}
       {modal === 'shortcuts' && (
         <Modal title="Atalhos de teclado" onClose={() => useStore.setState({ modal: null })} width={480}>
           <div className="shortcuts">

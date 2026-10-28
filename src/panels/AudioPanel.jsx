@@ -3,7 +3,7 @@ import { Mic, Square, Plus, Music, Upload, Info, Scissors, Download, X, RefreshC
 import { useStore, libView } from '../store.js';
 import { fmtTime } from '../shared/timeline.js';
 import { endDrag } from '../dnd.js';
-import { ContextMenu, MenuItem, Toggle } from '../components/ui.jsx';
+import { ContextMenu, MenuItem, Toggle, Paginador, usePaginas } from '../components/ui.jsx';
 import InlineTrim from '../components/InlineTrim.jsx';
 import YoutubePreview from '../components/YoutubePreview.jsx';
 import { dragMedia } from './MediaPanel.jsx';
@@ -216,6 +216,7 @@ export default function AudioPanel() {
   const audios = media.filter((m) => m.type === 'audio');
   const order = audios.map((m) => m.id);
   libView.order = order;
+  const pg = usePaginas(audios.length, 'audios');
   const s = useStore.getState;
   const importMedia = async () => {
     const paths = await window.api.openMediaDialog();
@@ -242,7 +243,8 @@ export default function AudioPanel() {
             <button className="btn small" onClick={() => s().removeMediaMany(libSel)}><Trash2 size={13} /> Remover</button>
           </div>
         )}
-        {audios.map((m) => {
+        <Paginador p={pg} total={audios.length} rotulo="áudios" />
+        {audios.slice(pg.ini, pg.fim).map((m) => {
           const ready = meta[m.id]?.status === 'ready';
           const sel = libSel.includes(m.id);
           return (

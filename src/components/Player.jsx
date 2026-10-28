@@ -1,5 +1,5 @@
 import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { Play, Pause, Maximize, Minimize, ChevronDown, Clapperboard, SkipBack, SkipForward, Rewind, FastForward, Volume2, VolumeX } from 'lucide-react';
+import { Play, Pause, Maximize, Minimize, ChevronDown, Clapperboard, SkipBack, SkipForward, Rewind, FastForward, Volume2, VolumeX, ZoomOut, PaintBucket } from 'lucide-react';
 import { useStore } from '../store.js';
 import { engine } from '../engine/index.js';
 import { clipBox } from '../engine/compositor.js';
@@ -8,6 +8,16 @@ import { fmtTime, projectDuration, mainTrack, findClip } from '../shared/timelin
 import { Dropdown, MenuItem } from './ui.jsx';
 import { resolveAt, setPropAt } from '../shared/keyframes.js';
 import LibPreview from './LibPreview.jsx';
+import { AREA_PADRAO } from '../shared/area.js';
+
+const ZOOMS = [1, 0.75, 0.5, 0.33, 0.25];
+const FUNDOS = [
+  { nome: 'Escuro', cor: '#111113' },
+  { nome: 'Grafite', cor: '#26262b' },
+  { nome: 'Cinza', cor: '#4a4a52' },
+  { nome: 'Cinza claro', cor: '#9a9aa3' },
+  { nome: 'Claro', cor: '#d9d9de' },
+];
 
 function useMediaMap(project) {
   const ref = useRef({ media: null, map: {} });
@@ -43,7 +53,7 @@ function inBox(b, x, y) {
   return Math.abs(lx) <= b.w / 2 && Math.abs(ly) <= b.h / 2;
 }
 
-function TransformOverlay({ W, H }) {
+function TransformOverlay({ W, H, folga = 0 }) {
   const project = useStore((s) => s.project);
   const time = useStore((s) => s.time);
   const sel = useStore((s) => s.selection);
@@ -54,8 +64,11 @@ function TransformOverlay({ W, H }) {
 
   const found = sel?.type === 'clip' ? findClip(project, sel.id) : null;
   const clip = found?.clip;
-  const visible = clip && clip.type !== 'effect' && clip.type !== 'audio' && !found.track.hidden && time >= clip.start && time < clip.start + clip.duration;
-  const box = visible ? clipBox(project, mediaMap, resolveAt(clip, time - clip.start), W, H) : null;
+  // efeito aplicado só numa área: a área aparece no reprodutor e se mexe como uma imagem (sem girar)
+  const isArea = clip?.type === 'effect' && !!clip.area?.on;
+  const visible = clip && (clip.type !== 'effect' || isArea) && clip.type !== 'audio' && !found.track.hidden && time >= clip.start && time < clip.start + clip.duration;
+  const areaBox = (a0) => { const a = { ...AREA_PADRAO, ...a0 }; return { cx: W / 2 + a.x * W, cy: H / 2 + a.y * H, w: a.w * W, h: a.h * H, rot: 0 }; };
+  const box = !visible ? null : isArea ? areaBox(clip.area) : clipBox(project, mediaMap, resolveAt(clip, time - clip.start), W, H);
 
   const local = (e) => {
     const r = svgRef.current.getBoundingClientRect();
@@ -71,10 +84,30 @@ function TransformOverlay({ W, H }) {
     // com pontos de modificação, mexer no reprodutor cria/atualiza o ponto no instante da agulha
     const lt = Math.max(0, Math.min(target.duration, s.time - target.start));
     const tf0 = { ...(resolveAt(target, lt).transform || {}) };
+    const area0 = target.type === 'effect' ? { ...AREA_PADRAO, ...target.area } : null;
     let moved = false;
     const move = (ev) => {
       const p = local(ev);
       if (!moved) { s.checkpoint(); moved = true; }
+      if (area0) {
+        // área do efeito: mover e redimensionar (frações da tela)
+        const a = { ...area0 };
+        if (mode === 'move') {
+          a.x = area0.x + (p.x - p0.x) / W; a.y = area0.y + (p.y - p0.y) / H;
+          if (Math.abs(a.x * W) < 6) a.x = 0;
+          if (Math.abs(a.y * H) < 6) a.y = 0;
+          setGuides({ x: a.x === 0, y: a.y === 0, angle: null });
+        } else if (mode === 'scale') {
+          const k = Math.hypot(p.x - b0.cx, p.y - b0.cy) / (Math.hypot(p0.x - b0.cx, p0.y - b0.cy) || 1);
+          a.w = Math.max(0.02, Math.min(3, area0.w * k)); a.h = Math.max(0.02, Math.min(3, area0.h * k));
+        } else if (mode === 'scale-x') {
+          a.w = Math.max(0.02, Math.min(3, area0.w * (Math.abs(p.x - b0.cx) / Math.max(4, Math.abs(p0.x - b0.cx)))));
+        } else if (mode === 'scale-y') {
+          a.h = Math.max(0.02, Math.min(3, area0.h * (Math.abs(p.y - b0.cy) / Math.max(4, Math.abs(p0.y - b0.cy)))));
+        } else return;
+        s.updateClip(target.id, (c) => { c.area = { ...c.area, x: a.x, y: a.y, w: a.w, h: a.h }; }, { silent: true });
+        return;
+      }
       if (mode === 'move') {
         let nx = (tf0.x || 0) + (p.x - p0.x) / W;
         let ny = (tf0.y || 0) + (p.y - p0.y) / H;
@@ -146,6 +179,17 @@ function TransformOverlay({ W, H }) {
     <svg ref={svgRef} width={W} height={H} style={{ position: 'absolute', left: 0, top: 0, overflow: 'visible', cursor: 'default' }}
       onPointerDown={onStageDown}
       onDoubleClick={() => { if (clip?.type === 'text') window.dispatchEvent(new Event('focus-text-editor')); }}>
+      {folga > 0 && <>
+        {/* zoom para fora: a área em volta também recebe cliques e mostra onde estão as camadas */}
+        <rect x={-folga} y={-folga} width={W + folga * 2} height={H + folga * 2} fill="transparent" />
+        {!playing && visibleClipsTopFirst(project, time).map((c) => {
+          const b = clipBox(project, mediaMap, resolveAt(c, time - c.start), W, H);
+          if (!b || c.id === clip?.id) return null;
+          return <rect key={c.id} x={-b.w / 2} y={-b.h / 2} width={b.w} height={b.h} fill="none" stroke="#ffffff55" strokeDasharray="5 4"
+            transform={`translate(${b.cx},${b.cy}) rotate(${b.rot || 0})`} pointerEvents="none" />;
+        })}
+        <rect x={0} y={0} width={W} height={H} fill="none" stroke="#19d3df88" strokeWidth="1" pointerEvents="none" />
+      </>}
       {guides.x && <line x1={W / 2} y1={0} x2={W / 2} y2={H} stroke="#ff4fd8" strokeDasharray="4 3" />}
       {guides.y && <line x1={0} y1={H / 2} x2={W} y2={H / 2} stroke="#ff4fd8" strokeDasharray="4 3" />}
       {box && !playing && (() => {
@@ -162,7 +206,8 @@ function TransformOverlay({ W, H }) {
           <g>
             <polygon points={pts.map((p) => `${p.x},${p.y}`).join(' ')} fill="transparent" stroke="#fff" strokeWidth="1.5"
               style={{ cursor: 'move' }} onPointerDown={(e) => beginGesture(e, 'move', clip, box)} />
-            <line x1={top.x} y1={top.y} x2={rh.x} y2={rh.y} stroke="#fff" strokeWidth="1.2" />
+            {isArea && clip.area.forma !== 'rect' && <ellipse cx={box.cx} cy={box.cy} rx={box.w / 2} ry={box.h / 2} fill="none" stroke="#ffd23f" strokeDasharray="5 4" pointerEvents="none" />}
+            {!isArea && <line x1={top.x} y1={top.y} x2={rh.x} y2={rh.y} stroke="#fff" strokeWidth="1.2" />}
             {sides.map((s, i) => (
               <rect key={`s${i}`} x={-s.w / 2} y={-s.h / 2} width={s.w} height={s.h} rx="3" fill="#fff" stroke="#0006"
                 transform={`translate(${s.p.x},${s.p.y}) rotate(${box.rot || 0})`}
@@ -174,7 +219,7 @@ function TransformOverlay({ W, H }) {
               <rect key={i} x={p.x - 5} y={p.y - 5} width="10" height="10" rx="2" fill="#fff" stroke="#0006"
                 style={{ cursor: i % 2 ? 'nesw-resize' : 'nwse-resize' }} onPointerDown={(e) => beginGesture(e, 'scale', clip, box)} />
             ))}
-            <circle cx={rh.x} cy={rh.y} r="6" fill="#fff" stroke="#0006" style={{ cursor: 'grab' }} onPointerDown={(e) => beginGesture(e, 'rotate', clip, box)} />
+            {!isArea && <circle cx={rh.x} cy={rh.y} r="6" fill="#fff" stroke="#0006" style={{ cursor: 'grab' }} onPointerDown={(e) => beginGesture(e, 'rotate', clip, box)} />}
             {guides.angle !== null && <text x={rh.x + 12} y={rh.y - 8} fill="#fff" fontSize="12" style={{ paintOrder: 'stroke', stroke: '#000', strokeWidth: 3 }}>{guides.angle}°</text>}
           </g>
         );
@@ -261,12 +306,18 @@ export default function Player() {
   const stageRef = useRef(null);
   const canvasRef = useRef(null);
   const [size, setSize] = useState({ w: 0, h: 0 });
+  const [palco, setPalco] = useState({ w: 0, h: 0 });   // tamanho da área do reprodutor (para o zoom para fora)
+  const foraRef = useRef(null);
   const project = useStore((s) => s.project);
   const playing = useStore((s) => s.playing);
   const hasClips = project.tracks.some((t) => t.clips.length);
   const aspect = project.width / project.height;
   const pickColor = useStore((st) => st.pickColor);
   const libPreview = useStore((st) => st.libPreview);
+  // zoom do reprodutor (1 = ajustado à janela; menor = sobra espaço em volta para mexer no que está fora da tela)
+  const [pzoom, setPzoom] = useState(() => { try { return Number(localStorage.getItem('mc.pzoom')) || 1; } catch { return 1; } });
+  const [stageBg, setStageBg] = useState(() => { try { return localStorage.getItem('mc.stagebg') || FUNDOS[0].cor; } catch { return FUNDOS[0].cor; } });
+  useEffect(() => { try { localStorage.setItem('mc.pzoom', String(pzoom)); localStorage.setItem('mc.stagebg', stageBg); } catch { /* ignore */ } }, [pzoom, stageBg]);
   const [isFs, setIsFs] = useState(false);
   const [idle, setIdle] = useState(false);
   const idleTimer = useRef(null);
@@ -294,17 +345,42 @@ export default function Player() {
       const aw = Math.max(50, r.width - pad * 2), ah = Math.max(50, r.height - pad * 2);
       let w = aw, h = aw / aspect;
       if (h > ah) { h = ah; w = ah * aspect; }
-      setSize({ w: Math.floor(w), h: Math.floor(h) });
+      const z = document.fullscreenElement === el ? 1 : pzoom;
+      setSize({ w: Math.floor(w * z), h: Math.floor(h * z) });
+      setPalco({ w: Math.floor(r.width), h: Math.floor(r.height) });
     });
     ro.observe(el);
     return () => ro.disconnect();
-  }, [aspect]);
+  }, [aspect, pzoom]);
+  // Ctrl + roda do mouse no reprodutor: aproxima/afasta (sem dar zoom na janela inteira)
+  useEffect(() => {
+    const el = stageRef.current;
+    const onWheel = (e) => {
+      if (!e.ctrlKey || document.fullscreenElement) return;
+      e.preventDefault();
+      setPzoom((z) => {
+        const i = ZOOMS.findIndex((x) => Math.abs(x - z) < 1e-3);
+        const j = Math.max(0, Math.min(ZOOMS.length - 1, (i < 0 ? 0 : i) + (e.deltaY > 0 ? 1 : -1)));
+        return ZOOMS[j];
+      });
+    };
+    el.addEventListener('wheel', onWheel, { passive: false });
+    return () => el.removeEventListener('wheel', onWheel);
+  }, []);
 
   useEffect(() => {
     const c = canvasRef.current;
     engine.attach(c);
     return () => engine.detach(c);
   }, []);
+  // zoom para fora: o motor desenha, atrás da tela, o que passa da borda (meio transparente)
+  useEffect(() => {
+    if (pzoom < 0.999 && !isFs && foraRef.current && palco.w && size.w) {
+      engine.fora = { canvas: foraRef.current, x: (palco.w - size.w) / 2, y: (palco.h - size.h) / 2, w: size.w, h: size.h, sw: palco.w, sh: palco.h };
+    } else engine.fora = null;
+    engine.invalidate();
+    return () => { engine.fora = null; };
+  }, [pzoom, isFs, palco.w, palco.h, size.w, size.h]);
 
   useEffect(() => {
     const c = canvasRef.current;
@@ -333,10 +409,11 @@ export default function Player() {
   return (
     <div className="panel">
       <div className="panel-head">Reprodutor <span style={{ marginLeft: 'auto', color: 'var(--faint)', fontWeight: 400 }}>{project.width}×{project.height} · {project.fps} fps</span></div>
-      <div className="player-stage" ref={stageRef} onMouseMove={isFs ? wake : undefined}>
+      <div className="player-stage" ref={stageRef} onMouseMove={isFs ? wake : undefined} style={isFs ? undefined : { background: stageBg }}>
+        {pzoom < 0.999 && !isFs && <canvas ref={foraRef} className="fora-tela" style={{ width: palco.w, height: palco.h }} />}
         <div style={{ position: 'relative', width: size.w, height: size.h }}>
           <canvas ref={canvasRef} style={{ width: size.w, height: size.h }} />
-          {size.w > 0 && !isFs && <TransformOverlay W={size.w} H={size.h} />}
+          {size.w > 0 && !isFs && <TransformOverlay W={size.w} H={size.h} folga={pzoom < 0.999 ? Math.max(size.w, size.h) * 2 : 0} />}
           {!hasClips && (
             <div className="empty-stage" style={{ position: 'absolute', inset: 0, justifyContent: 'center', pointerEvents: 'none' }}>
               <Clapperboard size={34} />
@@ -361,6 +438,24 @@ export default function Player() {
           <button className="icon-btn" title="Fim (End)" onClick={() => s().setTime(projectDuration(s().project))}><SkipForward size={15} /></button>
         </div>
         <div className="right">
+          <Dropdown align="right" up width={190} button={({ toggle }) => (
+            <button className="btn small ghost" onClick={toggle} title="Afastar a visualização para mexer no que está fora da tela (também: Ctrl + roda do mouse)">
+              <ZoomOut size={13} /> {pzoom >= 0.999 ? 'Ajustar' : `${Math.round(pzoom * 100)}%`} <ChevronDown size={12} />
+            </button>
+          )}>
+            {ZOOMS.map((z) => <MenuItem key={z} on={Math.abs(pzoom - z) < 1e-3} label={z >= 0.999 ? 'Ajustar à janela' : `${Math.round(z * 100)}% (sobra espaço em volta)`} onClick={() => setPzoom(z)} />)}
+          </Dropdown>
+          <Dropdown align="right" up width={200} button={({ toggle }) => (
+            <button className="icon-btn" onClick={toggle} title="Cor do fundo em volta da tela"><PaintBucket size={15} /></button>
+          )}>
+            {FUNDOS.map((f) => (
+              <MenuItem key={f.cor} on={stageBg === f.cor} label={<span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}><span style={{ width: 14, height: 14, borderRadius: 3, background: f.cor, border: '1px solid #fff4' }} />{f.nome}</span>} onClick={() => setStageBg(f.cor)} />
+            ))}
+            <label className="dd-item" style={{ display: 'flex', alignItems: 'center', gap: 8 }} onClick={(e) => e.stopPropagation()}>
+              <input type="color" value={/^#[0-9a-f]{6}$/i.test(stageBg) ? stageBg : '#111113'} onChange={(e) => setStageBg(e.target.value)} style={{ width: 22, height: 18, padding: 0, border: 0, background: 'none' }} />
+              Outra cor…
+            </label>
+          </Dropdown>
           <Dropdown align="right" up width={210} button={({ toggle }) => (
             <button className="btn small ghost" onClick={toggle}>Proporção: {RATIOS.find((r) => r.id === project.ratio)?.name || 'Original'} <ChevronDown size={12} /></button>
           )}>

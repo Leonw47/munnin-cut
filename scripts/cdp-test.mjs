@@ -116,7 +116,12 @@ const r = await evaluate(`
   // 1.9: sons livres (CC0) empacotados
   const galo = await window.api.sfxMaterialize('b0283', 'Galo cantando.ogg').catch((e) => 'ERRO ' + e.message);
   const v19 = { livres: Object.keys(sfxL.livresIndex || {}).length, galo };
-  return { v14, v15, v17, v18, v19, meta: Object.values(S().meta).map((m) => m.status), size: [S().project.width, S().project.height], res, nvenc: nv, legendas, pid, drafts: info.draftsDir };
+  // 1.10: efeito só numa área (alphamerge no FFmpeg empacotado)
+  const ef = S().project.tracks.flatMap((t) => t.clips).find((c) => c.type === 'effect' && c.effect?.id === 'ripple');
+  if (ef) S().updateClip(ef.id, (c) => { c.area = { on: true, forma: 'ellipse', x: 0, y: 0, w: 0.4, h: 0.4, suave: 30 }; });
+  const r110 = await startExport({ project: S().project, meta: S().meta, format: 'mp4', res: 360, fps: 30, quality: 'small', outPath: '${DIR}/pacote_v110.mp4', endAt: 3 }).promise;
+  const v110 = { area: ef ? (r110.ok ? 'ok' : r110.error) : 'sem efeito' };
+  return { v14, v15, v17, v18, v19, v110, meta: Object.values(S().meta).map((m) => m.status), size: [S().project.width, S().project.height], res, nvenc: nv, legendas, pid, drafts: info.draftsDir };
 `);
 console.log(JSON.stringify(r, null, 1));
 await shot('p2_editor');

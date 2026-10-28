@@ -191,6 +191,7 @@ export const useStore = create((set, get) => ({
   toast: null,
   modal: null,
   trimMediaId: null,
+  silencioClipId: null, // clipe aberto na janela "Cortar silêncios"
   mediaNotices: [],
   stopAt: null,
   captionBusy: null,
@@ -831,6 +832,44 @@ export const useStore = create((set, get) => ({
       return any;
     });
     if (ok && newId) set({ selection: { type: 'clip', id: newId } });
+  },
+
+  openSilencios(clipId) { get().pause(); set({ modal: 'silencios', silencioClipId: clipId }); },
+  /**
+   * Cortar silêncios: troca o clipe pelos trechos que ficam (segundos do arquivo, relativos a clip.in).
+   * Na faixa principal o ímã já junta os pedaços; nas outras, os pedaços ficam encostados e o que vinha
+   * depois na mesma faixa anda para trás. Um passo só de desfazer.
+   */
+  cortarSilencios(clipId, ficam) {
+    let n = 0, tirado = 0;
+    get().commit((p) => {
+      const f = findClip(p, clipId);
+      if (!f || !ficam?.length) return false;
+      const c = f.clip, sp = c.speed || 1;
+      const pecas = ficam.map(([a, b], i) => {
+        const r = structuredClone(c);
+        if (i > 0) r.id = uid('c');
+        const la = a / sp, lb = b / sp;
+        r.in = (c.in || 0) + a;
+        r.duration = Math.max(MIN_CLIP, lb - la);
+        r.start = c.start + la;
+        if (c.kf) { r.kf = sliceKf(c.kf, la, lb); if (!r.kf) delete r.kf; }
+        if (i > 0) { if (r.animIn) r.animIn = { id: 'none', duration: 0.5 }; r.fadeIn = 0; }
+        if (i < ficam.length - 1) { if (r.animOut) r.animOut = { id: 'none', duration: 0.5 }; r.fadeOut = 0; r.transition = null; }
+        return r;
+      });
+      tirado = c.duration - pecas.reduce((s, r) => s + r.duration, 0);
+      if (!f.track.main) {
+        const fim = c.start + c.duration;
+        let t = c.start;
+        for (const r of pecas) { r.start = t; t += r.duration; }
+        for (const o of f.track.clips) if (o.id !== c.id && o.start >= fim - 1e-6) o.start = Math.max(0, o.start - tirado);
+      }
+      f.track.clips.splice(f.index, 1, ...pecas);
+      n = pecas.length;
+      return true;
+    });
+    return { n, tirado };
   },
 
   deleteSelection() {

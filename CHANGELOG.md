@@ -3,6 +3,37 @@
 Formato baseado em [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/) e versões no padrão
 [SemVer](https://semver.org/lang/pt-BR/): MAJOR.MINOR.PATCH — correções sobem o PATCH, recursos novos o MINOR.
 
+## [1.10.0] — 2026-10-28
+
+### Adicionado
+- **Zoom para fora no reprodutor** (botão de zoom no rodapé ou **Ctrl + roda do mouse**: 75%, 50%, 33%, 25%):
+  sobra espaço em volta da tela para pegar e mexer no que está fora dela. A parte das camadas que passa da
+  borda aparece meio transparente, as alças funcionam fora da tela e as outras camadas ganham um contorno.
+- **Cor do fundo em volta da tela** (botão de balde no rodapé do reprodutor): Escuro, Grafite, Cinza, Cinza claro,
+  Claro ou qualquer outra cor. Fica guardada.
+- **Efeito só numa área** (aba do efeito → "Onde aplicar" → "Só uma área"): oval ou retângulo, com bordas suaves e
+  opção de inverter (efeito em tudo, menos na área). A área se mexe e se redimensiona no reprodutor como uma
+  imagem. O efeito é calculado dentro da área — uma torção ou um zoom ficam centrados nela (ex.: só no rosto) —
+  e o resto do quadro fica intacto, na prévia e no vídeo exportado.
+- **Cortar silêncios** (botão direito no clipe, ou aba Áudio): tira as pausas automaticamente. Ajuste a
+  sensibilidade, o silêncio mínimo e a margem e veja na barra o que sai; "Ouvir o resultado" toca só o que fica.
+  Na faixa principal os pedaços se juntam sozinhos; nas outras, o que vem depois na mesma faixa anda para trás.
+  Um passo só de desfazer.
+- **Biblioteca em páginas:** com muitas mídias (ex.: 1000 importadas) a biblioteca e a lista de áudios mostram
+  uma página por vez (30, 60, 120 ou 240 por página), sem travar; ao importar, vai para a página dos novos.
+  Ctrl+A, Shift+clique e arrastar continuam valendo para a lista inteira.
+
+### Mudado
+- **Escala, largura e altura até 2000%** (antes 500%) e posição até ±300%. Para não travar com escalas grandes,
+  quando a camada fica bem maior que a tela (e não está girando nem animada), só a parte visível é desenhada e
+  exportada — o resultado é o mesmo e a exportação continua rápida.
+
+### Testes
+- `autotest-v110` (24 checagens): zoom para fora, alças fora da tela, cor do fundo, Ctrl+roda, escala 2000%
+  (prévia = exportação, rápida), páginas da biblioteca e Ctrl+A, efeito numa área (fora intacto, dentro muda, na
+  prévia e na exportação; camada de fogo numa área), cortar silêncios (análise, corte, ímã, desfazer, exportação
+  e faixa de áudio).
+
 ## [1.9.0] — 2026-10-24
 
 ### Adicionado

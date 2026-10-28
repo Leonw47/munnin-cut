@@ -10,6 +10,8 @@ import { makeCanvas } from './util.js';
 import { drawShape, shapeSize } from './shapes.js';
 import { keyPixels, DEFAULT_CHROMA } from '../shared/chroma.js';
 import { recortarFoto } from './chromaImg.js';
+import { clipVisivel } from '../shared/visivel.js';
+import { areaCaixa, desenhaMascara } from '../shared/area.js';
 import { resolveAt } from '../shared/keyframes.js';
 
 const DEF_BG = { type: 'color', color: '#000000', blur: 0.03 };
@@ -287,8 +289,9 @@ export class Compositor {
   }
 
   drawMainClip(ctx, env, clip0, lt, W, H) {
-    const clip = resolveAt(clip0, lt); // pontos de modificação: valores deste instante
-    const media = env.mediaMap[clip.mediaId];
+    const media = env.mediaMap[clip0.mediaId];
+    // pontos de modificação: valores deste instante; escala grande parada: só a parte visível
+    const clip = this.semRecorte ? resolveAt(clip0, lt) : clipVisivel(resolveAt(clip0, lt), media, W, H);
     const bg = clip.bg || env.project.background || DEF_BG;
     const meta = media ? env.metaMap[media.id] : null;
     const src = media ? env.source(clip, media) : null;
@@ -388,8 +391,41 @@ export class Compositor {
     };
   }
 
+  // Efeito só numa área: roda num compositor auxiliar do tamanho da área (o efeito "enxerga" só ela) e volta
+  // por cima do quadro com a máscara de bordas suaves. Mesmas contas da exportação (shared/area.js).
+  applyEffectArea(c, lt, W, H) {
+    const bb = areaCaixa(c.area, W, H);
+    if (!bb) return;
+    if (!this.sub) this.sub = new Compositor(makeCanvas(bb.w, bb.h));
+    const sub = this.sub;
+    if (sub.canvas.width !== bb.w || sub.canvas.height !== bb.h) { sub.canvas.width = bb.w; sub.canvas.height = bb.h; }
+    sub.ctx.setTransform(1, 0, 0, 1, 0, 0);
+    sub.ctx.globalAlpha = 1;
+    sub.ctx.globalCompositeOperation = 'copy';
+    sub.ctx.filter = 'none';
+    sub.ctx.drawImage(this.canvas, bb.x, bb.y, bb.w, bb.h, 0, 0, bb.w, bb.h);
+    sub.ctx.globalCompositeOperation = 'source-over';
+    sub.applyEffectClip({ ...c, area: null }, lt, bb.w, bb.h);
+    const mk = this.tmp(20, bb.w, bb.h);
+    desenhaMascara(mk.ctx, c.area, bb, W, H);
+    const t = this.tmp(19, bb.w, bb.h);
+    t.ctx.drawImage(sub.canvas, 0, 0);
+    t.ctx.globalCompositeOperation = 'destination-in';
+    t.ctx.drawImage(mk.canvas, 0, 0);
+    t.ctx.globalCompositeOperation = 'source-over';
+    const ctx = this.ctx;
+    ctx.save();
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.globalAlpha = 1;
+    ctx.globalCompositeOperation = 'source-over';
+    ctx.filter = 'none';
+    ctx.drawImage(t.canvas, bb.x, bb.y);
+    ctx.restore();
+  }
+
   // Clipe da faixa de efeitos: ops de cor + transformação (prev) + camada desenhada.
   applyEffectClip(c, lt, W, H) {
+    if (c.area?.on && c.effect?.kind !== 'filter') { this.applyEffectArea(c, lt, W, H); return; }
     this.applyFrameOps(effectClipOps(c), lt, W, H);
     if (c.effect?.kind === 'filter') return;
     const def = effectDef(c.effect?.id);
@@ -478,6 +514,28 @@ export class Compositor {
     }
   }
 
+  // Zoom para fora do reprodutor: desenha as camadas inteiras (sem cortar na borda da tela) num canvas maior,
+  // para mostrar meio transparente o que fica fora da tela. Só orientação: efeitos e transições não entram.
+  renderFora(ctx, env, W, H) {
+    const { project, t } = env;
+    const k = W / project.width;
+    this.semRecorte = true;
+    try {
+      const main = mainTrack(project);
+      if (main && !main.hidden) {
+        const act = main.clips.filter((c) => t >= c.start && t < c.start + c.duration);
+        const c = act[act.length - 1];
+        if (c) this.drawMainClip(ctx, env, c, t - c.start, W, H);
+      }
+      const mi = main ? project.tracks.indexOf(main) : project.tracks.length;
+      for (let i = mi - 1; i >= 0; i--) {
+        const tr = project.tracks[i];
+        if (tr.hidden || tr.kind === 'audio' || tr.kind === 'effect') continue;
+        for (const c of tr.clips) if (t >= c.start && t < c.start + c.duration && c.type !== 'effect') this.drawClipLayer(ctx, env, c, t - c.start, W, H, k);
+      }
+    } finally { this.semRecorte = false; }
+  }
+
   drawClipLayer(ctx, env, c0, lt, W, H, k) {
     const c = resolveAt(c0, lt); // pontos de modificação: valores deste instante
     if (c.type === 'text') this.drawText(ctx, c, lt, W, H, k);
@@ -486,8 +544,9 @@ export class Compositor {
       const media = env.mediaMap[c.mediaId];
       const src = media ? env.source(c, media) : null;
       if (!src) return;
-      const L = this.mediaLayer(c, media, src, W, H, lt);
-      if (L) this.place(ctx, c, L, lt, W, H);
+      const cv = this.semRecorte ? c : clipVisivel(c, media, W, H);
+      const L = this.mediaLayer(cv, media, src, W, H, lt);
+      if (L) this.place(ctx, cv, L, lt, W, H);
     }
   }
 

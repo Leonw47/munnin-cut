@@ -8,6 +8,7 @@ import { temVoz, vozDoClipe, VOZ_VERSAO } from './shared/voz.js';
 import { renderizarVoz } from './engine/voz.js';
 import { recortarFoto } from './engine/chromaImg.js';
 import { DEFAULT_CHROMA } from './shared/chroma.js';
+import { areaCaixa, desenhaMascara } from './shared/area.js';
 import { EXPORT_FORMATS } from './shared/defs.js';
 import { uid } from './shared/timeline.js';
 
@@ -78,8 +79,11 @@ export function startExport(opts) {
       let done = 0;
       for (const sg of layered) {
         const res = sg.def.layer.res || 1;
-        const lw = Math.max(2, Math.round((size.width * res) / 2) * 2), lh = Math.max(2, Math.round((size.height * res) / 2) * 2);
-        const key = `${sg.def.id}_${lw}x${lh}_${sg.frames}_${hashKey(JSON.stringify([LAYER_VERSION, sg.def.id, sg.frames, sg.D, sg.k, sg.seed, lw, lh, fps, sg.def.layer.blend]))}`;
+        // efeito só numa área: a camada é desenhada no tamanho da área (shared/area.js)
+        const bb = sg.clip.area?.on ? areaCaixa(sg.clip.area, size.width, size.height) : null;
+        const AW = bb ? bb.w : size.width, AH = bb ? bb.h : size.height;
+        const lw = Math.max(2, Math.round((AW * res) / 2) * 2), lh = Math.max(2, Math.round((AH * res) / 2) * 2);
+        const key = `${sg.def.id}_${lw}x${lh}_${sg.frames}_${hashKey(JSON.stringify([LAYER_VERSION, sg.def.id, sg.frames, sg.D, sg.k, sg.seed, lw, lh, fps, sg.def.layer.blend, AW, AH]))}`;
         const st = await window.api.fxCacheStatus(key);
         if (!st.done) {
           const cv = makeCanvas(lw, lh);
@@ -112,7 +116,28 @@ export function startExport(opts) {
         } else {
           done += sg.frames;
         }
-        fxAssets[sg.clip.id] = { pattern: `${st.dir}\\f_%05d.png`, scaled: lw !== size.width || lh !== size.height };
+        fxAssets[sg.clip.id] = { pattern: `${st.dir}\\f_%05d.png`, scaled: lw !== AW || lh !== AH };
+      }
+    }
+    // máscaras (bordas suaves) dos efeitos aplicados só numa área: PNG em tons de cinza do tamanho da área
+    const areaAssets = {};
+    if (fmt.kind !== 'audio') {
+      for (const tr of project.tracks) {
+        if (tr.hidden) continue;
+        for (const c of tr.clips) {
+          if (c.type !== 'effect' || c.effect?.kind === 'filter' || !c.area?.on) continue;
+          const bb = areaCaixa(c.area, size.width, size.height);
+          if (!bb) continue;
+          const cv = makeCanvas(bb.w, bb.h);
+          const x = cv.getContext('2d');
+          const mk = makeCanvas(bb.w, bb.h);
+          desenhaMascara(mk.getContext('2d'), c.area, bb, size.width, size.height);
+          x.fillStyle = '#000';
+          x.fillRect(0, 0, bb.w, bb.h);
+          x.drawImage(mk, 0, 0);
+          const blob = await new Promise((r) => cv.toBlob(r, 'image/png'));
+          areaAssets[c.id] = { path: await window.api.writeFile(`job:${jobId}`, `area_${c.id}.png`, new Uint8Array(await blob.arrayBuffer())) };
+        }
       }
     }
     const mediaMap = {};
@@ -202,7 +227,7 @@ export function startExport(opts) {
     const { args, graph, duration } = buildExport({
       project, mediaMap,
       out: { format, width: size.width, height: size.height, fps, quality, vKbps, aKbps, hw, endAt },
-      textAssets, fxAssets, vozAssets, chromaAssets, coverAsset, outPath, graphPath: '__GRAPH__',
+      textAssets, fxAssets, vozAssets, chromaAssets, areaAssets, coverAsset, outPath, graphPath: '__GRAPH__',
     });
     const off = window.api.onExportProgress((p) => { if (p.jobId === jobId && onProgress) onProgress(p.pct, p.speed); });
     try {

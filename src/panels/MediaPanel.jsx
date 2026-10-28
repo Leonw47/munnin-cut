@@ -4,7 +4,7 @@ import { useStore, libView } from '../store.js';
 import { fmtTime } from '../shared/timeline.js';
 import { mediaUrl } from '../engine/util.js';
 import { startDrag, endDrag } from '../dnd.js';
-import { ContextMenu, MenuItem, Seg } from '../components/ui.jsx';
+import { ContextMenu, MenuItem, Seg, Paginador, usePaginas } from '../components/ui.jsx';
 import InlineTrim from '../components/InlineTrim.jsx';
 
 /** at: tempo (s) para mostrar o quadro do vídeo nesse ponto (durante o corte no cartão) */
@@ -54,7 +54,7 @@ export function dragMedia(e, m, order) {
   } else startDrag(e, { kind: 'media', id: m.id }, m.name);
 }
 
-function MediaCard({ m, mt, used, selected, multi, order, onMenu }) {
+const MediaCard = React.memo(function MediaCard({ m, mt, used, selected, multi, onMenu }) {
   const [scrub, setScrub] = useState(null);
   const [hover, setHover] = useState(null); // passar o mouse no vídeo mostra o quadro daquele ponto
   const s = useStore.getState;
@@ -64,13 +64,13 @@ function MediaCard({ m, mt, used, selected, multi, order, onMenu }) {
   const varre = m.type === 'video' && ready && !trimming && m.duration > 0 && mt?.thumbs;
   return (
     <div className={`media-card ${selected ? 'selected' : ''} ${selected && multi ? 'multi' : ''} ${trimming ? 'trimming' : ''}`} data-id={m.id} draggable={ready}
-      onDragStart={(e) => dragMedia(e, m, order)}
+      onDragStart={(e) => dragMedia(e, m, libView.order)}
       onDragEnd={endDrag}
-      onClick={(e) => s().libClick(m.id, { ctrl: e.ctrlKey || e.metaKey, shift: e.shiftKey, order })}
+      onClick={(e) => s().libClick(m.id, { ctrl: e.ctrlKey || e.metaKey, shift: e.shiftKey, order: libView.order })}
       onDoubleClick={() => ready && s().addMedia(m.id)}
       onContextMenu={(e) => {
         e.preventDefault();
-        if (!s().libSel.includes(m.id)) s().libClick(m.id, { order });
+        if (!s().libSel.includes(m.id)) s().libClick(m.id, { order: libView.order });
         onMenu({ x: e.clientX, y: e.clientY, m });
       }}
       title={`${m.name}${m.width ? ` · ${m.width}×${m.height}` : ''} — clique para selecionar (Ctrl/Shift: vários), clique duplo para adicionar`}>
@@ -91,7 +91,7 @@ function MediaCard({ m, mt, used, selected, multi, order, onMenu }) {
       <div className="name">{m.name}</div>
     </div>
   );
-}
+});
 
 export default function MediaPanel() {
   const media = useStore((s) => s.project.media);
@@ -112,6 +112,8 @@ export default function MediaPanel() {
   const list = media.filter((m) => (filter === 'all' || m.type === filter) && (!q || m.name.toLowerCase().includes(q.toLowerCase())));
   const order = list.map((m) => m.id);
   libView.order = order;
+  const pg = usePaginas(list.length, `${filter}|${q}`);
+  const pagina = list.slice(pg.ini, pg.fim);
   const importMedia = async () => {
     const paths = await window.api.openMediaDialog();
     if (paths.length) s().importPaths(paths);
@@ -151,11 +153,13 @@ export default function MediaPanel() {
           <button className="btn small" onClick={() => s().removeMediaMany(libSel)}><Trash2 size={13} /> Remover</button>
         </div>
       )}
+      <Paginador p={pg} total={list.length} rotulo="mídias" />
       <div className="grid">
-        {list.map((m) => (
-          <MediaCard key={m.id} m={m} mt={meta[m.id]} used={used.has(m.id)} selected={libSel.includes(m.id)} multi={multi} order={order} onMenu={setMenu} />
+        {pagina.map((m) => (
+          <MediaCard key={m.id} m={m} mt={meta[m.id]} used={used.has(m.id)} selected={libSel.includes(m.id)} multi={multi} onMenu={setMenu} />
         ))}
       </div>
+      {pg.paginas > 1 && <div style={{ marginTop: 8 }}><Paginador p={pg} total={list.length} rotulo="mídias" /></div>}
       {media.length > 0 && !multi && (
         <div className="hint" style={{ marginTop: 10 }}>
           Clique num vídeo ou áudio para cortar direto no cartão (arraste as alças; Shift = ajuste fino). Ctrl+clique ou Shift+clique selecionam vários; Delete remove.

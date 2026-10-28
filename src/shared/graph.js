@@ -8,6 +8,8 @@ import { animScaleExpr, animOffsetExprs, animFades, animRotExpr } from './anim.j
 import { effectDef, isSegmentEffect, seedOf } from './effects.js';
 import { isCamTransition, camClipChain, camMixExpr } from './camtrans.js';
 import { chromaFilters } from './chroma.js';
+import { clipVisivel } from './visivel.js';
+import { areaCaixa } from './area.js';
 import { audioFxFilters } from './audiofx.js';
 import { splitKf, maxScale, maxScaleX, maxScaleY, kfExpr, kfWindows, KF_PROPS, COLOR_PROPS } from './keyframes.js';
 
@@ -54,7 +56,7 @@ export function effectSegments(src, FPS) {
     for (const c of tr.clips) {
       if (c.type !== 'effect' || c.effect?.kind === 'filter') continue;
       const def = effectDef(c.effect?.id);
-      if (!isSegmentEffect(def)) continue;
+      if (!isSegmentEffect(def) && !(def && c.area?.on)) continue;
       const a = Math.max(0, Math.round(c.start * FPS)), b = Math.min(TF, Math.round((c.start + c.duration) * FPS));
       if (b - a < 1) continue;
       out.push({ clip: c, def, a, b, frames: b - a, D: (b - a) / FPS, k: (c.effect.intensity ?? 100) / 100, seed: seedOf(c.id) });
@@ -68,7 +70,7 @@ export function effectSegments(src, FPS) {
  *   project, mediaMap {id: media}, out {format, width, height, fps, quality, hw},
  *   textAssets {clipId: {path, cx, cy}}, outPath, graphPath
  */
-export function buildExport({ project: src, mediaMap, out, textAssets = {}, fxAssets = {}, vozAssets = {}, chromaAssets = {}, coverAsset = null, outPath, graphPath }) {
+export function buildExport({ project: src, mediaMap, out, textAssets = {}, fxAssets = {}, vozAssets = {}, chromaAssets = {}, areaAssets = {}, coverAsset = null, outPath, graphPath }) {
   const project = layoutProject(structuredClone(src));
   // pontos de modificação: valores constantes viram fixos; o que muda fica em c.__dyn
   for (const tr of project.tracks) {
@@ -289,6 +291,7 @@ export function buildExport({ project: src, mediaMap, out, textAssets = {}, fxAs
       if (!showMain || !usable(m) || (m.type !== 'video' && m.type !== 'image')) {
         F.push(`color=c=${hex(bgDefault.color)}:s=${W}x${H}:r=${FPS}:d=${r3(dur)},format=yuv420p,setsar=1,settb=AVTB[${lab}]`);
       } else {
+        c = clipVisivel(c, m, W, H);   // escala grande parada: só a parte visível
         const idx = inputFor(c, m);
         const { f: pre, stat, loop, w: pw, h: ph } = preChain(c, m);
         const pl = placeChain(c, 0, 0, pw, ph);
@@ -377,6 +380,7 @@ export function buildExport({ project: src, mediaMap, out, textAssets = {}, fxAs
       }
       const m = mediaOf(c);
       if (!usable(m)) return null;
+      c = clipVisivel(c, m, W, H);   // escala grande parada: só a parte visível
       const idx = inputFor(c, m);
       // (fotos: o laço e os trechos de cor já vêm no preChain; os quadros parados entram depois)
       const { f: pf, w: pw, h: ph } = preChain(c, m);
@@ -442,7 +446,9 @@ export function buildExport({ project: src, mediaMap, out, textAssets = {}, fxAs
         const en = `between(t,${r3(s)},${r3(e)})`;
         if (c.type === 'effect') {
           const def = c.effect?.kind === 'filter' ? null : effectDef(c.effect?.id);
-          if (!isSegmentEffect(def)) {
+          // efeito só numa área: calculado num recorte do tamanho da área (veja shared/area.js)
+          const bb = def && c.area?.on ? areaCaixa(c.area, W, H) : null;
+          if (!isSegmentEffect(def) && !bb) {
             const fl = ffFilters(effectClipOps(c), { w: W, h: H, enable: en, t0: s });
             if (!fl.length) continue;
             const needsRgb = fl.some((x) => x.startsWith('colorchannelmixer') || x.startsWith('lutrgb'));
@@ -464,19 +470,28 @@ export function buildExport({ project: src, mediaMap, out, textAssets = {}, fxAs
           const segs = [];
           if (pre) { const l = L('sg'); F.push(`[${lp}]trim=end_frame=${a},setpts=PTS-STARTPTS,format=yuv420p,setsar=1[${l}]`); segs.push(l); }
           let m = L('fm');
-          const opsF = ffFilters(effectClipOps(c), { w: W, h: H, t0: 0 });
+          const EW = bb ? bb.w : W, EH = bb ? bb.h : H;   // tamanho do "quadro" que o efeito enxerga
+          const opsF = ffFilters(effectClipOps(c), { w: EW, h: EH, t0: 0 });
           const needsRgb = opsF.some((x) => x.startsWith('colorchannelmixer') || x.startsWith('lutrgb'));
-          F.push(`[${lm}]trim=start_frame=${a}:end_frame=${b},setpts=PTS-STARTPTS${opsF.length ? `,${needsRgb ? 'format=gbrp,' : ''}${opsF.join(',')}` : ''}[${m}]`);
+          const opsTxt = opsF.length ? `,${needsRgb ? 'format=gbrp,' : ''}${opsF.join(',')}` : '';
+          let orig = null;
+          if (bb) {
+            const t = L('fm'), x = L('ax');
+            orig = L('ao');
+            F.push(`[${lm}]trim=start_frame=${a}:end_frame=${b},setpts=PTS-STARTPTS,split[${orig}][${x}]`);
+            F.push(`[${x}]crop=${bb.w}:${bb.h}:${bb.x}:${bb.y}${opsTxt}[${t}]`);
+            m = t;
+          } else F.push(`[${lm}]trim=start_frame=${a}:end_frame=${b},setpts=PTS-STARTPTS${opsTxt}[${m}]`);
           if (def.ff) {
             const o = L('fx');
-            F.push(def.ff({ inL: m, outL: o, W, H, FPS, D, k, seed: seedOf(c.id), L }));
+            F.push(def.ff({ inL: m, outL: o, W: EW, H: EH, FPS, D, k, seed: seedOf(c.id), L }));
             m = o;
           }
           const asset = fxAssets[c.id];
           if (def.layer && asset) {
             const idx = addInput(['-framerate', String(FPS), '-start_number', '0', '-i', asset.pattern]);
             const o = L('fl'), y = L('ly');
-            const up = asset.scaled ? `scale=${W}:${H}:flags=bicubic,` : '';
+            const up = asset.scaled ? `scale=${EW}:${EH}:flags=bicubic,` : '';
             if (def.layer.blend === 'screen') {
               const x = L('lx');
               F.push(`[${m}]format=gbrp[${x}];[${idx}:v]${up}format=gbrp,setpts=PTS-STARTPTS[${y}];[${x}][${y}]blend=all_mode=screen[${o}]`);
@@ -484,6 +499,18 @@ export function buildExport({ project: src, mediaMap, out, textAssets = {}, fxAs
               F.push(`[${idx}:v]${up}format=rgba,setpts=PTS-STARTPTS[${y}];[${m}][${y}]overlay=eof_action=pass:format=auto[${o}]`);
             }
             m = o;
+          }
+          if (bb) {
+            // volta para o quadro: o recorte com efeito entra por cima do original, com a máscara de bordas suaves
+            const mk = areaAssets[c.id];
+            const fa = L('fa'), r = L('ar');
+            if (mk) {
+              const mi = addInput(['-i', mk.path]);
+              const g = L('mg'), x = L('mx');
+              F.push(`[${mi}:v]scale=${bb.w}:${bb.h},format=gray[${g}];[${m}]format=rgba[${x}];[${x}][${g}]alphamerge[${fa}]`);
+            } else F.push(`[${m}]format=rgba[${fa}]`);
+            F.push(`[${orig}][${fa}]overlay=${bb.x}:${bb.y}:format=auto[${r}]`);
+            m = r;
           }
           const me = L('sg');
           F.push(`[${m}]format=yuv420p,setsar=1[${me}]`);

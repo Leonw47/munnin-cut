@@ -147,11 +147,38 @@ class Engine {
       this.dirty = false;
       // conta-gotas: mostra o clipe sem o recorte para escolher a cor original
       this.comp.noChroma = s.pickColor ? new Set([s.pickColor.clipId]) : null;
-      this.comp.render({
+      const env = {
         project: s.fxPreview ? withFxPreview(project, s, performance.now()) : project, mediaMap, metaMap: s.meta, t,
         source: (clip, media) => this.source(clip, media, s.meta[media.id]),
-      });
+      };
+      this.comp.render(env);
+      if (this.fora) this.desenhaFora(env);
     }
+  }
+
+  // Zoom para fora: o que passa da borda da tela aparece meio transparente em volta (canvas atrás do quadro).
+  // fora = { canvas, x, y, w, h, sw, sh } em pixels de tela (CSS); definido pelo reprodutor.
+  desenhaFora(env) {
+    const g = this.fora;
+    const dpr = Math.min(2, window.devicePixelRatio || 1);
+    const cw = Math.max(2, Math.round(g.sw * dpr)), ch = Math.max(2, Math.round(g.sh * dpr));
+    if (g.canvas.width !== cw || g.canvas.height !== ch) { g.canvas.width = cw; g.canvas.height = ch; }
+    if (!this.foraComp || this.foraComp.canvas !== g.canvas) this.foraComp = new Compositor(g.canvas);
+    const ctx = g.canvas.getContext('2d');
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.globalAlpha = 1;
+    ctx.clearRect(0, 0, cw, ch);
+    const W = Math.round(g.w * dpr), H = Math.round(g.h * dpr);
+    // desenha opaco num rascunho do tamanho do palco (a tela deslocada até onde ela aparece) e aplica a
+    // transparência de uma vez — as camadas passam da borda da tela sem serem cortadas
+    const big = this.foraComp.tmp(30, cw, ch);
+    big.ctx.save();
+    big.ctx.translate(Math.round(g.x * dpr), Math.round(g.y * dpr));
+    try { this.foraComp.renderFora(big.ctx, env, W, H); } catch { big.ctx.restore(); return; }
+    big.ctx.restore();
+    ctx.globalAlpha = 0.38;
+    ctx.drawImage(big.canvas, 0, 0);
+    ctx.globalAlpha = 1;
   }
 
   // Miniatura JPEG do quadro atual (capa do rascunho).

@@ -495,3 +495,15 @@ input[type="range"]::-webkit-slider-thumb { -webkit-appearance: none; width: 12p
 .loop-band .lb-h { position: absolute; top: -2px; bottom: -2px; width: 6px; cursor: ew-resize; }
 .loop-band .lb-h.a { left: -3px; }
 .loop-band .lb-h.b { right: -3px; }
+/* páginas da biblioteca */
+.paginador { display: flex; align-items: center; gap: 3px; flex-wrap: wrap; margin: 2px 0 10px; font-size: 11px; }
+.paginador .pg { border: 0; background: var(--panel-3); color: var(--text-2); min-width: 24px; height: 22px; border-radius: 5px; padding: 0 6px; cursor: pointer; }
+.paginador .pg.on { background: var(--accent); color: var(--accent-ink); font-weight: 700; }
+.paginador .pg-pontos { color: var(--muted); padding: 0 2px; }
+.paginador .pg-info { margin-left: 6px; color: var(--muted); flex: 1; min-width: 90px; }
+.paginador select { height: 22px; font-size: 11px; padding: 0 4px; }
+/* cortar silêncios */
+.silencio-barra { position: relative; height: 34px; border-radius: 6px; background: #16161a; overflow: hidden; }
+.silencio-barra .fica { position: absolute; top: 0; bottom: 0; background: rgba(34, 197, 94, 0.55); }
+.silencio-barra .sai { position: absolute; top: 6px; bottom: 6px; background: rgba(239, 68, 68, 0.7); border-radius: 2px; }
+.player-stage canvas.fora-tela { position: absolute; left: 0; top: 0; background: transparent; box-shadow: none; pointer-events: none; }
