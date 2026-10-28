@@ -13,6 +13,11 @@ export function editClip(id, fn) {
   groupCheckpoint();
   useStore.getState().updateClip(id, fn, { silent: true });
 }
+// O mesmo, para vários clipes editados juntos (outros: os demais do grupo; ver updateGrupo).
+export function editGrupo(id, outros, fn, opts = {}) {
+  groupCheckpoint();
+  useStore.getState().updateGrupo(id, outros, fn, { silent: true, ...opts });
+}
 export function editProject(fn) {
   groupCheckpoint();
   useStore.getState().commit(fn, { silent: true, keepTracks: true });

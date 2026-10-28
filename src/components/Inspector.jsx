@@ -1,5 +1,5 @@
-import React, { useEffect, useRef, useState } from 'react';
-import { FlipHorizontal2, FlipVertical2, RotateCcw, AlignLeft, AlignCenter, AlignRight, Italic, CaseUpper, AudioLines, Trash2, Link, Pipette, Loader2, Headphones, Scissors } from 'lucide-react';
+import React, { createContext, useContext, useEffect, useRef, useState } from 'react';
+import { FlipHorizontal2, FlipVertical2, RotateCcw, AlignLeft, AlignCenter, AlignRight, Italic, CaseUpper, AudioLines, Trash2, Link, Pipette, Loader2, Headphones, Scissors, Layers } from 'lucide-react';
 import { DEFAULT_CHROMA, chromaParams } from '../shared/chroma.js';
 import { AREA_PADRAO } from '../shared/area.js';
 import { AUDIO_FX, DEFAULT_AUDIO_FX } from '../shared/audiofx.js';
@@ -10,7 +10,8 @@ import { findClip, fmtTime, projectDuration, mainTrack, transitionDuration, next
 import { FONTS, RATIOS, FPS_LIST, TEXT_PRESETS, TRANSITIONS, ANIMS_IN, ANIMS_OUT, ANIMS_LOOP, DEFAULT_TEXT, sizeFromMedia } from '../shared/defs.js';
 import { ADJUST_FIELDS, FILTERS } from '../shared/ops.js';
 import { EFFECTS, FX_CATS } from '../shared/effects.js';
-import { Slider, Field, Toggle, Seg, ColorInput, editClip, editProject } from './ui.jsx';
+import { Slider, Field, Toggle, Seg, ColorInput, editClip, editGrupo, editProject } from './ui.jsx';
+import { grupoDaSelecao, tipoGrupo, NOME_GRUPO } from '../shared/grupo.js';
 import { FxSample, EffectThumb, fxHover, clearFxPreview, useClearFxPreviewOnUnmount } from '../panels/FxPanels.jsx';
 import { presetCss } from '../panels/TextPanel.jsx';
 import { ShapeThumb } from '../panels/ShapesPanel.jsx';
@@ -129,11 +130,27 @@ function TransitionPanel({ clipId }) {
   );
 }
 
+// ---------- Edição em grupo ----------
+// Com vários clipes do mesmo tipo selecionados, o painel mostra o principal e cada mudança vale para todos
+// (store.updateGrupo: só o que foi mexido passa para os outros, com o valor final).
+const GrupoCtx = createContext(null);
+function useEdicao() {
+  const g = useContext(GrupoCtx);
+  const outros = g?.outros || null;
+  return {
+    grupo: g, outros,
+    ed: (id, fn, opts) => editGrupo(id, outros, fn, opts),
+    upd: (id, patch, opts) => useStore.getState().updateGrupo(id, outros, patch, opts),
+  };
+}
+
 // ---------- Controle com ponto de modificação (◆) ----------
 // Sem pontos, o controle muda o valor fixo do clipe. Com pontos, mexer no controle cria/atualiza
 // o ponto no instante da agulha — e entre os pontos a mudança é suave.
 function KfSlider({ clip, prop, label, min, max, step = 1, toUi = (v) => v, fromUi = (v) => v }) {
   const time = useStore((s) => s.time);
+  const project = useStore((s) => s.project);
+  const { grupo, outros, ed } = useEdicao();
   const justCreatedAt = useRef(null);
   const lt = time - clip.start;
   const inside = lt >= -1e-3 && lt <= clip.duration + 1e-3;
@@ -141,6 +158,18 @@ function KfSlider({ clip, prop, label, min, max, step = 1, toUi = (v) => v, from
   const on = hasKf(clip, prop);
   const at = on && hasKfAt(clip, prop, tl);
   const v = propAt(clip, prop, tl);
+  // grupo: os outros recebem o mesmo valor; quem tem pontos neste controle tem os pontos deslocados junto
+  const vals = grupo ? outros.map((oid) => findClip(project, oid)?.clip).filter(Boolean).map((c) => KF_PROPS[prop].get(c)) : [];
+  const varios = vals.some((x) => Math.abs(x - KF_PROPS[prop].get(clip)) > 1e-6);
+  const mudarGrupo = (x) => {
+    const nv = fromUi(x), delta = nv - v;
+    const lo = fromUi(min), hi = fromUi(max);
+    ed(clip.id, (c) => {
+      if (c.id === clip.id) setPropAt(c, prop, nv, tl);
+      else if (hasKf(c, prop)) c.kf = { ...c.kf, [prop]: c.kf[prop].map((k) => ({ t: k.t, v: Math.max(lo, Math.min(hi, k.v + delta)) })) };
+      else KF_PROPS[prop].set(c, nv);
+    }, { porClipe: true });
+  };
   const toggle = () => {
     if (!inside) { useStore.getState().toastMsg('Coloque a agulha sobre o clipe para marcar o ponto.'); return; }
     if (at && justCreatedAt.current !== null && Math.abs(justCreatedAt.current - tl) < 1 / 60) {
@@ -157,10 +186,12 @@ function KfSlider({ clip, prop, label, min, max, step = 1, toUi = (v) => v, from
     <div className="field">
       <label>
         {label}
-        <button className={`kf-btn ${at ? 'on' : on ? 'has' : ''}`} onClick={toggle}
-          title={at ? 'Tirar o ponto de modificação deste momento' : on ? 'Marcar um ponto neste momento (este valor já muda ao longo do clipe)' : 'Marcar ponto de modificação neste momento'}>◆</button>
+        {varios && <span className="hint" title="Os clipes estão com valores diferentes; mexer aqui deixa todos com o mesmo"> (vários)</span>}
+        {!grupo && <button className={`kf-btn ${at ? 'on' : on ? 'has' : ''}`} onClick={toggle}
+          title={at ? 'Tirar o ponto de modificação deste momento' : on ? 'Marcar um ponto neste momento (este valor já muda ao longo do clipe)' : 'Marcar ponto de modificação neste momento'}>◆</button>}
       </label>
       <div><Slider value={toUi(v)} min={min} max={max} step={step} onChange={(x) => {
+        if (grupo) { mudarGrupo(x); return; }
         if (on && !at) justCreatedAt.current = tl;
         editClip(clip.id, (c) => setPropAt(c, prop, fromUi(x), tl));
       }} /></div>
@@ -178,6 +209,7 @@ function clearKf(c, props) {
 
 // ---------- Abas de clipe ----------
 function BasicTab({ clip, isMain }) {
+  const { ed, upd, grupo } = useEdicao();
   const tf = clip.transform || {};
   const cr = clip.crop || { l: 0, t: 0, r: 0, b: 0 };
   const id = clip.id;
@@ -186,11 +218,11 @@ function BasicTab({ clip, isMain }) {
   return (
     <>
       <Section title="Transformar" right={
-        <button className="btn small ghost" title="Redefinir" onClick={() => useStore.getState().updateClip(id, (c) => { c.transform = { x: 0, y: 0, scale: 1, scaleX: 1, scaleY: 1, rotation: 0, flipH: false, flipV: false }; c.opacity = 1; clearKf(c, ['x', 'y', 'scale', 'scaleX', 'scaleY', 'rotation', 'opacity']); })}><RotateCcw size={13} /> Redefinir</button>
+        <button className="btn small ghost" title="Redefinir" onClick={() => upd(id, (c) => { c.transform = { x: 0, y: 0, scale: 1, scaleX: 1, scaleY: 1, rotation: 0, flipH: false, flipV: false }; c.opacity = 1; clearKf(c, ['x', 'y', 'scale', 'scaleX', 'scaleY', 'rotation', 'opacity']); }, { porClipe: true })}><RotateCcw size={13} /> Redefinir</button>
       }>
         {isMedia && (
           <Field label="Encaixe">
-            <Seg value={clip.fit || 'contain'} onChange={(v) => useStore.getState().updateClip(id, { fit: v })}
+            <Seg value={clip.fit || 'contain'} onChange={(v) => upd(id, { fit: v })}
               options={[{ value: 'contain', label: 'Ajustar' }, { value: 'cover', label: 'Preencher' }]} />
           </Field>
         )}
@@ -201,20 +233,20 @@ function BasicTab({ clip, isMain }) {
         <KfSlider clip={clip} prop="y" label="Posição Y" min={-300} max={300} step={0.1} {...pct} />
         <KfSlider clip={clip} prop="rotation" label="Rotação" min={-180} max={180} toUi={(v) => Math.round(v)} />
         <KfSlider clip={clip} prop="opacity" label="Opacidade" min={0} max={100} toUi={(v) => Math.round(v * 100)} fromUi={(x) => x / 100} />
-        <div className="hint" style={{ marginBottom: 8 }}>◆ marca um ponto de modificação no momento da agulha (ou use a tecla K). Com dois pontos ou mais, o valor muda suavemente entre eles.</div>
+        {!grupo && <div className="hint" style={{ marginBottom: 8 }}>◆ marca um ponto de modificação no momento da agulha (ou use a tecla K). Com dois pontos ou mais, o valor muda suavemente entre eles.</div>}
         {(isMedia || clip.type === 'shape') && (
           <Field label="Espelhar">
             <div style={{ display: 'flex', gap: 6 }}>
-              <button className={`btn small ${tf.flipH ? 'primary' : ''}`} onClick={() => useStore.getState().updateClip(id, (c) => { c.transform.flipH = !c.transform.flipH; })}><FlipHorizontal2 size={14} /> Horizontal</button>
-              <button className={`btn small ${tf.flipV ? 'primary' : ''}`} onClick={() => useStore.getState().updateClip(id, (c) => { c.transform.flipV = !c.transform.flipV; })}><FlipVertical2 size={14} /> Vertical</button>
+              <button className={`btn small ${tf.flipH ? 'primary' : ''}`} onClick={() => upd(id, (c) => { c.transform.flipH = !c.transform.flipH; })}><FlipHorizontal2 size={14} /> Horizontal</button>
+              <button className={`btn small ${tf.flipV ? 'primary' : ''}`} onClick={() => upd(id, (c) => { c.transform.flipV = !c.transform.flipV; })}><FlipVertical2 size={14} /> Vertical</button>
             </div>
           </Field>
         )}
       </Section>
       {isMedia && (
-        <Section title="Recortar" right={<button className="btn small ghost" onClick={() => useStore.getState().updateClip(id, { crop: { l: 0, t: 0, r: 0, b: 0 } })}><RotateCcw size={13} /></button>}>
+        <Section title="Recortar" right={<button className="btn small ghost" onClick={() => upd(id, { crop: { l: 0, t: 0, r: 0, b: 0 } })}><RotateCcw size={13} /></button>}>
           {[['l', 'Esquerda'], ['r', 'Direita'], ['t', 'Topo'], ['b', 'Base']].map(([k, n]) => (
-            <Field key={k} label={n}><Slider value={Math.round((cr[k] || 0) * 100)} min={0} max={45} onChange={(v) => editClip(id, (c) => { c.crop = { ...(c.crop || {}), [k]: v / 100 }; })} /></Field>
+            <Field key={k} label={n}><Slider value={Math.round((cr[k] || 0) * 100)} min={0} max={45} onChange={(v) => ed(id, (c) => { c.crop = { ...(c.crop || {}), [k]: v / 100 }; })} /></Field>
           ))}
         </Section>
       )}
@@ -222,13 +254,13 @@ function BasicTab({ clip, isMain }) {
       {isMedia && isMain && (
         <Section title="Fundo">
           <Field label="Tipo">
-            <Seg value={bgMode} onChange={(v) => useStore.getState().updateClip(id, (c) => {
+            <Seg value={bgMode} onChange={(v) => upd(id, (c) => {
               const pb = useStore.getState().project.background;
               c.bg = v === 'project' ? null : { type: v, color: c.bg?.color || pb?.color || '#000000', blur: c.bg?.blur ?? pb?.blur ?? 0.03 };
             })} options={[{ value: 'project', label: 'Padrão' }, { value: 'color', label: 'Cor' }, { value: 'blur', label: 'Desfoque' }]} />
           </Field>
-          {clip.bg?.type === 'color' && <Field label="Cor"><ColorInput value={clip.bg.color} onChange={(v) => editClip(id, (c) => { c.bg.color = v; })} /></Field>}
-          {clip.bg?.type === 'blur' && <Field label="Desfoque"><Slider value={Math.round((clip.bg.blur ?? 0.03) * 1000)} min={5} max={80} onChange={(v) => editClip(id, (c) => { c.bg.blur = v / 1000; })} /></Field>}
+          {clip.bg?.type === 'color' && <Field label="Cor"><ColorInput value={clip.bg.color} onChange={(v) => ed(id, (c) => { c.bg.color = v; })} /></Field>}
+          {clip.bg?.type === 'blur' && <Field label="Desfoque"><Slider value={Math.round((clip.bg.blur ?? 0.03) * 1000)} min={5} max={80} onChange={(v) => ed(id, (c) => { c.bg.blur = v / 1000; })} /></Field>}
           <FundoEscondido clip={clip} />
         </Section>
       )}
@@ -259,19 +291,20 @@ const isColorida = (hex) => chromaParams({ color: hex }).modo === 'uv';
 
 // Chroma key: remove o fundo verde/azul (ou de outra cor) do vídeo ou da foto.
 function ChromaSection({ clip }) {
+  const { ed, upd, outros } = useEdicao();
   const id = clip.id;
   const ch = { ...DEFAULT_CHROMA, ...(clip.chroma || {}) };
   const picking = useStore((s) => s.pickColor?.clipId === id);
-  const set = (fn) => editClip(id, (c) => { c.chroma = { ...DEFAULT_CHROMA, ...(c.chroma || {}) }; fn(c.chroma); });
+  const set = (fn) => ed(id, (c) => { c.chroma = { ...DEFAULT_CHROMA, ...(c.chroma || {}) }; fn(c.chroma); });
   return (
-    <Section title="Remover fundo (chroma key)" right={<Toggle on={ch.on} onChange={(v) => useStore.getState().updateClip(id, (c) => { c.chroma = { ...DEFAULT_CHROMA, ...(c.chroma || {}), on: v }; })} />}>
+    <Section title="Remover fundo (chroma key)" right={<Toggle on={ch.on} onChange={(v) => upd(id, (c) => { c.chroma = { ...DEFAULT_CHROMA, ...(c.chroma || {}), on: v }; })} />}>
       {!ch.on && <div className="hint">Para fundo verde, azul ou de uma cor só (como o branco de foto de produto): a cor do fundo fica transparente e aparece o que estiver embaixo.</div>}
       {ch.on && <>
         <Field label="Cor do fundo">
           <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
             <ColorInput value={ch.color} swatches={false} onChange={(v) => set((c) => { c.color = v; })} />
             <button className={`btn small ${picking ? 'primary' : ''}`} title="Clique e depois clique no fundo do vídeo, no reprodutor"
-              onClick={() => useStore.setState({ pickColor: picking ? null : { clipId: id } })}><Pipette size={13} /> {picking ? 'Clique no vídeo…' : 'Escolher no vídeo'}</button>
+              onClick={() => useStore.setState({ pickColor: picking ? null : { clipId: id, outros } })}><Pipette size={13} /> {picking ? 'Clique no vídeo…' : 'Escolher no vídeo'}</button>
           </div>
         </Field>
         <div style={{ display: 'flex', gap: 6, marginBottom: 8 }}>
@@ -294,13 +327,14 @@ function ChromaSection({ clip }) {
 }
 
 function AudioTab({ clip }) {
+  const { ed, upd, grupo } = useEdicao();
   const id = clip.id;
   const s = useStore.getState;
   const sp = clip.speed || 1;
   const fmtP = (t) => { t = Math.max(0, t || 0); const m = Math.floor(t / 60); return `${String(m).padStart(2, '0')}:${(t - m * 60).toFixed(2).padStart(5, '0')}`; };
   return (
     <>
-      {clip.type === 'audio' && (
+      {clip.type === 'audio' && !grupo && (
         <Section title="Trecho usado">
           <div className="kv" style={{ marginBottom: 10 }}>
             <span>Início no arquivo</span><span>{fmtP(clip.in || 0)}</span>
@@ -313,15 +347,15 @@ function AudioTab({ clip }) {
       )}
       <Section title="Som">
         <KfSlider clip={clip} prop="volume" label="Volume" min={0} max={200} toUi={(v) => Math.round(v * 100)} fromUi={(x) => x / 100} />
-        <Field label="Entrada suave"><Slider value={clip.fadeIn || 0} min={0} max={Math.min(10, Number(clip.duration.toFixed(1)))} step={0.1} onChange={(v) => editClip(id, (c) => { c.fadeIn = v; })} /></Field>
-        <Field label="Saída suave"><Slider value={clip.fadeOut || 0} min={0} max={Math.min(10, Number(clip.duration.toFixed(1)))} step={0.1} onChange={(v) => editClip(id, (c) => { c.fadeOut = v; })} /></Field>
-        <Field label="Sem som"><Toggle on={!!clip.muted} onChange={(v) => s().updateClip(id, { muted: v })} /></Field>
+        <Field label="Entrada suave"><Slider value={clip.fadeIn || 0} min={0} max={Math.min(10, Number(clip.duration.toFixed(1)))} step={0.1} onChange={(v) => ed(id, (c) => { c.fadeIn = v; })} /></Field>
+        <Field label="Saída suave"><Slider value={clip.fadeOut || 0} min={0} max={Math.min(10, Number(clip.duration.toFixed(1)))} step={0.1} onChange={(v) => ed(id, (c) => { c.fadeOut = v; })} /></Field>
+        <Field label="Sem som"><Toggle on={!!clip.muted} onChange={(v) => upd(id, { muted: v })} /></Field>
       </Section>
       <VozSection clip={clip} />
       <AudioFxSection clip={clip} />
       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-        {clip.type === 'video' && <button className="btn" onClick={() => s().extractAudio(id)}><AudioLines size={14} /> Separar áudio</button>}
-        <button className="btn" onClick={() => s().openSilencios(id)} title="Tira as pausas e silêncios automaticamente"><Scissors size={14} /> Cortar silêncios</button>
+        {clip.type === 'video' && <button className="btn" onClick={() => s().extractAudio(grupo ? grupo.ids : id)}><AudioLines size={14} /> Separar áudio{grupo ? ` dos ${grupo.ids.length}` : ''}</button>}
+        {!grupo && <button className="btn" onClick={() => s().openSilencios(id)} title="Tira as pausas e silêncios automaticamente"><Scissors size={14} /> Cortar silêncios</button>}
       </div>
     </>
   );
@@ -329,11 +363,12 @@ function AudioTab({ clip }) {
 
 // Limpeza e realce da fala, em tempo real (a mesma cadeia vai para a exportação).
 function VozSection({ clip }) {
+  const { ed, upd } = useEdicao();
   const id = clip.id;
   const v = vozDoClipe(clip);
   const original = useStore((s) => s.vozOriginal);
   const status = useStore((s) => s.meta[clip.mediaId]?.vozStatus);
-  const set = (patch) => editClip(id, (c) => {
+  const set = (patch) => ed(id, (c) => {
     c.voz = { ...vozDoClipe(c), ...patch };
     if (c.audioFx?.denoise) c.audioFx = { ...c.audioFx, denoise: false };   // o "reduzir ruído" antigo passa a ser este
   });
@@ -341,12 +376,12 @@ function VozSection({ clip }) {
   const ativo = temVoz(clip);
   return (
     <Section title="Voz — limpar e realçar" right={
-      <button className="btn small ghost" title="Desligar tudo" onClick={() => useStore.getState().updateClip(id, (c) => { c.voz = { ...VOZ_PADRAO }; if (c.audioFx?.denoise) c.audioFx = { ...c.audioFx, denoise: false }; })}><RotateCcw size={13} /></button>
+      <button className="btn small ghost" title="Desligar tudo" onClick={() => upd(id, (c) => { c.voz = { ...VOZ_PADRAO }; if (c.audioFx?.denoise) c.audioFx = { ...c.audioFx, denoise: false }; })}><RotateCcw size={13} /></button>
     }>
       <div className="anim-grid" style={{ marginBottom: 10 }}>
         {PRESETS_VOZ.map((p) => (
           <button key={p.id} className={preset?.id === p.id ? 'on' : ''} title="Ponto de partida; ajuste nos controles abaixo"
-            onClick={() => useStore.getState().updateClip(id, (c) => { c.voz = { ...VOZ_PADRAO, ...p.v }; if (c.audioFx?.denoise) c.audioFx = { ...c.audioFx, denoise: false }; })}>{p.name}</button>
+            onClick={() => upd(id, (c) => { c.voz = { ...VOZ_PADRAO, ...p.v }; if (c.audioFx?.denoise) c.audioFx = { ...c.audioFx, denoise: false }; })}>{p.name}</button>
         ))}
       </div>
       <Field label="Reduzir ruído" title="Tira o ruído de fundo (ventilador, carro, conversa distante, chiado). Funciona na prévia, em tempo real.">
@@ -376,13 +411,14 @@ function VozSection({ clip }) {
 }
 
 function AudioFxSection({ clip }) {
+  const { ed, upd } = useEdicao();
   const id = clip.id;
   const fx = { ...DEFAULT_AUDIO_FX, ...(clip.audioFx || {}) };
-  const set = (fn) => editClip(id, (c) => { c.audioFx = { ...DEFAULT_AUDIO_FX, ...(c.audioFx || {}) }; fn(c.audioFx); });
-  const pick = (fid) => useStore.getState().updateClip(id, (c) => { c.audioFx = { ...DEFAULT_AUDIO_FX, ...(c.audioFx || {}), id: fid }; });
+  const set = (fn) => ed(id, (c) => { c.audioFx = { ...DEFAULT_AUDIO_FX, ...(c.audioFx || {}) }; fn(c.audioFx); });
+  const pick = (fid) => upd(id, (c) => { c.audioFx = { ...DEFAULT_AUDIO_FX, ...(c.audioFx || {}), id: fid }; });
   return (
     <>
-      <Section title="Efeitos de voz" right={<button className="btn small ghost" title="Redefinir" onClick={() => useStore.getState().updateClip(id, (c) => { c.audioFx = null; })}><RotateCcw size={13} /></button>}>
+      <Section title="Efeitos de voz" right={<button className="btn small ghost" title="Redefinir" onClick={() => upd(id, (c) => { c.audioFx = null; })}><RotateCcw size={13} /></button>}>
         <div className="anim-grid">
           {AUDIO_FX.map((a) => <button key={a.id} className={fx.id === a.id ? 'on' : ''} onClick={() => pick(a.id)}>{a.name}</button>)}
         </div>
@@ -398,9 +434,10 @@ function AudioFxSection({ clip }) {
 }
 
 function SpeedTab({ clip }) {
+  const { ed } = useEdicao();
   const id = clip.id;
   const sp = clip.speed || 1;
-  const setSpeed = (v) => editClip(id, (c, p) => {
+  const setSpeed = (v) => ed(id, (c, p) => {
     const m = p.media.find((x) => x.id === c.mediaId);
     const old = c.speed || 1;
     const src = c.duration * old;
@@ -408,7 +445,7 @@ function SpeedTab({ clip }) {
     c.duration = src / v;
     if (c.kf) c.kf = scaleKf(c.kf, old / v); // os pontos acompanham o conteúdo
     if (m && m.duration) c.duration = Math.min(c.duration, (m.duration - (c.in || 0)) / v);
-  });
+  }, { porClipe: true });
   return (
     <Section title="Velocidade">
       <Field label="Multiplicador">
@@ -425,12 +462,13 @@ function SpeedTab({ clip }) {
 }
 
 function ReverseRow({ clip }) {
+  const { outros } = useEdicao();
   const rev = useStore((s) => s.meta[clip.mediaId]?.rev?.[clip.type === 'audio' ? 'audio' : 'video']);
   const working = clip.reverse && rev?.status === 'working';
   return (
     <div style={{ marginTop: 14, paddingTop: 12, borderTop: '1px solid var(--line)' }}>
       <Field label="Reverter" title="Toca o clipe de trás para frente (imagem e som)">
-        <Toggle on={!!clip.reverse} onChange={() => useStore.getState().toggleReverse(clip.id)} />
+        <Toggle on={!!clip.reverse} onChange={() => useStore.getState().toggleReverse(clip.id, outros || [])} />
       </Field>
       <div className="hint">
         {working ? `Preparando a cópia invertida… ${Math.round((rev.progress || 0) * 100)}%`
@@ -441,6 +479,7 @@ function ReverseRow({ clip }) {
 }
 
 function AnimTab({ clip }) {
+  const { ed, upd } = useEdicao();
   const id = clip.id;
   const ai = clip.animIn || { id: 'none', duration: 0.5 };
   const ao = clip.animOut || { id: 'none', duration: 0.5 };
@@ -450,23 +489,23 @@ function AnimTab({ clip }) {
     <>
       <Section title="Entrada">
         <div className="anim-grid">
-          {ANIMS_IN.map((a) => <button key={a.id} className={ai.id === a.id ? 'on' : ''} onClick={() => useStore.getState().updateClip(id, (c) => { c.animIn = { id: a.id, duration: ai.duration || 0.5 }; })}>{a.name}</button>)}
+          {ANIMS_IN.map((a) => <button key={a.id} className={ai.id === a.id ? 'on' : ''} onClick={() => upd(id, (c) => { c.animIn = { id: a.id, duration: ai.duration || 0.5 }; })}>{a.name}</button>)}
         </div>
-        {ai.id !== 'none' && <Field label="Duração"><Slider value={Math.min(ai.duration, maxD)} min={0.1} max={maxD} step={0.1} onChange={(v) => editClip(id, (c) => { c.animIn.duration = v; })} /></Field>}
+        {ai.id !== 'none' && <Field label="Duração"><Slider value={Math.min(ai.duration, maxD)} min={0.1} max={maxD} step={0.1} onChange={(v) => ed(id, (c) => { c.animIn.duration = v; })} /></Field>}
       </Section>
       <Section title="Saída">
         <div className="anim-grid">
-          {ANIMS_OUT.map((a) => <button key={a.id} className={ao.id === a.id ? 'on' : ''} onClick={() => useStore.getState().updateClip(id, (c) => { c.animOut = { id: a.id, duration: ao.duration || 0.5 }; })}>{a.name}</button>)}
+          {ANIMS_OUT.map((a) => <button key={a.id} className={ao.id === a.id ? 'on' : ''} onClick={() => upd(id, (c) => { c.animOut = { id: a.id, duration: ao.duration || 0.5 }; })}>{a.name}</button>)}
         </div>
-        {ao.id !== 'none' && <Field label="Duração"><Slider value={Math.min(ao.duration, maxD)} min={0.1} max={maxD} step={0.1} onChange={(v) => editClip(id, (c) => { c.animOut.duration = v; })} /></Field>}
+        {ao.id !== 'none' && <Field label="Duração"><Slider value={Math.min(ao.duration, maxD)} min={0.1} max={maxD} step={0.1} onChange={(v) => ed(id, (c) => { c.animOut.duration = v; })} /></Field>}
       </Section>
       <Section title="Contínua (o clipe todo)">
         <div className="anim-grid">
-          {ANIMS_LOOP.map((a) => <button key={a.id} className={al.id === a.id ? 'on' : ''} onClick={() => useStore.getState().updateClip(id, (c) => { c.animLoop = a.id === 'none' ? null : { id: a.id, speed: al.speed ?? 1, amount: al.amount ?? 100 }; })}>{a.name}</button>)}
+          {ANIMS_LOOP.map((a) => <button key={a.id} className={al.id === a.id ? 'on' : ''} onClick={() => upd(id, (c) => { c.animLoop = a.id === 'none' ? null : { id: a.id, speed: al.speed ?? 1, amount: al.amount ?? 100 }; })}>{a.name}</button>)}
         </div>
         {al.id !== 'none' && <>
-          {al.id !== 'kenburns' && <Field label="Velocidade"><Slider value={al.speed ?? 1} min={0.25} max={3} step={0.05} onChange={(v) => editClip(id, (c) => { c.animLoop.speed = v; })} /></Field>}
-          {al.id !== 'spin' && <Field label="Intensidade"><Slider value={al.amount ?? 100} min={10} max={200} onChange={(v) => editClip(id, (c) => { c.animLoop.amount = v; })} /></Field>}
+          {al.id !== 'kenburns' && <Field label="Velocidade"><Slider value={al.speed ?? 1} min={0.25} max={3} step={0.05} onChange={(v) => ed(id, (c) => { c.animLoop.speed = v; })} /></Field>}
+          {al.id !== 'spin' && <Field label="Intensidade"><Slider value={al.amount ?? 100} min={10} max={200} onChange={(v) => ed(id, (c) => { c.animLoop.amount = v; })} /></Field>}
         </>}
         <div className="hint">Fica junto com a entrada e a saída: dá para entrar quicando e continuar pulsando, por exemplo.</div>
       </Section>
@@ -475,14 +514,15 @@ function AnimTab({ clip }) {
 }
 
 function AdjustTab({ clip }) {
+  const { upd, grupo } = useEdicao();
   const id = clip.id;
   const a = clip.adjust || {};
   return (
-    <Section title="Ajustes de cor" right={<button className="btn small ghost" onClick={() => useStore.getState().updateClip(id, (c) => { c.adjust = {}; clearKf(c, ADJUST_FIELDS.map((f) => `adjust.${f.key}`)); })}><RotateCcw size={13} /> Redefinir</button>}>
+    <Section title="Ajustes de cor" right={<button className="btn small ghost" onClick={() => upd(id, (c) => { c.adjust = {}; clearKf(c, ADJUST_FIELDS.map((f) => `adjust.${f.key}`)); }, { porClipe: true })}><RotateCcw size={13} /> Redefinir</button>}>
       {ADJUST_FIELDS.map((f) => (
         <KfSlider key={f.key} clip={clip} prop={`adjust.${f.key}`} label={f.name} min={f.min} max={f.max} toUi={(v) => Math.round(v)} />
       ))}
-      <div className="hint">◆ marca um ponto neste momento: dá para clarear, escurecer ou mudar a cor aos poucos ao longo do clipe.</div>
+      {!grupo && <div className="hint">◆ marca um ponto neste momento: dá para clarear, escurecer ou mudar a cor aos poucos ao longo do clipe.</div>}
     </Section>
   );
 }
@@ -510,6 +550,7 @@ function FilterTab({ clip }) {
 }
 
 function TextTab({ clip }) {
+  const { ed, upd, grupo } = useEdicao();
   const id = clip.id;
   const st = clip.text;
   const ref = useRef(null);
@@ -519,11 +560,11 @@ function TextTab({ clip }) {
     window.addEventListener('focus-text-editor', h);
     return () => window.removeEventListener('focus-text-editor', h);
   }, []);
-  const set = (fn) => editClip(id, (c) => fn(c.text));
+  const set = (fn) => ed(id, (c) => fn(c.text));
   if (clip.sticker) {
     return (
       <Section title="Sticker">
-        <Field label="Emoji"><input type="text" value={st.content} style={{ width: 80, fontSize: 20, fontFamily: 'Segoe UI Emoji' }} onKeyDown={(e) => e.stopPropagation()} onChange={(e) => { const v = e.target.value; set((t) => { t.content = v; }); }} /></Field>
+        {!grupo && <Field label="Emoji"><input type="text" value={st.content} style={{ width: 80, fontSize: 20, fontFamily: 'Segoe UI Emoji' }} onKeyDown={(e) => e.stopPropagation()} onChange={(e) => { const v = e.target.value; set((t) => { t.content = v; }); }} /></Field>}
         <Field label="Tamanho"><Slider value={st.size} min={20} max={800} onChange={(v) => set((t) => { t.size = v; })} /></Field>
         <Field label="Sombra"><Toggle on={!!st.shadow?.enabled} onChange={(v) => set((t) => { t.shadow = { ...t.shadow, enabled: v }; })} /></Field>
       </Section>
@@ -531,28 +572,30 @@ function TextTab({ clip }) {
   }
   return (
     <>
-      <Section title="Texto">
-        <textarea ref={ref} rows={3} value={st.content} onKeyDown={(e) => e.stopPropagation()}
-          onChange={(e) => { const v = e.target.value; set((t) => { t.content = v; }); }} />
-      </Section>
+      {grupo ? <div className="hint" style={{ marginBottom: 10 }}>Cada um continua com o próprio texto; o resto (fonte, cor, contorno, fundo…) muda em todos.</div> : (
+        <Section title="Texto">
+          <textarea ref={ref} rows={3} value={st.content} onKeyDown={(e) => e.stopPropagation()}
+            onChange={(e) => { const v = e.target.value; set((t) => { t.content = v; }); }} />
+        </Section>
+      )}
       <Section title="Fonte">
         <Field label="Família">
           <select className="font-select" value={st.font} style={{ fontFamily: `"${st.font}"` }}
-            onChange={(e) => { const fam = e.target.value; const f = FONTS.find((x) => x.family === fam); useStore.getState().updateClip(id, (c) => { c.text.font = fam; if (!f.weights.includes(c.text.weight)) c.text.weight = f.weights[f.weights.length - 1]; }); }}>
+            onChange={(e) => { const fam = e.target.value; const f = FONTS.find((x) => x.family === fam); upd(id, (c) => { c.text.font = fam; if (!f.weights.includes(c.text.weight)) c.text.weight = f.weights[f.weights.length - 1]; }); }}>
             {FONTS.map((f) => <option key={f.family} value={f.family} style={{ fontFamily: `"${f.family}"` }}>{f.family}</option>)}
           </select>
         </Field>
         <Field label="Peso">
-          <Seg value={st.weight} onChange={(v) => useStore.getState().updateClip(id, (c) => { c.text.weight = v; })}
+          <Seg value={st.weight} onChange={(v) => upd(id, (c) => { c.text.weight = v; })}
             options={(font?.weights || [400, 700]).map((w) => ({ value: w, label: w === 400 ? 'Normal' : w === 700 ? 'Negrito' : 'Black' }))} />
         </Field>
         <Field label="Estilo">
           <div style={{ display: 'flex', gap: 4 }}>
-            <button className={`icon-btn ${st.italic ? 'active' : ''}`} title="Itálico" onClick={() => useStore.getState().updateClip(id, (c) => { c.text.italic = !c.text.italic; })}><Italic size={15} /></button>
-            <button className={`icon-btn ${st.uppercase ? 'active' : ''}`} title="Maiúsculas" onClick={() => useStore.getState().updateClip(id, (c) => { c.text.uppercase = !c.text.uppercase; })}><CaseUpper size={15} /></button>
+            <button className={`icon-btn ${st.italic ? 'active' : ''}`} title="Itálico" onClick={() => upd(id, (c) => { c.text.italic = !c.text.italic; })}><Italic size={15} /></button>
+            <button className={`icon-btn ${st.uppercase ? 'active' : ''}`} title="Maiúsculas" onClick={() => upd(id, (c) => { c.text.uppercase = !c.text.uppercase; })}><CaseUpper size={15} /></button>
             <span style={{ width: 8 }} />
             {[['left', AlignLeft], ['center', AlignCenter], ['right', AlignRight]].map(([a, I]) => (
-              <button key={a} className={`icon-btn ${st.align === a ? 'active' : ''}`} onClick={() => useStore.getState().updateClip(id, (c) => { c.text.align = a; })}><I size={15} /></button>
+              <button key={a} className={`icon-btn ${st.align === a ? 'active' : ''}`} onClick={() => upd(id, (c) => { c.text.align = a; })}><I size={15} /></button>
             ))}
           </div>
         </Field>
@@ -565,19 +608,19 @@ function TextTab({ clip }) {
         <div className="grid small">
           {TEXT_PRESETS.map((p) => (
             <div key={p.id} className="text-preset" style={{ fontSize: 14 }} title={p.name}
-              onClick={() => useStore.getState().updateClip(id, (c) => { c.text = { ...defaultsFor(p.style), content: c.text.content }; })}>
+              onClick={() => upd(id, (c) => { c.text = { ...defaultsFor(p.style), content: c.text.content }; })}>
               <span style={{ ...presetCss(p.style), ...(p.style.background?.enabled ? { background: p.style.background.color, padding: '1px 5px', borderRadius: 3 } : {}) }}>Aa</span>
             </div>
           ))}
         </div>
       </Section>
-      <Section title="Contorno" right={<Toggle on={!!st.stroke?.enabled} onChange={(v) => useStore.getState().updateClip(id, (c) => { c.text.stroke = { ...c.text.stroke, enabled: v }; })} />}>
+      <Section title="Contorno" right={<Toggle on={!!st.stroke?.enabled} onChange={(v) => upd(id, (c) => { c.text.stroke = { ...c.text.stroke, enabled: v }; })} />}>
         {st.stroke?.enabled && <>
           <Field label="Cor"><ColorInput value={st.stroke.color} onChange={(v) => set((t) => { t.stroke.color = v; })} /></Field>
           <Field label="Espessura"><Slider value={st.stroke.width} min={1} max={30} onChange={(v) => set((t) => { t.stroke.width = v; })} /></Field>
         </>}
       </Section>
-      <Section title="Fundo" right={<Toggle on={!!st.background?.enabled} onChange={(v) => useStore.getState().updateClip(id, (c) => { c.text.background = { ...c.text.background, enabled: v }; })} />}>
+      <Section title="Fundo" right={<Toggle on={!!st.background?.enabled} onChange={(v) => upd(id, (c) => { c.text.background = { ...c.text.background, enabled: v }; })} />}>
         {st.background?.enabled && <>
           <Field label="Cor"><ColorInput value={st.background.color} onChange={(v) => set((t) => { t.background.color = v; })} /></Field>
           <Field label="Opacidade"><Slider value={Math.round((st.background.opacity ?? 1) * 100)} min={0} max={100} onChange={(v) => set((t) => { t.background.opacity = v / 100; })} /></Field>
@@ -585,7 +628,7 @@ function TextTab({ clip }) {
           <Field label="Cantos"><Slider value={st.background.radius} min={0} max={100} onChange={(v) => set((t) => { t.background.radius = v; })} /></Field>
         </>}
       </Section>
-      <Section title="Sombra" right={<Toggle on={!!st.shadow?.enabled} onChange={(v) => useStore.getState().updateClip(id, (c) => { c.text.shadow = { ...c.text.shadow, enabled: v }; })} />}>
+      <Section title="Sombra" right={<Toggle on={!!st.shadow?.enabled} onChange={(v) => upd(id, (c) => { c.text.shadow = { ...c.text.shadow, enabled: v }; })} />}>
         {st.shadow?.enabled && <>
           <Field label="Cor"><ColorInput value={st.shadow.color} onChange={(v) => set((t) => { t.shadow.color = v; })} /></Field>
           <Field label="Opacidade"><Slider value={Math.round((st.shadow.opacity ?? 1) * 100)} min={0} max={100} onChange={(v) => set((t) => { t.shadow.opacity = v / 100; })} /></Field>
@@ -599,9 +642,10 @@ function TextTab({ clip }) {
 }
 
 function ShapeTab({ clip }) {
+  const { ed, upd } = useEdicao();
   const id = clip.id;
   const sh = clip.shape;
-  const set = (fn) => editClip(id, (c) => fn(c.shape));
+  const set = (fn) => ed(id, (c) => fn(c.shape));
   const big = Math.max(useStore.getState().project.width, useStore.getState().project.height);
   return (
     <>
@@ -609,7 +653,7 @@ function ShapeTab({ clip }) {
         <div className="grid small">
           {SHAPE_KINDS.map((k) => (
             <div key={k.id} className={`shape-card ${sh.kind === k.id ? 'active' : ''}`} style={sh.kind === k.id ? { borderColor: 'var(--accent)' } : undefined}
-              title={k.name} onClick={() => useStore.getState().updateClip(id, (c) => { c.shape.kind = k.id; })}>
+              title={k.name} onClick={() => upd(id, (c) => { c.shape.kind = k.id; })}>
               <ShapeThumb shape={{ kind: k.id, w: 100, h: k.id === 'arrow' ? 60 : 100, radius: 18, fill: '#d9d9de' }} size={56} />
             </div>
           ))}
@@ -622,16 +666,16 @@ function ShapeTab({ clip }) {
           <Field label="Cantos"><Slider value={sh.radius || 0} min={0} max={400} onChange={(v) => set((s) => { s.radius = v; })} /></Field>
         )}
       </Section>
-      <Section title="Preenchimento" right={<Toggle on={sh.fillOn !== false} onChange={(v) => useStore.getState().updateClip(id, (c) => { c.shape.fillOn = v; })} />}>
+      <Section title="Preenchimento" right={<Toggle on={sh.fillOn !== false} onChange={(v) => upd(id, (c) => { c.shape.fillOn = v; })} />}>
         {sh.fillOn !== false && <Field label="Cor"><ColorInput value={sh.fill} onChange={(v) => set((s) => { s.fill = v; })} /></Field>}
       </Section>
-      <Section title="Contorno" right={<Toggle on={!!sh.stroke?.enabled} onChange={(v) => useStore.getState().updateClip(id, (c) => { c.shape.stroke = { ...c.shape.stroke, enabled: v }; })} />}>
+      <Section title="Contorno" right={<Toggle on={!!sh.stroke?.enabled} onChange={(v) => upd(id, (c) => { c.shape.stroke = { ...c.shape.stroke, enabled: v }; })} />}>
         {sh.stroke?.enabled && <>
           <Field label="Cor"><ColorInput value={sh.stroke.color} onChange={(v) => set((s) => { s.stroke.color = v; })} /></Field>
           <Field label="Espessura"><Slider value={sh.stroke.width} min={1} max={120} onChange={(v) => set((s) => { s.stroke.width = v; })} /></Field>
         </>}
       </Section>
-      <Section title="Sombra" right={<Toggle on={!!sh.shadow?.enabled} onChange={(v) => useStore.getState().updateClip(id, (c) => { c.shape.shadow = { ...c.shape.shadow, enabled: v }; })} />}>
+      <Section title="Sombra" right={<Toggle on={!!sh.shadow?.enabled} onChange={(v) => upd(id, (c) => { c.shape.shadow = { ...c.shape.shadow, enabled: v }; })} />}>
         {sh.shadow?.enabled && <>
           <Field label="Cor"><ColorInput value={sh.shadow.color} onChange={(v) => set((s) => { s.shadow.color = v; })} /></Field>
           <Field label="Opacidade"><Slider value={Math.round((sh.shadow.opacity ?? 1) * 100)} min={0} max={100} onChange={(v) => set((s) => { s.shadow.opacity = v / 100; })} /></Field>
@@ -648,6 +692,7 @@ function defaultsFor(style) {
 }
 
 function EffectTab({ clip }) {
+  const { ed, upd } = useEdicao();
   const id = clip.id;
   const fx = clip.effect;
   const isFilter = fx.kind === 'filter';
@@ -660,7 +705,7 @@ function EffectTab({ clip }) {
         <div className="grid small">
           {list.map((x) => (
             <div key={x.id} className={`fx-card ${fx.id === x.id ? 'active' : ''}`} {...fxHover(isFilter ? 'filter' : 'effect', x.id)}
-              onClick={() => { clearFxPreview(); useStore.getState().updateClip(id, (c) => { c.effect.id = x.id; }); }}>
+              onClick={() => { clearFxPreview(); upd(id, (c) => { c.effect.id = x.id; }); }}>
               <div className="sw">{isFilter ? <FxSample ops={x.ops} /> : <EffectThumb id={x.id} />}</div>
               <div className="label">{x.name}</div>
             </div>
@@ -668,7 +713,7 @@ function EffectTab({ clip }) {
         </div>
         {!isFilter && <div className="hint" style={{ marginTop: 8 }}>Outras categorias ficam na aba Efeitos, à esquerda.</div>}
       </Section>
-      <Field label="Intensidade"><Slider value={fx.intensity ?? 100} min={0} max={100} onChange={(v) => editClip(id, (c) => { c.effect.intensity = v; })} /></Field>
+      <Field label="Intensidade"><Slider value={fx.intensity ?? 100} min={0} max={100} onChange={(v) => ed(id, (c) => { c.effect.intensity = v; })} /></Field>
       {!isFilter && <AreaSection clip={clip} />}
       <div className="hint" style={{ marginTop: 8 }}>Vale para todas as faixas abaixo, de {fmtTime(clip.start, 30, true)} a {fmtTime(clip.start + clip.duration, 30, true)}.</div>
     </>
@@ -677,13 +722,14 @@ function EffectTab({ clip }) {
 
 // Onde o efeito vale: a tela inteira ou só uma área (arrastada e redimensionada no reprodutor, como uma imagem).
 function AreaSection({ clip }) {
+  const { ed, upd } = useEdicao();
   const id = clip.id;
   const a = { ...AREA_PADRAO, ...(clip.area || {}), on: !!clip.area?.on };
-  const set = (fn) => editClip(id, (c) => { c.area = { ...AREA_PADRAO, ...(c.area || {}) }; fn(c.area); });
+  const set = (fn) => ed(id, (c) => { c.area = { ...AREA_PADRAO, ...(c.area || {}) }; fn(c.area); });
   return (
     <Section title="Onde aplicar">
       <Field label="Aplicar em">
-        <Seg value={a.on ? 'area' : 'tudo'} onChange={(v) => useStore.getState().updateClip(id, (c) => { c.area = { ...AREA_PADRAO, ...(c.area || {}), on: v === 'area' }; })}
+        <Seg value={a.on ? 'area' : 'tudo'} onChange={(v) => upd(id, (c) => { c.area = { ...AREA_PADRAO, ...(c.area || {}), on: v === 'area' }; })}
           options={[{ value: 'tudo', label: 'Tela inteira' }, { value: 'area', label: 'Só uma área' }]} />
       </Field>
       {a.on && <>
@@ -702,7 +748,7 @@ function AreaSection({ clip }) {
 
 const TYPE_NAME = { video: 'Vídeo', image: 'Foto', audio: 'Áudio', text: 'Texto', effect: 'Efeito', shape: 'Forma' };
 
-function ClipPanel({ id }) {
+function ClipPanel({ id, grupo = null }) {
   const project = useStore((s) => s.project);
   const meta = useStore((s) => s.meta);
   const found = findClip(project, id);
@@ -722,13 +768,16 @@ function ClipPanel({ id }) {
   else if (clip.type === 'audio') tabs = [{ id: 'audio', name: 'Áudio' }, { id: 'speed', name: 'Velocidade' }];
   else if (clip.type === 'effect') tabs = [{ id: 'effect', name: clip.effect.kind === 'filter' ? 'Filtro' : 'Efeito' }];
   const cur = tabs.find((t) => t.id === tab) ? tab : tabs[0].id;
+  const ctx = grupo ? { ...grupo, outros: grupo.ids.filter((x) => x !== id) } : null;
   return (
-    <>
+    <GrupoCtx.Provider value={ctx}>
       <Tabs tabs={tabs} value={cur} onChange={setTab} />
       <div className="insp-body">
-        <div className="hint" style={{ marginBottom: 12 }}>
-          {TYPE_NAME[clip.type]}{media ? ` · ${media.name}` : ''} · {fmtTime(clip.duration, 30, true)}{track.main ? ' · faixa principal' : ''}
-        </div>
+        {grupo ? <GrupoBanner grupo={grupo} clip={clip} /> : (
+          <div className="hint" style={{ marginBottom: 12 }}>
+            {TYPE_NAME[clip.type]}{media ? ` · ${media.name}` : ''} · {fmtTime(clip.duration, 30, true)}{track.main ? ' · faixa principal' : ''}
+          </div>
+        )}
         {missing && (
           <div className="err-box" style={{ marginBottom: 12, fontFamily: 'inherit' }}>
             O arquivo desta mídia não foi encontrado.{' '}
@@ -745,7 +794,28 @@ function ClipPanel({ id }) {
         {cur === 'effect' && <EffectTab clip={clip} />}
         {cur === 'shape' && <ShapeTab clip={clip} />}
       </div>
-    </>
+    </GrupoCtx.Provider>
+  );
+}
+
+// Aviso no topo do painel quando vários clipes estão sendo editados juntos, com as ações da seleção.
+function GrupoBanner({ grupo, clip }) {
+  const s = useStore.getState;
+  const [um, varios] = NOME_GRUPO[grupo.tipo] || ['clipe', 'clipes'];
+  return (
+    <div className="grupo-box">
+      <div className="grupo-tit"><Layers size={14} /> Editando {grupo.ids.length} {varios} juntos</div>
+      <div className="hint">
+        O que você mudar aqui vale para todos{grupo.resto ? ` (os outros ${grupo.resto} itens da seleção ficam como estão)` : ''}.
+        Os valores mostrados são os do {um} em {fmtTime(clip.start, 30, true)}; cada um continua com o próprio trecho{grupo.tipo === 'text' ? ' e o próprio texto' : ''}.
+      </div>
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 8 }}>
+        <button className="btn small" onClick={() => s().duplicateSelection()}>Duplicar</button>
+        <button className="btn small" onClick={() => s().copySelection()}>Copiar</button>
+        <button className="btn small danger" onClick={() => s().deleteSelection()}><Trash2 size={13} /> Excluir</button>
+        {grupo.resto > 0 && <button className="btn small ghost" onClick={() => useStore.setState((st) => ({ selection: { ...st.selection, grupo: null } }))}>Ver a seleção toda</button>}
+      </div>
+    </div>
   );
 }
 
@@ -787,10 +857,31 @@ function MultiPanel({ ids }) {
             <div className="hint">Vale para todos os clipes selecionados que têm essa opção. Quem tem pontos de modificação mantém a animação, só que proporcional ao novo valor.</div>
           </Section>
         )}
+        <EditarJuntos clips={clips} />
         <TextoEmLote ids={ids} titulo="Texto dos selecionados" />
         <div className="hint">Arraste qualquer um deles na linha do tempo para mover todos juntos. Escolher um filtro na aba Filtros aplica em todos os vídeos e fotos da seleção. Ctrl + clique tira ou põe um clipe na seleção.</div>
       </div>
     </>
+  );
+}
+
+// Seleção com tipos diferentes: escolher um tipo abre o painel completo dele, valendo para todos desse tipo.
+function EditarJuntos({ clips }) {
+  const por = new Map();
+  for (const c of clips) { const t = tipoGrupo(c); if (NOME_GRUPO[t]) por.set(t, [...(por.get(t) || []), c]); }
+  const tipos = [...por].filter(([, cs]) => cs.length > 1);
+  if (!tipos.length) return null;
+  return (
+    <Section title="Editar juntos">
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 6 }}>
+        {tipos.map(([t, cs]) => (
+          <button key={t} className="btn small" onClick={() => useStore.setState((st) => ({ selection: { ...st.selection, id: cs[0].id, grupo: t } }))}>
+            <Layers size={13} /> {cs.length} {NOME_GRUPO[t][1]}
+          </button>
+        ))}
+      </div>
+      <div className="hint">Abre todas as opções (filtro, ajustes, animação, voz…) de um tipo: o que mudar vale para todos os dele.</div>
+    </Section>
   );
 }
 
@@ -835,11 +926,13 @@ function BatchSlider({ ids, prop, label, min, max, toUi, fromUi }) {
 
 export default function Inspector() {
   const sel = useStore((s) => s.selection);
+  const project = useStore((s) => s.project);
+  const grupo = grupoDaSelecao(project, sel);
   return (
     <div className="panel">
       {!sel && <ProjectPanel />}
       {sel?.type === 'transition' && <TransitionPanel key={sel.id} clipId={sel.id} />}
-      {sel?.type === 'clip' && sel.ids?.length > 1 && <MultiPanel ids={sel.ids} />}
+      {sel?.type === 'clip' && sel.ids?.length > 1 && (grupo ? <ClipPanel key={`g_${grupo.lider}`} id={grupo.lider} grupo={grupo} /> : <MultiPanel ids={sel.ids} />)}
       {sel?.type === 'clip' && !(sel.ids?.length > 1) && <ClipPanel key={sel.id} id={sel.id} />}
     </div>
   );

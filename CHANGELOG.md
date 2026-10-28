@@ -3,6 +3,38 @@
 Formato baseado em [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/) e versões no padrão
 [SemVer](https://semver.org/lang/pt-BR/): MAJOR.MINOR.PATCH — correções sobem o PATCH, recursos novos o MINOR.
 
+## [1.11.0] — 2026-10-28
+
+### Corrigido
+- **Legendas fora da fala:** as legendas automáticas começavam antes da voz (ex.: "Olá" em 0:00 sobre uma vinheta
+  sem som, com a fala entrando só aos 4 s) e ficavam na tela durante as pausas até a próxima frase ou o próximo corte.
+  Agora:
+  - o tempo de cada palavra vem do alinhamento palavra a palavra do whisper (DTW), bem mais preciso que os tempos
+    normais, que punham a primeira fala de cada trecho no começo do trecho;
+  - o volume do áudio confirma onde há voz: cada legenda entra quando a fala começa e sai na pausa, e nada aparece
+    sobre clipes mudos ou silêncio;
+  - uma pausa na fala começa outra legenda, e nenhuma passa do fim do clipe (ou do projeto).
+  Vale para os três modelos; se o alinhamento falhar em algum, o app usa os tempos normais e o ajuste pela voz.
+
+### Adicionado
+- **Editar vários clipes juntos:** selecione vários clipes do mesmo tipo (ex.: todos os pedaços depois de cortar os
+  silêncios, com Ctrl+A ou o retângulo) e o painel da direita mostra todas as abas — Vídeo, Áudio, Velocidade,
+  Animação, Ajuste, Filtro (ou Texto, Forma, Efeito). O que você mudar vale para todos:
+  - só o que você mexeu passa para os outros (mudar a escala não mexe na posição de cada um); o trecho, o lugar na
+    linha do tempo e o texto de cada um continuam deles;
+  - "(vários)" ao lado de um controle avisa que os clipes estão com valores diferentes;
+  - velocidade, reverter, "redefinir" e "separar áudio" valem para todos; cada mudança é um passo só de desfazer;
+  - no reprodutor, arrastar, girar ou redimensionar um deles leva os outros junto (cada um a partir de onde estava).
+- Seleção com tipos misturados (vídeos e textos, por exemplo): "Editar juntos" escolhe o tipo; "Ver a seleção toda" volta.
+
+### Testes
+- `scripts/test-legendas-grupo.mjs` (26 checagens): trechos de fala, tempos das palavras com e sem DTW, legendas
+  separadas na pausa, música de fundo; o que passa e o que não passa de um clipe para outro na edição em grupo.
+- `autotest-v111` (26 checagens): legendas num projeto com abertura sem som (do projeto e só do clipe); edição em
+  grupo de brilho, filtro, animação, volume, voz, velocidade, escala, desfazer, redefinir, posição, textos,
+  seleção mista e arrastar no reprodutor.
+- `autotest-v18` atualizado: o ajuste de vários clipes agora é feito pelo painel completo.
+
 ## [1.10.0] — 2026-10-28
 
 ### Adicionado

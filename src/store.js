@@ -7,6 +7,7 @@ import { effectDef } from './shared/effects.js';
 import { SHAPES, DEFAULT_SHAPE } from './engine/shapes.js';
 import { sliceKf, kfPropsFor, hasKfAt, removeKfAt, upsertKf, propAt, kfTimes } from './shared/keyframes.js';
 import { sfxFileName } from './shared/sfx.js';
+import { espelhar } from './shared/grupo.js';
 
 const api = window.api;
 // ordem dos itens mostrados no painel da biblioteca aberto (para Shift+clique e Ctrl+A)
@@ -267,7 +268,7 @@ export const useStore = create((set, get) => ({
       const ids = sel.ids.filter((id) => findClip(project, id));
       if (!ids.length) return null;
       if (ids.length === 1) return { type: 'clip', id: ids[0] };
-      return { type: 'clip', id: ids.includes(sel.id) ? sel.id : ids[0], ids };
+      return { type: 'clip', id: ids.includes(sel.id) ? sel.id : ids[0], ids, ...(sel.grupo ? { grupo: sel.grupo } : {}) };
     }
     return findClip(project, sel.id) ? sel : null;
   },
@@ -546,16 +547,18 @@ export const useStore = create((set, get) => ({
     setRev({ status: 'working', progress: 0, promise: job });
     return job;
   },
-  toggleReverse(clipId) {
+  // outros: os demais clipes do grupo (edição em grupo) — todos ficam como o principal
+  toggleReverse(clipId, outros = []) {
     const f = findClip(get().project, clipId);
     if (!f || (f.clip.type !== 'video' && f.clip.type !== 'audio')) return;
     const on = !f.clip.reverse;
-    get().updateClip(clipId, (c) => { c.reverse = on; });
+    get().updateGrupo(clipId, outros, (c) => { c.reverse = on; }, { porClipe: true });
     if (!on) return;
     const kind = f.clip.type === 'audio' ? 'audio' : 'video';
-    const ready = get().meta[f.clip.mediaId]?.rev?.[kind]?.status === 'ready';
+    const mids = [...new Set([clipId, ...outros].map((id) => findClip(get().project, id)?.clip.mediaId).filter(Boolean))];
+    const ready = mids.every((mid) => get().meta[mid]?.rev?.[kind]?.status === 'ready');
     if (!ready) get().toastMsg('Preparando o clipe de trás para frente… a prévia atualiza sozinha quando terminar.', 'info', 5000);
-    get().ensureReverse(f.clip.mediaId, kind).then((r) => { if (r && !ready) get().toastMsg('Clipe invertido pronto.'); });
+    Promise.all(mids.map((mid) => get().ensureReverse(mid, kind))).then((rs) => { if (rs.every(Boolean) && !ready) get().toastMsg(mids.length > 1 ? 'Clipes invertidos prontos.' : 'Clipe invertido pronto.'); });
   },
   openTrim(id) {
     const m = get().project?.media.find((x) => x.id === id);
@@ -784,6 +787,33 @@ export const useStore = create((set, get) => ({
       clampClip(f.clip, p.media.find((m) => m.id === f.clip.mediaId));
     }, opts);
   },
+  // Edição em grupo (vários clipes do mesmo tipo pelo painel da direita): o que mudou no clipe principal vai
+  // para os outros — só os campos mexidos, com o valor final; tempo, trecho, texto e pontos de cada um ficam.
+  // porClipe: roda a mesma alteração em cada clipe (velocidade, pontos de modificação, "redefinir").
+  updateGrupo(id, outros, patch, opts = {}) {
+    const { porClipe = false, ...copts } = opts;
+    if (!outros?.length) return get().updateClip(id, patch, copts);
+    return get().commit((p) => {
+      const f = findClip(p, id);
+      if (!f) return false;
+      const aplicar = (g) => {
+        if (typeof patch === 'function') patch(g.clip, p, g);
+        else deepMerge(g.clip, structuredClone(patch));
+        clampClip(g.clip, p.media.find((m) => m.id === g.clip.mediaId));
+      };
+      const antes = porClipe ? null : structuredClone(f.clip);
+      aplicar(f);
+      for (const oid of outros) {
+        const g = oid !== id && findClip(p, oid);
+        if (!g || g.clip.type !== f.clip.type) continue;
+        if (porClipe) aplicar(g);
+        else {
+          espelhar(antes, f.clip, g.clip);
+          clampClip(g.clip, p.media.find((m) => m.id === g.clip.mediaId));
+        }
+      }
+    }, copts);
+  },
   updateTrack(id, patch) {
     get().commit((p) => { const t = p.tracks.find((x) => x.id === id); if (!t) return false; Object.assign(t, patch); }, { keepTracks: true });
   },
@@ -947,24 +977,31 @@ export const useStore = create((set, get) => ({
     get().selectMany(nids);
   },
 
+  // clipId pode ser uma lista (edição em grupo): todos os áudios vão para a mesma faixa nova.
   extractAudio(clipId) {
-    let nid = null;
+    const nids = [];
     get().commit((p) => {
-      const f = findClip(p, clipId);
-      if (!f || f.clip.type !== 'video') return false;
-      const m = p.media.find((x) => x.id === f.clip.mediaId);
-      if (!m?.hasAudio) return false;
-      const c = f.clip;
-      const a = newMediaClip({ ...m, type: 'audio' }, {
-        type: 'audio', start: c.start, in: c.in, duration: c.duration, speed: c.speed, volume: c.volume ?? 1, fadeIn: c.fadeIn, fadeOut: c.fadeOut,
-        ...(c.audioFx ? { audioFx: structuredClone(c.audioFx) } : {}),
-        ...(c.kf?.volume ? { kf: { volume: structuredClone(c.kf.volume) } } : {}),
-      });
-      nid = a.id;
-      c.muted = true;
-      placeInTrack(p, a);
+      let tr = null;
+      for (const id of [clipId].flat()) {
+        const f = findClip(p, id);
+        if (!f || f.clip.type !== 'video') continue;
+        const m = p.media.find((x) => x.id === f.clip.mediaId);
+        if (!m?.hasAudio) continue;
+        const c = f.clip;
+        const a = newMediaClip({ ...m, type: 'audio' }, {
+          type: 'audio', start: c.start, in: c.in, duration: c.duration, speed: c.speed, volume: c.volume ?? 1, fadeIn: c.fadeIn, fadeOut: c.fadeOut,
+          ...(c.audioFx ? { audioFx: structuredClone(c.audioFx) } : {}),
+          ...(c.voz ? { voz: structuredClone(c.voz) } : {}),
+          ...(c.kf?.volume ? { kf: { volume: structuredClone(c.kf.volume) } } : {}),
+        });
+        nids.push(a.id);
+        c.muted = true;
+        tr = placeInTrack(p, a, tr?.id ?? null);
+      }
+      if (!nids.length) return false;
     });
-    if (nid) { set({ selection: { type: 'clip', id: nid } }); get().toastMsg('Áudio separado em uma faixa própria'); }
+    if (nids.length > 1) { get().selectMany(nids); get().toastMsg(`Áudio de ${nids.length} clipes separado em uma faixa própria`); }
+    else if (nids.length) { set({ selection: { type: 'clip', id: nids[0] } }); get().toastMsg('Áudio separado em uma faixa própria'); }
     else get().toastMsg('Este clipe não tem áudio.');
   },
 

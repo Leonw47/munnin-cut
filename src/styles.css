@@ -254,6 +254,8 @@ textarea { resize: vertical; width: 100%; }
 .sticker:hover { border-color: var(--line-2); background: var(--panel-3); }
 .hint { color: var(--muted); font-size: 11px; line-height: 1.5; }
 .rec { display: flex; align-items: center; gap: 8px; padding: 10px; border-radius: 8px; background: var(--panel-2); }
+.grupo-box { margin-bottom: 12px; padding: 10px; border-radius: 8px; background: var(--accent-soft); border: 1px solid var(--accent); }
+.grupo-tit { display: flex; align-items: center; gap: 6px; font-weight: 700; margin-bottom: 4px; color: var(--text); }
 .rec .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--danger); animation: pulse 1s infinite; }
 @keyframes pulse { 50% { opacity: 0.3; } }
 .list-item { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-radius: 6px; background: var(--panel-2); margin-bottom: 6px; cursor: grab; }

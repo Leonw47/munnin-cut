@@ -288,24 +288,23 @@ if (parte('edicao')) {
   check('loop_repete_trecho', tl >= 1 && tl < 2.05, tl);
   check('loop_faixa_na_regua', !!document.querySelector('.loop-band.on'));
   S().clearLoop();
-  // edição em lote (volume / escala) por dois clipes
+  // edição em lote (1.11: vários do mesmo tipo abrem o painel completo e o que muda vale para todos)
   const c2 = S().addMedia(vid);
-  S().select({ type: 'clip', id: c1, ids: [c1, c2] });
+  S().select({ type: 'clip', id: c2, ids: [c1, c2] }); // c2 é o principal (sem pontos)
   await sleep(300);
-  const sec = [...document.querySelectorAll('.section')].find((x) => /Ajustar todos/.test(x.querySelector('.section-title')?.textContent || ''));
-  const campo = (rot) => [...(sec?.querySelectorAll('.field') || [])].find((f) => f.querySelector('label')?.textContent.startsWith(rot));
+  const aba = (n) => { const b = [...document.querySelectorAll('.insp-tab')].find((x) => x.textContent === n); if (b) clickEl(b); };
+  const campo = (rot) => [...document.querySelectorAll('.insp-body .field')].find((f) => f.querySelector('label')?.textContent.startsWith(rot));
+  aba('Áudio');
+  await sleep(200);
   const vol = campo('Volume')?.querySelector('input[type=range]');
-  if (vol) {
-    vol.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
-    setInput(vol, '50');
-    vol.dispatchEvent(new PointerEvent('pointerup', { bubbles: true }));
-    await sleep(200);
-  }
+  if (vol) { setInput(vol, '50'); await sleep(200); }
   check('lote_volume', clipById(c1).volume === 0.5 && clipById(c2).volume === 0.5, [clipById(c1).volume, clipById(c2).volume]);
+  aba('Vídeo');
+  await sleep(200);
   const esc = campo('Escala')?.querySelector('input[type=range]');
-  if (esc) { esc.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true })); setInput(esc, '200'); await sleep(200); }
-  // c1 tem pontos de escala (1 → 1.4): ficam proporcionais (×2); c2 recebe 2
-  check('lote_escala_proporcional', Math.abs(clipById(c2).transform.scale - 2) < 1e-6 && Math.abs(clipById(c1).kf.scale[1].v - 2.8) < 1e-6, [clipById(c2).transform.scale, clipById(c1).kf.scale.map((k) => k.v)]);
+  if (esc) { setInput(esc, '200'); await sleep(200); }
+  // c2 recebe 2; c1 tem pontos de escala (1 → 1,4): os pontos andam o mesmo tanto (+1)
+  check('lote_escala_proporcional', Math.abs(clipById(c2).transform.scale - 2) < 1e-6 && Math.abs(clipById(c1).kf.scale[0].v - 2) < 1e-6 && Math.abs(clipById(c1).kf.scale[1].v - 2.4) < 1e-6, [clipById(c2).transform.scale, clipById(c1).kf.scale.map((k) => k.v)]);
   // texto em lote
   S().addText('classic', { time: 0 });
   const t1 = S().selection.id;
@@ -313,11 +312,10 @@ if (parte('edicao')) {
   const t2 = S().selection.id;
   S().select({ type: 'clip', id: t1, ids: [t1, t2] });
   await sleep(300);
-  const secT = [...document.querySelectorAll('.section')].find((x) => /Texto dos selecionados/.test(x.querySelector('.section-title')?.textContent || ''));
-  const tog = [...(secT?.querySelectorAll('.field') || [])].find((f) => f.querySelector('label')?.textContent === 'Maiúsculas')?.querySelector('.toggle, button, [role=switch]');
+  const tog = document.querySelector('.insp-body button[title="Maiúsculas"]');
   if (tog) clickEl(tog);
   await sleep(200);
-  check('lote_texto_maiusculas', clipById(t1)?.text.uppercase === true && clipById(t2)?.text.uppercase === true, [clipById(t1)?.text.uppercase, clipById(t2)?.text.uppercase, !!secT, !!tog]);
+  check('lote_texto_maiusculas', clipById(t1)?.text.uppercase === true && clipById(t2)?.text.uppercase === true, [clipById(t1)?.text.uppercase, clipById(t2)?.text.uppercase, !!tog]);
   await window.api.testCapture('v18_08_lote');
 }
 

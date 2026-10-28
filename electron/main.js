@@ -522,11 +522,36 @@ ipcMain.handle('captions:download', async (e, id) => {
 let captionProc = null;
 ipcMain.handle('captions:cancel', () => {
   captionAbort?.abort();
-  if (captionProc) { captionProc.kill('SIGKILL'); captionProc = null; }
+  if (captionProc) { const p = captionProc; captionProc = null; p.kill('SIGKILL'); }
   return true;
 });
 
-ipcMain.handle('captions:transcribe', async (e, { audioPath, model, language, prompt, duration }) => {
+// Volume do áudio em janelas de 10 ms (dB), lido do WAV de 16 kHz mono 16 bits: diz onde há fala e onde há
+// pausa, para a legenda começar e terminar junto com a voz.
+function energiaWav(file) {
+  const b = fs.readFileSync(file);
+  let off = 12, data = null;
+  while (off + 8 <= b.length) {
+    const id = b.toString('ascii', off, off + 4), sz = b.readUInt32LE(off + 4);
+    if (id === 'data') { data = b.subarray(off + 8, Math.min(b.length, off + 8 + sz)); break; }
+    off += 8 + sz + (sz & 1);
+  }
+  if (!data) return null;
+  const n = Math.floor(data.length / 2), fr = 160;
+  const db = new Float32Array(Math.floor(n / fr));
+  for (let i = 0; i < db.length; i++) {
+    let s = 0;
+    for (let k = 0, o = i * fr * 2; k < fr; k++, o += 2) { const v = data.readInt16LE(o) / 32768; s += v * v; }
+    db[i] = 10 * Math.log10(s / fr + 1e-12);
+  }
+  return { passo: 0.01, db };
+}
+
+// Alinhamento palavra a palavra (DTW) de cada modelo: bem mais preciso que os tempos normais do whisper, que
+// costumam pôr a primeira fala de cada trecho no começo do trecho (ex.: "Olá" em 0 s com a voz entrando em 4 s).
+const DTW = { base: 'base', small: 'small', turbo: 'large.v3.turbo' };
+
+ipcMain.handle('captions:transcribe', async (e, { audioPath, model, language, prompt }) => {
   const m = CAPTION_MODELS.find((x) => x.id === model) || CAPTION_MODELS[1];
   if (!fs.existsSync(WHISPER)) throw new Error('componente de legendas não encontrado (whisper-cli.exe)');
   if (!fs.existsSync(modelPath(m))) throw new Error('modelo de legendas não baixado');
@@ -536,9 +561,10 @@ ipcMain.handle('captions:transcribe', async (e, { audioPath, model, language, pr
   await media.run(FFMPEG, ['-v', 'error', '-y', '-i', audioPath, '-ar', '16000', '-ac', '1', '-c:a', 'pcm_s16le', wav]);
   const outBase = path.join(dir, 'legendas');
   const threads = String(Math.max(2, Math.min(16, os.cpus().length - 2)));
-  const args = ['-m', modelPath(m), '-f', wav, '-l', language || 'pt', '-t', threads, '-ml', '1', '-sow', '-oj', '-of', outBase, '-pp', '-np'];
-  if (prompt) args.push('--prompt', String(prompt).slice(0, 400));
-  await new Promise((resolve, reject) => {
+  const transcrever = (dtw) => new Promise((resolve, reject) => {
+    const args = ['-m', modelPath(m), '-f', wav, '-l', language || 'pt', '-t', threads, '-ml', '1', '-sow', '-ojf', '-of', outBase, '-pp', '-np'];
+    if (dtw) args.push('-nfa', '-dtw', dtw); // a DTW não funciona com o flash attention
+    if (prompt) args.push('--prompt', String(prompt).slice(0, 400));
     const p = spawn(WHISPER, args, { windowsHide: true, cwd: whisperDir });
     captionProc = p;
     let err = '';
@@ -554,11 +580,29 @@ ipcMain.handle('captions:transcribe', async (e, { audioPath, model, language, pr
     p.stdout.on('data', onData);
     p.stderr.on('data', onData);
     p.on('error', reject);
-    p.on('close', (code) => { captionProc = null; code === 0 ? resolve() : reject(new Error(err.trim().split('\n').slice(-3).join('\n') || `whisper terminou com código ${code}`)); });
+    p.on('close', (code, signal) => {
+      const cancelado = captionProc !== p;
+      captionProc = null;
+      if (code === 0) resolve();
+      else reject(Object.assign(new Error(err.trim().split('\n').slice(-3).join('\n') || `whisper terminou com código ${code ?? signal}`), { cancelado }));
+    });
   });
-  const j = JSON.parse(fs.readFileSync(`${outBase}.json`, 'utf8'));
-  fs.rm(dir, { recursive: true, force: true }, () => {});
-  return (j.transcription || []).map((sg) => ({ t0: sg.offsets.from / 1000, t1: sg.offsets.to / 1000, text: sg.text }));
+  try {
+    try { await transcrever(DTW[m.id]); }
+    catch (err) {
+      if (err.cancelado || !DTW[m.id]) throw err;
+      await transcrever(null); // sem a DTW: os tempos normais (o ajuste pela voz ainda vale)
+    }
+    const j = JSON.parse(fs.readFileSync(`${outBase}.json`, 'utf8'));
+    // -ml 1 -sow: um trecho por palavra; td = início da palavra pela DTW (primeiro pedaço que não é marca especial)
+    const words = (j.transcription || []).map((sg) => {
+      const tk = (sg.tokens || []).find((t) => !/^\[_.*\]$/.test(t.text || '') && (t.text || '').trim());
+      return { t0: sg.offsets.from / 1000, t1: sg.offsets.to / 1000, td: tk && tk.t_dtw >= 0 ? tk.t_dtw / 100 : null, text: sg.text };
+    });
+    return { words, energia: energiaWav(wav) };
+  } finally {
+    fs.rm(dir, { recursive: true, force: true }, () => {});
+  }
 });
 
 // ---------- Rascunhos (projetos salvos automaticamente) ----------

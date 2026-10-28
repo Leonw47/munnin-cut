@@ -9,7 +9,8 @@ clique em **Mais informações → Executar assim mesmo**.
 ## O que tem
 - Linha do tempo com faixa principal magnética, sobreposições, textos, stickers, formas, efeitos e áudios;
   dividir (Ctrl+B), aparar, mover, duplicar, copiar/colar, desfazer/refazer, ímã e zoom;
-  seleção de vários clipes (Ctrl+clique, Ctrl+A ou retângulo) para mover, copiar e excluir juntos.
+  seleção de vários clipes (Ctrl+clique, Ctrl+A ou retângulo) para mover, copiar e excluir juntos — e, se forem do
+  mesmo tipo, editar todos de uma vez pelo painel completo (filtro, ajustes, animação, voz, velocidade…).
 - Pontos de modificação (keyframes, tecla K): posição, escala, largura (X), altura (Y), rotação, opacidade, volume, ajustes de cor e
   intensidade do filtro mudam suavemente entre os pontos — na prévia e no arquivo exportado.
 - Remover fundo verde, azul ou de uma cor só (como o branco de foto de produto) com conta-gotas; em fotos, só o fundo
@@ -47,7 +48,8 @@ clique em **Mais informações → Executar assim mesmo**.
   áudio ou do vídeo (inteiro ou só o trecho) direto para o projeto; links de posts/reels do Instagram. Usa o yt-dlp oficial,
   instalado na primeira vez (com conferência SHA-256) e atualizado sozinho: confere todo dia e, se o YouTube
   mudar algo e o download falhar, atualiza e tenta de novo (inclusive na versão noturna).
-- Legendas automáticas offline (whisper.cpp) com estilos e revisão do texto.
+- Legendas automáticas offline (whisper.cpp) com estilos e revisão do texto, presas à voz: entram quando a fala
+  começa e saem na pausa (alinhamento palavra a palavra + volume do áudio), nada sobre silêncio ou clipe mudo.
 - Resiliência: arquivos trocados com o mesmo nome são relidos mantendo os efeitos; arquivos movidos são
   reencontrados pelo nome; ausentes aparecem com Localizar/Substituir. Projetos podem ser duplicados como modelo.
 - Texto com fontes embutidas, contorno, sombra e fundo; stickers de emoji.
@@ -95,6 +97,7 @@ node scripts/test-transitions.mjs                     # exporta cada transição
 node scripts/test-size.mjs                            # compara o tamanho estimado com o real
 node scripts/test-bordas.mjs                          # confere que nada deixa barra preta na lateral (1080 de largura)
 node scripts/test-youtube.mjs                         # baixador do YouTube: instalação, atualização, trecho, erros
+node scripts/test-legendas-grupo.mjs                  # tempos das legendas (voz × silêncio) e edição em grupo
 ```
-Testes de interface: `MC_AUTOTEST=scripts/autotest-ui.js npx electron .` (também `autotest-interact.js`, `autotest-fx.js`, `autotest-v12.js`, `autotest-v13.js`, `autotest-v14.js`, `autotest-v15.js`, `autotest-v16.js`, `autotest-v17.js`, `autotest-v18.js`, `autotest-fx18.js`, `autotest-v110.js` e `autotest-scroll.js`).
+Testes de interface: `MC_AUTOTEST=scripts/autotest-ui.js npx electron .` (também `autotest-interact.js`, `autotest-fx.js`, `autotest-v12.js`, `autotest-v13.js`, `autotest-v14.js`, `autotest-v15.js`, `autotest-v16.js`, `autotest-v17.js`, `autotest-v18.js`, `autotest-fx18.js`, `autotest-v110.js`, `autotest-v111.js` e `autotest-scroll.js`).
 O FFmpeg fica em `resources/bin/` (não versionado). Histórico de versões em [CHANGELOG.md](CHANGELOG.md).

@@ -6,7 +6,8 @@ import { clipBox } from '../engine/compositor.js';
 import { RATIOS, sizeFromMedia } from '../shared/defs.js';
 import { fmtTime, projectDuration, mainTrack, findClip } from '../shared/timeline.js';
 import { Dropdown, MenuItem } from './ui.jsx';
-import { resolveAt, setPropAt } from '../shared/keyframes.js';
+import { resolveAt, setPropAt, hasKf, KF_PROPS } from '../shared/keyframes.js';
+import { grupoDaSelecao } from '../shared/grupo.js';
 import LibPreview from './LibPreview.jsx';
 import { AREA_PADRAO } from '../shared/area.js';
 
@@ -85,6 +86,23 @@ function TransformOverlay({ W, H, folga = 0 }) {
     const lt = Math.max(0, Math.min(target.duration, s.time - target.start));
     const tf0 = { ...(resolveAt(target, lt).transform || {}) };
     const area0 = target.type === 'effect' ? { ...AREA_PADRAO, ...target.area } : null;
+    // vários clipes do mesmo tipo selecionados: os outros acompanham — andam/giram o mesmo tanto e crescem na
+    // mesma proporção (cada um a partir de onde estava; quem tem pontos de modificação tem os pontos movidos)
+    const g = grupoDaSelecao(s.project, s.selection);
+    const ini = g?.ids.includes(target.id) ? g.ids.filter((x) => x !== target.id).map((oid) => findClip(s.project, oid)?.clip).filter(Boolean).map((c) => structuredClone(c)) : [];
+    const mudar = (fnPrincipal, ops) => {
+      if (!ini.length) { s.updateClip(target.id, fnPrincipal, { silent: true }); return; }
+      s.updateGrupo(target.id, ini.map((c) => c.id), (c) => {
+        if (c.id === target.id) { fnPrincipal(c); return; }
+        const c0 = ini.find((x) => x.id === c.id);
+        if (!c0) return;
+        if (ops.area) { if (c0.area) c.area = ops.area(c0.area); return; }
+        for (const [prop, f] of Object.entries(ops)) {
+          if (hasKf(c0, prop)) c.kf = { ...c.kf, [prop]: c0.kf[prop].map((k) => ({ t: k.t, v: f(k.v) })) };
+          else KF_PROPS[prop].set(c, f(KF_PROPS[prop].get(c0)));
+        }
+      }, { silent: true, porClipe: true });
+    };
     let moved = false;
     const move = (ev) => {
       const p = local(ev);
@@ -105,7 +123,9 @@ function TransformOverlay({ W, H, folga = 0 }) {
         } else if (mode === 'scale-y') {
           a.h = Math.max(0.02, Math.min(3, area0.h * (Math.abs(p.y - b0.cy) / Math.max(4, Math.abs(p0.y - b0.cy)))));
         } else return;
-        s.updateClip(target.id, (c) => { c.area = { ...c.area, x: a.x, y: a.y, w: a.w, h: a.h }; }, { silent: true });
+        mudar((c) => { c.area = { ...c.area, x: a.x, y: a.y, w: a.w, h: a.h }; }, {
+          area: (b) => ({ ...b, x: (b.x || 0) + a.x - area0.x, y: (b.y || 0) + a.y - area0.y, w: Math.max(0.02, (b.w ?? area0.w) * (a.w / area0.w)), h: Math.max(0.02, (b.h ?? area0.h) * (a.h / area0.h)) }),
+        });
         return;
       }
       if (mode === 'move') {
@@ -115,24 +135,28 @@ function TransformOverlay({ W, H, folga = 0 }) {
         if (gx) nx = 0;
         if (gy) ny = 0;
         setGuides({ x: gx, y: gy, angle: null });
-        s.updateClip(target.id, (c) => { setPropAt(c, 'x', nx, lt); setPropAt(c, 'y', ny, lt); }, { silent: true });
+        const dx = nx - (tf0.x || 0), dy = ny - (tf0.y || 0);
+        mudar((c) => { setPropAt(c, 'x', nx, lt); setPropAt(c, 'y', ny, lt); }, { x: (v) => v + dx, y: (v) => v + dy });
       } else if (mode === 'scale') {
         const d0 = Math.hypot(p0.x - b0.cx, p0.y - b0.cy) || 1;
         const d1 = Math.hypot(p.x - b0.cx, p.y - b0.cy);
         const ns = Math.max(0.02, Math.min(20, (tf0.scale ?? 1) * (d1 / d0)));
-        s.updateClip(target.id, (c) => { setPropAt(c, 'scale', ns, lt); }, { silent: true });
+        const k = ns / (tf0.scale ?? 1);
+        mudar((c) => { setPropAt(c, 'scale', ns, lt); }, { scale: (v) => Math.max(0.02, Math.min(20, v * k)) });
       } else if (mode === 'scale-x') {
         const rad = (b0.rot * Math.PI) / 180;
         const d0 = Math.max(4, Math.abs((p0.x - b0.cx) * Math.cos(rad) + (p0.y - b0.cy) * Math.sin(rad)));
         const d1 = Math.abs((p.x - b0.cx) * Math.cos(rad) + (p.y - b0.cy) * Math.sin(rad));
         const nsx = Math.max(0.01, Math.min(20, (tf0.scaleX ?? 1) * (d1 / d0)));
-        s.updateClip(target.id, (c) => { setPropAt(c, 'scaleX', nsx, lt); }, { silent: true });
+        const k = nsx / (tf0.scaleX ?? 1);
+        mudar((c) => { setPropAt(c, 'scaleX', nsx, lt); }, { scaleX: (v) => Math.max(0.01, Math.min(20, v * k)) });
       } else if (mode === 'scale-y') {
         const rad = (b0.rot * Math.PI) / 180;
         const d0 = Math.max(4, Math.abs(-(p0.x - b0.cx) * Math.sin(rad) + (p0.y - b0.cy) * Math.cos(rad)));
         const d1 = Math.abs(-(p.x - b0.cx) * Math.sin(rad) + (p.y - b0.cy) * Math.cos(rad));
         const nsy = Math.max(0.01, Math.min(20, (tf0.scaleY ?? 1) * (d1 / d0)));
-        s.updateClip(target.id, (c) => { setPropAt(c, 'scaleY', nsy, lt); }, { silent: true });
+        const k = nsy / (tf0.scaleY ?? 1);
+        mudar((c) => { setPropAt(c, 'scaleY', nsy, lt); }, { scaleY: (v) => Math.max(0.01, Math.min(20, v * k)) });
       } else if (mode === 'rotate') {
         const a0 = Math.atan2(p0.y - b0.cy, p0.x - b0.cx);
         const a1 = Math.atan2(p.y - b0.cy, p.x - b0.cx);
@@ -141,7 +165,8 @@ function TransformOverlay({ W, H, folga = 0 }) {
         const snap = Math.round(deg / 90) * 90;
         if (Math.abs(deg - snap) < 4) deg = snap;
         setGuides({ x: false, y: false, angle: Math.round(deg) });
-        s.updateClip(target.id, (c) => { setPropAt(c, 'rotation', deg, lt); }, { silent: true });
+        const dr = deg - (tf0.rotation || 0);
+        mudar((c) => { setPropAt(c, 'rotation', deg, lt); }, { rotation: (v) => ((v + dr + 540) % 360) - 180 });
       }
     };
     const up = () => {
@@ -257,7 +282,7 @@ function FullscreenBar({ visible, onExit }) {
 }
 
 // Conta-gotas do chroma key: o próximo clique no vídeo escolhe a cor a remover.
-function ColorPicker({ canvasRef, clipId }) {
+function ColorPicker({ canvasRef, clipId, outros }) {
   const [hover, setHover] = useState(null);
   const read = (e) => {
     const c = canvasRef.current;
@@ -284,7 +309,7 @@ function ColorPicker({ canvasRef, clipId }) {
         e.stopPropagation();
         const p = read(e);
         if (!p) return;
-        useStore.getState().updateClip(clipId, (c) => { c.chroma = { ...(c.chroma || {}), on: true, color: p.hex }; });
+        useStore.getState().updateGrupo(clipId, outros, (c) => { c.chroma = { ...(c.chroma || {}), on: true, color: p.hex }; });
         cancel();
       }}>
       <div className="pick-tip">Clique na cor do fundo para remover · Esc cancela</div>
@@ -425,7 +450,7 @@ export default function Player() {
           <div className={`fs-click ${idle && playing ? 'idle' : ''}`} onClick={() => s().togglePlay()} onDoubleClick={toggleFs} />
           <FullscreenBar visible={!idle || !playing} onExit={toggleFs} />
         </>}
-        {pickColor && !isFs && <ColorPicker canvasRef={canvasRef} clipId={pickColor.clipId} />}
+        {pickColor && !isFs && <ColorPicker canvasRef={canvasRef} clipId={pickColor.clipId} outros={pickColor.outros} />}
         {libPreview && !isFs && <LibPreview key={libPreview.mediaId} mediaId={libPreview.mediaId} />}
       </div>
       <div className="player-foot">
