@@ -57,7 +57,8 @@ await sleep(50);
 click(el(o2), { ctrlKey: true });
 await sleep(100);
 check('ctrl_clique_seleciona_dois', S().selection?.ids?.length === 2, S().selection);
-check('painel_selecao_multipla', !!document.querySelector('.insp-tab.active') && document.querySelector('.insp-tab.active').textContent === 'Seleção');
+// (1.11: dois clipes do mesmo tipo abrem a edição em grupo, com o aviso "Editando 2 … juntos")
+check('painel_selecao_multipla', /Editando 2 .* juntos/.test(document.querySelector('.grupo-box')?.textContent || ''), document.querySelector('.grupo-box')?.textContent);
 await shot('80_selecao_multipla');
 drag(el(o1), 50, 0);
 await sleep(200);

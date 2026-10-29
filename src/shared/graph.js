@@ -100,16 +100,33 @@ export function buildExport({ project: src, mediaMap, out, textAssets = {}, fxAs
   const mediaOf = (c) => mediaMap[c.mediaId];
   const usable = (m) => !!(m && !m.missing && (m.renderPath || m.path));
 
+  // Tamanho em que a camada é preparada: o encaixe na tela × a maior escala (pontos de modificação e animações).
+  function tamanhoCamada(c, m) {
+    const { sw, sh } = cropDims(m, c.crop || {});
+    const dyn = c.__dyn || {};
+    const s = fitScale(sw, sh, W, H, c.fit) * maxScale(c, dyn);
+    return { sw, sh, w: even(sw * s * maxScaleX(c, dyn)), h: even(sh * s * maxScaleY(c, dyn)) };
+  }
+
   function inputFor(c, m) {
     if (inputCache.has(c.id)) return inputCache.get(c.id);
     // "Reverter": usa a cópia invertida; o trecho [in, in + dur·vel] do original fica em [D − in − dur·vel, D − in]
     const rev = c.reverse && m.rev ? m.rev[c.type === 'audio' ? 'audio' : 'video'] : null;
     const p = rev ? rev.path : m.renderPath || m.path;
     const inPt = rev ? Math.max(0, rev.duration - (c.in || 0) - c.duration * (c.speed || 1)) : c.in || 0;
-    // foto com "remover fundo": o PNG já recortado pela mesma conta da prévia (engine/chromaImg.js)
-    const idx = m.type === 'image'
-      ? addInput(['-i', chromaAssets[c.id]?.path || p])
-      : addInput(['-ss', r3(inPt), '-t', r3(c.duration * (c.speed || 1) + 0.25), '-i', p]);
+    let idx;
+    if (m.type === 'image') {
+      // foto com "remover fundo": o PNG já recortado pela mesma conta da prévia (engine/chromaImg.js)
+      const src = chromaAssets[c.id]?.path || p;
+      // foto JPEG bem maior que o necessário (ex.: 6240×4160 numa tela de 1920): o decodificador já lê em 1/2,
+      // 1/4 ou 1/8 do tamanho — com dezenas de fotos, são gigabytes a menos e a preparação fica mais rápida
+      let lowres = 0;
+      if (/\.jpe?g$/i.test(src) && m.width && m.height) {
+        const { sw, sh, w, h } = tamanhoCamada(c, m);
+        while (lowres < 3 && sw / 2 ** (lowres + 1) >= w && sh / 2 ** (lowres + 1) >= h) lowres++;
+      }
+      idx = addInput([...(lowres ? ['-lowres', String(lowres)] : []), '-i', src]);
+    } else idx = addInput(['-ss', r3(inPt), '-t', r3(c.duration * (c.speed || 1) + 0.25), '-i', p]);
     inputCache.set(c.id, idx);
     return idx;
   }
@@ -132,11 +149,9 @@ export function buildExport({ project: src, mediaMap, out, textAssets = {}, fxAs
     if (cr.l || cr.r || cr.t || cr.b) {
       f.push(`crop=w=iw*${n4(1 - (cr.l || 0) - (cr.r || 0))}:h=ih*${n4(1 - (cr.t || 0) - (cr.b || 0))}:x=iw*${n4(cr.l || 0)}:y=ih*${n4(cr.t || 0)}`);
     }
-    const { sw, sh } = cropDims(m, cr);
     const dyn = c.__dyn || {};
     // com escala em pontos de modificação, a camada sai no maior tamanho e é reduzida quadro a quadro
-    const s = fitScale(sw, sh, W, H, c.fit) * maxScale(c, dyn);
-    const w = even(sw * s * maxScaleX(c, dyn)), h = even(sh * s * maxScaleY(c, dyn));
+    const { w, h } = tamanhoCamada(c, m);
     f.push(`scale=${w}:${h}`, 'setsar=1');
     if (m.type === 'video') f.push(...hdrParaSdr(m.hdr));
     if (c.chroma?.on && !chromaAssets[c.id]) f.push(...chromaFilters(c.chroma)); // termina em rgba
@@ -392,8 +407,12 @@ export function buildExport({ project: src, mediaMap, out, textAssets = {}, fxAs
       return { l, x: pl.x, y: pl.y };
     }
 
-    // Clipes encostados com transição (A→B→C…): cada um é sobreposto num pedaço do fundo e os
-    // pedaços são unidos com xfade — A segura o último quadro e B o primeiro durante a mistura.
+    // Clipes encostados com transição (A→B→C…): cada um vai num quadro transparente do tamanho da tela (o
+    // pedaço de tempo dele) e os pedaços são unidos com xfade — A segura o último quadro e B o primeiro durante
+    // a mistura. Misturando com alfa pré-multiplicado o resultado é exatamente (1−p)·(fundo+A) + p·(fundo+B),
+    // e a cadeia entra UMA vez sobre o fundo. (Antes o fundo era dividido em um pedaço por clipe: com dezenas de
+    // fotos o FFmpeg produzia o fundo muito à frente e guardava os quadros na memória — a exportação ficava
+    // parada em 0% enquanto a memória subia para dezenas de GB.)
     function chainTransition(X, chain) {
       const n = chain.length;
       const TF = Math.round(T * FPS);
@@ -402,8 +421,6 @@ export function buildExport({ project: src, mediaMap, out, textAssets = {}, fxAs
         cuts.push(Math.round(chain[i].start * FPS));
         ds.push(2 * Math.max(1, Math.round((overlayTransDur(chain[i - 1], chain[i]) * FPS) / 2)));
       }
-      const xs = Array.from({ length: n }, () => L('xs'));
-      F.push(`[${X}]split=${n}${xs.map((x) => `[${x}]`).join('')}`);
       const segs = [];
       for (let i = 0; i < n; i++) {
         const c = chain[i];
@@ -413,10 +430,10 @@ export function buildExport({ project: src, mediaMap, out, textAssets = {}, fxAs
         const post = i === n - 1 ? 0 : ds[i] / 2 / FPS;
         const t0 = i === 0 ? c.start : 0;
         const sg = L('sx'), out = L('sy');
-        F.push(`[${xs[i]}]trim=start_frame=${aF}:end_frame=${bF},setpts=PTS-STARTPTS[${sg}]`);
+        F.push(`color=c=black@0:s=${W}x${H}:r=${FPS},format=gbrap,trim=end_frame=${bF - aF},setpts=PTS-STARTPTS,setsar=1[${sg}]`);
         const ly = layerOf(c, t0, pre, post);
-        if (ly) F.push(`[${sg}][${ly.l}]overlay=x='${ly.x}':y='${ly.y}':eof_action=pass:enable='between(t,${r3(t0)},${r3(t0 + pre + c.duration + post)})',format=yuv420p,setsar=1,settb=AVTB[${out}]`);
-        else F.push(`[${sg}]format=yuv420p,setsar=1,settb=AVTB[${out}]`);
+        if (ly) F.push(`[${sg}][${ly.l}]overlay=x='${ly.x}':y='${ly.y}':eof_action=pass:enable='between(t,${r3(t0)},${r3(t0 + pre + c.duration + post)})':format=auto,premultiply=inplace=1,settb=AVTB[${out}]`);
+        else F.push(`[${sg}]settb=AVTB[${out}]`);
         segs.push(out);
       }
       let acc = segs[0];
@@ -425,7 +442,10 @@ export function buildExport({ project: src, mediaMap, out, textAssets = {}, fxAs
         F.push(`[${acc}][${segs[i]}]xfade=transition=${chain[i - 1].transition.id}:duration=${r3(ds[i - 1] / FPS)}:offset=${r3((cuts[i - 1] - ds[i - 1] / 2) / FPS)}[${l}]`);
         acc = l;
       }
-      return acc;
+      const u = L('xu'), o = L('xo');
+      F.push(`[${acc}]unpremultiply=inplace=1[${u}]`);
+      F.push(`[${X}][${u}]overlay=eof_action=pass:format=auto,format=yuv420p,setsar=1,settb=AVTB[${o}]`);
+      return o;
     }
 
     // ---- Faixas acima da principal, de baixo para cima ----

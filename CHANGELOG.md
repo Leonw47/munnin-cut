@@ -3,6 +3,21 @@
 Formato baseado em [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/) e versões no padrão
 [SemVer](https://semver.org/lang/pt-BR/): MAJOR.MINOR.PATCH — correções sobem o PATCH, recursos novos o MINOR.
 
+## [1.11.1] — 2026-10-29
+
+### Corrigido
+- **Exportação parada em 0%** em projetos com muitas fotos seguidas com transição (ex.: uma sequência de 90 fotos
+  com "Dissolver"): para cada foto o fundo era dividido em um pedaço, e o FFmpeg produzia o fundo muito à frente e
+  acumulava os quadros na memória (dezenas de GB) sem gerar nada. Agora as fotos da sequência são misturadas numa
+  camada transparente que entra uma vez só sobre o fundo — a mesma imagem (conferida pixel a pixel), e o Ken Burns
+  passou a andar de 1 em 1 pixel (antes, de 2 em 2). No projeto que travava (274 s, 98 fotos): exportado em 7,5 min.
+- Fotos JPEG bem maiores que o necessário (ex.: 6240×4160 num vídeo 1080p) são lidas já reduzidas pela metade,
+  um quarto ou um oitavo — menos memória e preparação mais rápida.
+
+### Testes
+- `scripts/test-cadeia.mjs`: 48 fotos com transição sobre um vídeo exportam até o fim com memória limitada; a mistura
+  das transições conferida pixel a pixel (só A, A e B, só B, fundo).
+
 ## [1.11.0] — 2026-10-28
 
 ### Corrigido
