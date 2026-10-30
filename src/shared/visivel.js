@@ -13,6 +13,8 @@ export function clipVisivel(clip, media, W, H) {
   const tf = clip.transform || {};
   if (Math.abs(tf.rotation || 0) > 1e-6) return clip;
   if (clip.kf && MOVE.some((p) => clip.kf[p]?.length)) return clip;
+  // na exportação os pontos que mudam ficam em __dyn (splitKf tira o kf): também é movimento
+  if (clip.__dyn && MOVE.some((p) => clip.__dyn[p]?.length)) return clip;
   if (animaMovimento(clip.animIn) || animaMovimento(clip.animOut) || (clip.animLoop && clip.animLoop.id !== 'none')) return clip;
   const cr = clip.crop || {};
   const { sw, sh } = cropDims(media, cr);

@@ -99,6 +99,7 @@ node scripts/test-bordas.mjs                          # confere que nada deixa b
 node scripts/test-youtube.mjs                         # baixador do YouTube: instalação, atualização, trecho, erros
 node scripts/test-legendas-grupo.mjs                  # tempos das legendas (voz × silêncio) e edição em grupo
 node scripts/test-cadeia.mjs                          # sequência longa de fotos com transição: exporta até o fim, mistura certa
+node scripts/test-paridade.mjs                        # vídeo exportado = prévia (tamanho/posição das camadas animadas)
 ```
 Testes de interface: `MC_AUTOTEST=scripts/autotest-ui.js npx electron .` (também `autotest-interact.js`, `autotest-fx.js`, `autotest-v12.js`, `autotest-v13.js`, `autotest-v14.js`, `autotest-v15.js`, `autotest-v16.js`, `autotest-v17.js`, `autotest-v18.js`, `autotest-fx18.js`, `autotest-v110.js`, `autotest-v111.js` e `autotest-scroll.js`).
 O FFmpeg fica em `resources/bin/` (não versionado). Histórico de versões em [CHANGELOG.md](CHANGELOG.md).

@@ -101,11 +101,18 @@ export function buildExport({ project: src, mediaMap, out, textAssets = {}, fxAs
   const usable = (m) => !!(m && !m.missing && (m.renderPath || m.path));
 
   // Tamanho em que a camada é preparada: o encaixe na tela × a maior escala (pontos de modificação e animações).
+  // Com a escala mudando quadro a quadro, nunca acima do tamanho original da mídia: ampliar antes não acrescenta
+  // detalhe (a prévia também desenha a partir do original) e uma foto de 1600 px com zoom de 600% virava 56
+  // megapixels por quadro. k = parte da maior escala já aplicada na preparação (o resto, 1/k, fica para cada quadro);
+  // wMax/hMax = maior tamanho que a camada chega a ter na tela.
   function tamanhoCamada(c, m) {
     const { sw, sh } = cropDims(m, c.crop || {});
     const dyn = c.__dyn || {};
     const s = fitScale(sw, sh, W, H, c.fit) * maxScale(c, dyn);
-    return { sw, sh, w: even(sw * s * maxScaleX(c, dyn)), h: even(sh * s * maxScaleY(c, dyn)) };
+    const wMax = sw * s * maxScaleX(c, dyn), hMax = sh * s * maxScaleY(c, dyn);
+    const animado = !!(dyn.scale || dyn.scaleX || dyn.scaleY);
+    const k = animado ? Math.min(1, Math.max(sw / wMax, sh / hMax)) : 1;
+    return { sw, sh, w: even(wMax * k), h: even(hMax * k), wMax: even(wMax), hMax: even(hMax), k };
   }
 
   function inputFor(c, m) {
@@ -134,9 +141,23 @@ export function buildExport({ project: src, mediaMap, out, textAssets = {}, fxAs
   // Laço que transforma o quadro único de uma imagem num trecho de vídeo (sem decodificar de novo).
   const loopFor = (dur) => ['loop=loop=-1:size=1:start=0', `setpts=N/(${FPS}*TB)`, `trim=duration=${r3(dur)}`, 'setpts=PTS-STARTPTS'];
 
+  // Giro fixo exato: múltiplos de 90° viram espelhar/transpor (sem interpolação); o resto, rotate.
+  // (Todo rotate usa fundo transparente explícito, c=black@0: com c=none o FFmpeg não limpa o quadro de saída e
+  // os giros anteriores ficam desenhados como rastro — uma "estrela" de cópias.)
+  function giroFixo(rad) {
+    const q = ((Math.round((rad * 180) / Math.PI) % 360) + 360) % 360;
+    if (Math.abs((rad * 180) / Math.PI - Math.round((rad * 180) / Math.PI)) < 1e-6 && q % 90 === 0) {
+      return q === 0 ? [] : q === 90 ? ['transpose=clock'] : q === 180 ? ['hflip', 'vflip'] : ['transpose=cclock'];
+    }
+    return [`rotate=a=${n4(rad)}:c=black@0:ow=rotw(${n4(rad)}):oh=roth(${n4(rad)})`];
+  }
+  // Espelhar e girar fixos podem ir para a parte estática (antes do laço) quando nada disso muda no clipe.
+  const giroEstatico = (c) => { const d = c.__dyn || {}; return !d.rotation && !d.scaleX && !d.scaleY; };
+
   // Fonte → recorte → escala da camada → cor/efeitos do clipe.
   // Para imagens, tudo isso é estático: roda uma vez e o laço (loopFor) entra depois (veja o "static").
-  function preChain(c, m) {
+  // girarAqui: numa foto, espelhar/girar fixos entram aqui (uma vez) e não a cada quadro — devolve girado: true.
+  function preChain(c, m, { girarAqui = false } = {}) {
     const f = [];
     const sp = c.speed || 1;
     if (m.type === 'video') {
@@ -151,7 +172,7 @@ export function buildExport({ project: src, mediaMap, out, textAssets = {}, fxAs
     }
     const dyn = c.__dyn || {};
     // com escala em pontos de modificação, a camada sai no maior tamanho e é reduzida quadro a quadro
-    const { w, h } = tamanhoCamada(c, m);
+    const { w, h, wMax, hMax, k } = tamanhoCamada(c, m);
     f.push(`scale=${w}:${h}`, 'setsar=1');
     if (m.type === 'video') f.push(...hdrParaSdr(m.hdr));
     if (c.chroma?.on && !chromaAssets[c.id]) f.push(...chromaFilters(c.chroma)); // termina em rgba
@@ -163,9 +184,17 @@ export function buildExport({ project: src, mediaMap, out, textAssets = {}, fxAs
     if (fx.length) f.push(...fx, 'format=rgba');
     const steps = colorDyn ? colorSteps(c, dyn, w, h, m) : [];
     const isStatic = m.type === 'image';
-    if (!isStatic) return { f: [...f, ...steps], stat: null, loop: null, w, h };
+    if (!isStatic) return { f: [...f, ...steps], stat: null, loop: null, w, h, wMax, hMax, k };
+    let girado = false;
+    if (girarAqui && giroEstatico(c)) {
+      const tf = c.transform || {};
+      if (tf.flipH) f.push('hflip');
+      if (tf.flipV) f.push('vflip');
+      f.push(...giroFixo(((tf.rotation || 0) * Math.PI) / 180));
+      girado = true;
+    }
     const loop = [...loopFor(c.duration), ...steps];
-    return { f: [...f, ...loop], stat: f, loop, w, h };
+    return { f: [...f, ...loop], stat: f, loop, w, h, wMax, hMax, k, girado };
   }
 
   // Ajustes/filtro que mudam ao longo do clipe: um conjunto de filtros por trecho (a cada 2 quadros).
@@ -183,24 +212,38 @@ export function buildExport({ project: src, mediaMap, out, textAssets = {}, fxAs
   }
 
   // Opacidade que muda: colorchannelmixer por trechos de 1 quadro (tempo do fluxo; at0 = início do clipe).
+  // Os quadros de uma foto vêm do laço e não podem ser alterados no lugar: cada trecho copiaria a imagem para
+  // uma reserva própria (dezenas de cópias grandes guardadas até o fim). Um único colorchannelmixer neutro, ligado
+  // só nos instantes que mudam, faz UMA cópia alterável e os trechos trabalham nela sem alocar nada.
   function opacitySteps(c, dyn, at0) {
     const wins = kfWindows({ ...c, kf: dyn }, ['opacity'], FPS, { step: 1, quant: (p, v) => Math.round(v * 100) / 100 });
-    return wins.map((wd, i) => {
+    const faixas = [];
+    const steps = wins.map((wd, i) => {
       const v = wd.vals.opacity;
       if (v >= 0.995) return null;
       const a = i === 0 ? -1e6 : at0 + wd.a, b = i === wins.length - 1 ? 1e6 : at0 + wd.b;
+      const u = faixas[faixas.length - 1];
+      if (u && Math.abs(u[1] - a) < 1e-6) u[1] = b;
+      else faixas.push([a, b]);
       return `colorchannelmixer=aa=${n4(Math.max(0, v))}:enable='gte(t,${r3(a)})*lt(t,${r3(b)})'`;
     }).filter(Boolean);
+    if (steps.length < 2) return steps;
+    const copia = `colorchannelmixer=aa=1:enable='${faixas.map(([a, b]) => `gte(t,${r3(a)})*lt(t,${r3(b)})`).join('+')}'`;
+    return [copia, ...steps];
   }
 
   // Giro e escala: animação de entrada/saída + pontos de modificação na mesma expressão.
-  function motionFilters(c, dyn, at0, { rotBaked = true, staticRot = 0, scaleBase = null, scaleXBase = null, scaleYBase = null, boxW = null, boxH = null } = {}) {
-    const f = [];
+  // alfa: filtros só de transparência (esmaecer das animações) — entram junto com a opacidade dos pontos, ANTES
+  // da escala quadro a quadro: no FFmpeg, colorchannelmixer/fade depois de um scale que muda de tamanho a cada
+  // quadro prendem a camada no tamanho do 1º quadro (o zoom "parava" e a camada saía maior e fora do lugar).
+  function motionFilters(c, dyn, at0, { rotBaked = true, staticRot = 0, scaleBase = null, scaleXBase = null, scaleYBase = null, boxW = null, boxH = null, alfa = [], k = 1 } = {}) {
+    const f = [...(dyn.opacity ? opacitySteps(c, dyn, at0) : []), ...alfa];
     const rx = [dyn.rotation && rotBaked === false ? kfExpr(dyn.rotation, at0, Math.PI / 180) : '', animRotExpr(c, at0)].filter(Boolean).join('+');
     const sb = scaleBase ?? maxScale(c, dyn);
     const sxb = scaleXBase ?? maxScaleX(c, dyn);
     const syb = scaleYBase ?? maxScaleY(c, dyn);
-    const su = [animScaleExpr(c, at0), dyn.scale ? `(${kfExpr(dyn.scale, at0)})/${n4(sb)}` : ''].filter(Boolean);
+    // k < 1: a camada foi preparada menor que o maior tamanho (no tamanho original da mídia); cada quadro amplia 1/k
+    const su = [animScaleExpr(c, at0), dyn.scale ? `(${kfExpr(dyn.scale, at0)})/${n4(sb)}` : '', k < 0.9999 ? n4(1 / k) : ''].filter(Boolean);
     const sx = [...su, dyn.scaleX ? `(${kfExpr(dyn.scaleX, at0)})/${n4(sxb)}` : ''].filter(Boolean).map((e) => `(${e})`).join('*');
     const sy = [...su, dyn.scaleY ? `(${kfExpr(dyn.scaleY, at0)})/${n4(syb)}` : ''].filter(Boolean).map((e) => `(${e})`).join('*');
     const hasDynStretch = !!(dyn.scaleX || dyn.scaleY);
@@ -212,18 +255,17 @@ export function buildExport({ project: src, mediaMap, out, textAssets = {}, fxAs
       // caixa fixa (o rotate fixa o tamanho no 1º quadro); par, porque o pad arredonda para baixo em formatos 4:2:0
       const up2 = (v) => Math.ceil(v / 2) * 2;
       if (boxW && boxH) f.push(`pad=w='max(iw,${up2(boxW)})':h='max(ih,${up2(boxH)})':x='(ow-iw)/2':y='(oh-ih)/2':color=0x00000000:eval=frame`);
-      if (Math.abs(staticRot) > 1e-4) f.push(`rotate=a=${n4(staticRot)}:c=none:ow=rotw(${n4(staticRot)}):oh=roth(${n4(staticRot)})`);
-      if (rx) f.push(`rotate=a='${rx}':c=none:ow='hypot(iw,ih)':oh='ow'`);
+      if (Math.abs(staticRot) > 1e-4) f.push(`rotate=a=${n4(staticRot)}:c=black@0:ow=rotw(${n4(staticRot)}):oh=roth(${n4(staticRot)})`);
+      if (rx) f.push(`rotate=a='${rx}':c=black@0:ow='hypot(iw,ih)':oh='ow'`);
     } else {
-      if (Math.abs(staticRot) > 1e-4) f.push(`rotate=a=${n4(staticRot)}:c=none:ow=rotw(${n4(staticRot)}):oh=roth(${n4(staticRot)})`);
-      if (rx) f.push(`rotate=a='${rx}':c=none:ow='hypot(iw,ih)':oh='ow'`);
+      if (Math.abs(staticRot) > 1e-4) f.push(`rotate=a=${n4(staticRot)}:c=black@0:ow=rotw(${n4(staticRot)}):oh=roth(${n4(staticRot)})`);
+      if (rx) f.push(`rotate=a='${rx}':c=black@0:ow='hypot(iw,ih)':oh='ow'`);
       if (sx || sy) {
         const wExpr = sx ? `max(2,trunc(iw*${sx}))` : 'iw';
         const hExpr = sy ? `max(2,trunc(ih*${sy}))` : 'ih';
         f.push(`scale=w='${wExpr}':h='${hExpr}':eval=frame`);
       }
     }
-    if (dyn.opacity) f.push(...opacitySteps(c, dyn, at0));
     return f;
   }
 
@@ -238,21 +280,21 @@ export function buildExport({ project: src, mediaMap, out, textAssets = {}, fxAs
   // Espelhar → girar → opacidade → (deslocar no tempo) → animações.
   // t0: onde o fluxo da camada começa; at0: onde o clipe "de verdade" começa (difere quando há
   // quadros parados antes dele, nas transições das faixas de cima).
-  function placeChain(c, t0, at0 = t0, boxW = null, boxH = null) {
+  // girado: espelhar/girar fixos já feitos na parte estática (preChain com girarAqui).
+  function placeChain(c, t0, at0 = t0, boxW = null, boxH = null, girado = false, k = 1) {
     const f = [];
     const tf = c.transform || {};
     const dyn = c.__dyn || {};
-    if (tf.flipH) f.push('hflip');
-    if (tf.flipV) f.push('vflip');
+    if (tf.flipH && !girado) f.push('hflip');
+    if (tf.flipV && !girado) f.push('vflip');
     const rot = ((tf.rotation || 0) * Math.PI) / 180;
     const staticRot = !dyn.rotation && Math.abs(rot) > 1e-4 ? rot : 0;
     const hasDynStretch = !!(dyn.scaleX || dyn.scaleY);
-    if (staticRot && !hasDynStretch) f.push(`rotate=a=${n4(staticRot)}:c=none:ow=rotw(${n4(staticRot)}):oh=roth(${n4(staticRot)})`);
+    if (staticRot && !hasDynStretch && !girado) f.push(...giroFixo(staticRot));
     const op = c.opacity ?? 1;
     if (!dyn.opacity && op < 0.999) f.push(`colorchannelmixer=aa=${n4(op)}`);
     if (t0 > 0) f.push(`setpts=PTS+${r3(t0)}/TB`);
-    f.push(...motionFilters(c, dyn, at0, { rotBaked: false, staticRot: hasDynStretch ? staticRot : 0, boxW, boxH }));
-    f.push(...animFades(c, at0));
+    f.push(...motionFilters(c, dyn, at0, { rotBaked: false, staticRot: hasDynStretch ? staticRot : 0, boxW, boxH, alfa: animFades(c, at0), k }));
     const cx = W / 2 + (tf.x || 0) * W, cy = H / 2 + (tf.y || 0) * H;
     return { f, ...posExprs(c, dyn, at0, cx, cy) };
   }
@@ -308,9 +350,9 @@ export function buildExport({ project: src, mediaMap, out, textAssets = {}, fxAs
       } else {
         c = clipVisivel(c, m, W, H);   // escala grande parada: só a parte visível
         const idx = inputFor(c, m);
-        const { f: pre, stat, loop, w: pw, h: ph } = preChain(c, m);
-        const pl = placeChain(c, 0, 0, pw, ph);
         const bg = c.bg || bgDefault;
+        const { f: pre, stat, loop, wMax, hMax, k, girado } = preChain(c, m, { girarAqui: bg.type !== 'blur' });
+        const pl = placeChain(c, 0, 0, wMax, hMax, girado, k);
         const bgL = L('bg'), fgL = L('fg');
         if (bg.type === 'blur') {
           const a = L('s'), b = L('s');
@@ -387,8 +429,8 @@ export function buildExport({ project: src, mediaMap, out, textAssets = {}, fxAs
           scaleXBase: a.scaleX ?? maxScaleX(c, dyn),
           scaleYBase: a.scaleY ?? maxScaleY(c, dyn),
           boxW: a.w, boxH: a.h,
+          alfa: animFades(c, at0),
         }));
-        f.push(...animFades(c, at0));
         const l = L('t');
         F.push(`[${idx}:v]${f.join(',')}[${l}]`);
         return { l, ...posExprs(c, dyn, at0, a.cx, a.cy) };
@@ -397,11 +439,11 @@ export function buildExport({ project: src, mediaMap, out, textAssets = {}, fxAs
       if (!usable(m)) return null;
       c = clipVisivel(c, m, W, H);   // escala grande parada: só a parte visível
       const idx = inputFor(c, m);
-      // (fotos: o laço e os trechos de cor já vêm no preChain; os quadros parados entram depois)
-      const { f: pf, w: pw, h: ph } = preChain(c, m);
+      // (fotos: o laço, os trechos de cor e o giro fixo já vêm no preChain; os quadros parados entram depois)
+      const { f: pf, wMax, hMax, k, girado } = preChain(c, m, { girarAqui: true });
       let f = pf;
       if (pre > 0 || post > 0) f = [...pf, `tpad=start_mode=clone:start_duration=${r3(pre)}:stop_mode=clone:stop_duration=${r3(post)}`];
-      const pl = placeChain(c, t0, at0, pw, ph);
+      const pl = placeChain(c, t0, at0, wMax, hMax, girado, k);
       const l = L('o');
       F.push(`[${idx}:v]${[...f, ...pl.f].join(',')}[${l}]`);
       return { l, x: pl.x, y: pl.y };

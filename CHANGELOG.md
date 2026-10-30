@@ -3,6 +3,31 @@
 Formato baseado em [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/) e versões no padrão
 [SemVer](https://semver.org/lang/pt-BR/): MAJOR.MINOR.PATCH — correções sobem o PATCH, recursos novos o MINOR.
 
+## [1.11.2] — 2026-10-30
+
+### Corrigido
+- **Vídeo exportado diferente da prévia** (logo e fotos com movimento saíam maiores, fora do lugar e "atrasados"):
+  - o atalho "desenhar só a parte visível" (da 1.10) era aplicado por engano na exportação a camadas com pontos de
+    modificação de posição/escala: recortava e reposicionava a imagem pela escala parada e, por cima, aplicava o
+    movimento — o logo saía maior e deslocado;
+  - com opacidade nos pontos de modificação (ex.: a foto entra esmaecendo), um comportamento do FFmpeg prendia a
+    camada no tamanho do primeiro quadro — o zoom "parava" e parecia atrasado em relação à prévia. A opacidade agora
+    é aplicada antes do redimensionamento quadro a quadro.
+  - **giro animado deixava rastro** no vídeo exportado (uma "estrela" de cópias da foto girando): o rotate do FFmpeg
+    com fundo "nenhum" não limpava o quadro e os giros anteriores ficavam desenhados. Valia para todo giro que muda
+    (pontos de modificação e animações de entrada/saída com giro); agora o fundo é transparente de verdade.
+- **Exportação mais leve com zoom e giro:**
+  - giro e espelhar fixos de uma foto são feitos uma vez só (antes, a cada quadro — numa foto de 7200×5400, um giro
+    de 180° refeito 30 vezes por segundo); giros de 90°/180°/270° viram operações exatas, sem interpolação;
+  - foto pequena com zoom grande é preparada no tamanho original e ampliada só no quadro (antes uma foto de 1600 px com
+    zoom de 600% virava 56 megapixels por quadro) — mesma qualidade da prévia, que também desenha do original;
+  - opacidade animada numa foto: uma única cópia em vez de uma por quadro da rampa (no trecho do logo, 5,7 → 2,3 GB).
+
+### Testes
+- `scripts/test-paridade.mjs`: o vídeo exportado conferido contra a conta da prévia (caixa da camada, ±1 px) com
+  movimento, zoom + opacidade, giros de 90°/180°, animação de entrada, mídia pequena com zoom, giro + esticar animados
+  e giro animado sem rastro.
+
 ## [1.11.1] — 2026-10-29
 
 ### Corrigido
