@@ -25,8 +25,9 @@ export default function ExportDialog() {
   const [fps, setFps] = useState(project.fps || 30);
   const [quality, setQuality] = useState(() => ls('mc.quality2', 'standard'));
   const [customMbps, setCustomMbps] = useState(() => Number(ls('mc.mbps', 10)));
-  const [nvenc, setNvenc] = useState(false);
-  const [hw, setHw] = useState(() => ls('mc.hw', '0') === '1');
+  // processamento: processador (x264/x265) ou placa de vídeo (NVENC); null = ainda não escolhido (vale o padrão)
+  const [placa, setPlaca] = useState(null); // { ok, motivo } — o teste da placa leva um instante
+  const [motor, setMotor] = useState(() => ls('mc.motor', null) || (ls('mc.hw', '0') === '1' ? 'gpu' : null));
   const [partes, setPartes] = useState(() => ls('mc.partes', '1') === '1');
   const [memoria, setMemoria] = useState(0);
   const [st, setSt] = useState({ phase: 'setup' });
@@ -35,7 +36,7 @@ export default function ExportDialog() {
   const job = useRef(null);
 
   useEffect(() => {
-    window.api.nvenc().then(setNvenc).catch(() => setNvenc(false));
+    window.api.placaVideo().then(setPlaca).catch(() => setPlaca({ ok: false, motivo: 'sem' }));
     window.api.info().then((i) => setMemoria(i.memoria || 0)).catch(() => {});
     try { setCover(engine.canvas?.toDataURL('image/jpeg', 0.7)); } catch { setCover(null); }
   }, []);
@@ -43,10 +44,10 @@ export default function ExportDialog() {
     try {
       localStorage.setItem('mc.container', container); localStorage.setItem('mc.codec', codec); localStorage.setItem('mc.other', other);
       localStorage.setItem('mc.res', String(res)); localStorage.setItem('mc.quality2', quality); localStorage.setItem('mc.mbps', String(customMbps));
-      localStorage.setItem('mc.hw', hw ? '1' : '0');
+      if (motor) localStorage.setItem('mc.motor', motor);
       localStorage.setItem('mc.partes', partes ? '1' : '0');
     } catch { /* ignore */ }
-  }, [container, codec, other, res, quality, customMbps, hw, partes]);
+  }, [container, codec, other, res, quality, customMbps, motor, partes]);
 
   const codecs = CONTAINERS[container]?.codecs || [];
   const codecDef = codecs.find((c) => c.id === codec) || codecs[0];
@@ -59,7 +60,12 @@ export default function ExportDialog() {
   const offerCut = visualEnd > 0 && tail > 1;
   const duration = offerCut && cutTail ? visualEnd : fullDuration;
   const size = exportSize(project, res);
-  const hwUsable = nvenc && ['mp4', 'mov', 'mkv', 'mp4_hevc', 'mov_hevc'].includes(format);
+  // a placa só faz H.264/H.265 (MP4/MOV/MKV); ProRes, WebM, GIF e AVI são sempre pelo processador
+  const formatoPlaca = ['mp4', 'mov', 'mkv', 'mp4_hevc', 'mov_hevc'].includes(format);
+  const placaPronta = !!placa?.ok && formatoPlaca;
+  // sem escolha guardada: a placa quando dá (bem mais rápida), senão o processador
+  const motorEscolhido = motor || (placa?.ok ? 'gpu' : 'cpu');
+  const usarPlaca = motorEscolhido === 'gpu' && placaPronta;
   const hasQuality = !['prores', 'gif', 'wav', 'flac'].includes(format);
   // exportar em partes: vídeos de mais de 1 minuto em MP4/MOV/MKV (as partes são emendadas sem recodificar)
   const partesUsavel = FORMATOS_EM_PARTES.has(format) && duration > 60;
@@ -79,7 +85,7 @@ export default function ExportDialog() {
         project, meta, format, res, fps, quality, endAt: offerCut && cutTail ? visualEnd : undefined,
         vKbps: hasQuality && fmt.kind === 'video' ? vK : 0,
         aKbps: hasQuality ? aK : 0,
-        hw: hw && hwUsable ? 'nvenc' : null, outPath,
+        hw: usarPlaca ? 'nvenc' : null, outPath,
         partes: partes && partesUsavel, alvoParte: 30,
         // com bastante memória, 2 partes ao mesmo tempo (mais rápido); com pouca, uma de cada vez
         paralelo: memoria >= 24 * 1024 ** 3 ? 2 : 1,
@@ -87,7 +93,7 @@ export default function ExportDialog() {
       });
       job.current = run;
       const r = await run.promise;
-      if (r.ok) setSt({ phase: 'done', outPath, size: r.size, secs: (performance.now() - t0) / 1000 });
+      if (r.ok) setSt({ phase: 'done', outPath, size: r.size, secs: (performance.now() - t0) / 1000, placa: usarPlaca });
       else if (r.cancelled) setSt({ phase: 'setup' });
       else setSt({ phase: 'error', error: r.error });
     } catch (e) {
@@ -202,11 +208,14 @@ export default function ExportDialog() {
             </div>
           </>}
 
-          {hwUsable && <>
-            <label>Placa de vídeo</label>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-              <Toggle on={hw} onChange={setHw} />
-              <span className="hint">Usar a NVIDIA (NVENC) para exportar mais rápido</span>
+          {fmt.kind !== 'audio' && <>
+            <label>Processamento</label>
+            <div>
+              <Seg value={usarPlaca ? 'gpu' : 'cpu'} onChange={setMotor} options={[
+                { value: 'cpu', label: 'Processador (CPU)' },
+                { value: 'gpu', label: 'Placa de vídeo (GPU)', disabled: !placaPronta },
+              ]} />
+              <div className="hint" style={{ marginTop: 4 }}>{textoMotor({ placa, formatoPlaca, usarPlaca, nome: fmt.name })}</div>
             </div>
           </>}
         </div>
@@ -233,7 +242,7 @@ export default function ExportDialog() {
         <div style={{ display: 'flex', gap: 10, alignItems: 'flex-start' }}>
           <CheckCircle2 size={22} color="#19d3df" />
           <div>
-            <div style={{ fontWeight: 600, marginBottom: 4 }}>Exportação concluída em {fmtTime(st.secs)}{st.size ? ` · ${fmtBytes(st.size)}` : ''}</div>
+            <div style={{ fontWeight: 600, marginBottom: 4 }}>Exportação concluída em {fmtTime(st.secs)}{st.size ? ` · ${fmtBytes(st.size)}` : ''}{fmt.kind === 'video' ? ` · ${st.placa ? 'placa de vídeo' : 'processador'}` : ''}</div>
             <div className="hint" style={{ userSelect: 'text', wordBreak: 'break-all' }}>{st.outPath}</div>
           </div>
         </div>
@@ -251,6 +260,18 @@ export default function ExportDialog() {
       )}
     </Modal>
   );
+}
+
+// O que cada escolha de processamento faz — e, quando a placa não dá, por quê.
+function textoMotor({ placa, formatoPlaca, usarPlaca, nome }) {
+  // (medido num vídeo de 4,5 min com 98 fotos, em partes: 173 s × 249 s, 3,9 × 5,5 GB, mesma nota contra a prévia)
+  if (usarPlaca) return 'A compressão do vídeo vai para a placa NVIDIA (NVENC): cerca de 30% mais rápido e com menos memória, na mesma qualidade (o arquivo sai uns 7% maior). Efeitos, fotos e transições continuam no processador.';
+  const cpu = 'Mais lento, mas comprime melhor: na mesma qualidade, o arquivo sai um pouco menor. Funciona em qualquer computador.';
+  if (!formatoPlaca) return `${cpu} (${nome} só é feito pelo processador; a placa faz MP4, MOV e MKV.)`;
+  if (!placa) return `${cpu} (Verificando a placa de vídeo…)`;
+  if (placa.motivo === 'driver') return `${cpu} A placa NVIDIA precisa de um driver mais novo (570 ou superior) para exportar — atualize pelo NVIDIA App.`;
+  if (!placa.ok) return `${cpu} (Nenhuma placa NVIDIA compatível encontrada neste computador.)`;
+  return cpu;
 }
 
 // Capa do vídeo: um quadro do próprio projeto (o da agulha) ou uma imagem; entra no 1º quadro do arquivo.

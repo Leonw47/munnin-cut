@@ -322,6 +322,7 @@ input[type="range"]::-webkit-slider-thumb { -webkit-appearance: none; width: 12p
 .seg { display: inline-flex; background: var(--panel-3); border-radius: 6px; padding: 2px; gap: 2px; }
 .seg button { border: 0; background: transparent; padding: 4px 10px; border-radius: 4px; color: var(--text-2); display: inline-flex; align-items: center; gap: 4px; }
 .seg button.on { background: var(--panel-4); color: var(--text); }
+.seg button:disabled { opacity: 0.4; cursor: not-allowed; }
 .color-in { display: flex; align-items: center; gap: 8px; }
 .color-in input[type="color"] { width: 30px; height: 24px; border: 0; padding: 0; background: transparent; cursor: pointer; }
 .color-in input[type="color"]::-webkit-color-swatch-wrapper { padding: 0; }

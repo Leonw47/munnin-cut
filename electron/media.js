@@ -375,11 +375,18 @@ export function createMedia({ ffmpeg, ffprobe, cacheDir }) {
   }
 
   async function hasEncoder(name) {
+    return (await testaEncoder(name)).ok;
+  }
+  // Codifica um vídeo curtinho com o codificador. Falhando, diz por quê: placa NVIDIA com driver antigo para o
+  // NVENC deste FFmpeg ('driver') ou sem placa/codificador ('sem').
+  async function testaEncoder(name) {
     try {
       await run(ffmpeg, ['-v', 'error', '-f', 'lavfi', '-i', 'color=s=256x256:d=0.2', '-c:v', name, '-f', 'null', '-']);
-      return true;
-    } catch { return false; }
+      return { ok: true };
+    } catch (e) {
+      return { ok: false, motivo: /driver/i.test(String(e.message)) ? 'driver' : 'sem' };
+    }
   }
 
-  return { probe, thumbs, waveform, proxy, reverse, hasEncoder, run, heifPlano };
+  return { probe, thumbs, waveform, proxy, reverse, hasEncoder, testaEncoder, run, heifPlano };
 }

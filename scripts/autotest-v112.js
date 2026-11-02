@@ -128,5 +128,45 @@ if (parte('partes')) {
   }
 }
 
+// ---------- 5) processamento: processador ou placa de vídeo, escolhido na exportação ----------
+if (parte('motor')) {
+  S().newProject('16:9');
+  await sleep(300);
+  const [v] = await S().importPaths([DIR + '/a.mp4']);
+  await pronto(v);
+  S().addMedia(v);
+  try { localStorage.removeItem('mc.motor'); localStorage.removeItem('mc.hw'); localStorage.setItem('mc.container', 'mp4'); } catch {}
+  const placa = await window.api.placaVideo();
+  useStore.setState({ modal: 'export' });
+  await waitFor(() => [...document.querySelectorAll('.seg button')].some((b) => /Placa de vídeo/.test(b.textContent) && !b.disabled === placa.ok), 5000);
+  const botoes = () => [...document.querySelectorAll('.seg button')].filter((b) => /Processador \(CPU\)|Placa de vídeo \(GPU\)/.test(b.textContent));
+  const [bCpu, bGpu] = botoes();
+  check('motor_tem_as_duas_opcoes', !!bCpu && !!bGpu, botoes().map((b) => b.textContent));
+  // com a placa disponível, o padrão é ela; sem placa, o botão fica desligado e o texto diz por quê
+  check('motor_padrao', placa.ok ? bGpu?.classList.contains('on') && !bGpu.disabled : bGpu?.disabled && bCpu?.classList.contains('on'), { placa, on: botoes().map((b) => b.className) });
+  const dica = () => bCpu?.closest('div').parentElement.querySelector('.hint')?.textContent || '';
+  check('motor_explica', placa.ok ? /placa NVIDIA/.test(dica()) : /NVIDIA/.test(dica()), dica());
+  if (placa.ok) {
+    clickEl(bCpu);
+    await sleep(200);
+    check('motor_escolhe_processador', botoes()[0].classList.contains('on') && localStorage.getItem('mc.motor') === 'cpu' && /comprime melhor/.test(dica()), dica());
+    clickEl(botoes()[1]);
+    await sleep(200);
+    check('motor_escolhe_placa', botoes()[1].classList.contains('on') && localStorage.getItem('mc.motor') === 'gpu');
+  }
+  // WebM só pelo processador: a placa fica desligada e o texto explica
+  clickEl([...document.querySelectorAll('.seg.big button')].find((b) => b.textContent === 'Outros'));
+  await sleep(200);
+  const sel = document.querySelector('.export-grid select');
+  if (sel) { const set = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value').set; set.call(sel, 'webm'); sel.dispatchEvent(new Event('change', { bubbles: true })); }
+  await sleep(300);
+  check('motor_webm_so_processador', botoes()[1]?.disabled && botoes()[0]?.classList.contains('on') && /só é feito pelo processador/.test(dica()), dica());
+  await window.api.testCapture('v112_03_processamento');
+  clickEl([...document.querySelectorAll('.seg.big button')].find((b) => b.textContent === 'MP4'));
+  await sleep(200);
+  useStore.setState({ modal: null });
+  try { localStorage.removeItem('mc.motor'); } catch {}
+}
+
 log(res);
 return res;

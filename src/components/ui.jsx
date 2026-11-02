@@ -69,7 +69,7 @@ export function Seg({ value, options, onChange }) {
   return (
     <div className="seg">
       {options.map((o) => (
-        <button key={o.value} className={value === o.value ? 'on' : ''} title={o.title} onClick={() => onChange(o.value)}>
+        <button key={o.value} className={value === o.value ? 'on' : ''} title={o.title} disabled={o.disabled} onClick={() => onChange(o.value)}>
           {o.icon}{o.label}
         </button>
       ))}

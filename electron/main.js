@@ -200,11 +200,11 @@ ipcMain.handle('app:info', async () => ({
   memoria: os.totalmem(),
 }));
 
+// placa de vídeo para exportar (NVENC da NVIDIA): testada uma vez por sessão — { ok, motivo: 'driver' | 'sem' }
 let nvencCache = null;
-ipcMain.handle('app:nvenc', async () => {
-  if (nvencCache === null) nvencCache = await media.hasEncoder('h264_nvenc');
-  return nvencCache;
-});
+const nvencTeste = async () => (nvencCache ??= await media.testaEncoder('h264_nvenc'));
+ipcMain.handle('app:nvenc', async () => (await nvencTeste()).ok);
+ipcMain.handle('app:placaVideo', () => nvencTeste());
 ipcMain.handle('app:currentProject', (_e, id) => { currentProjectId = id || null; return true; });
 ipcMain.handle('app:logError', (_e, msg) => { logError(String(msg).slice(0, 20000)); return true; });
 ipcMain.handle('app:errorLogPath', () => path.join(logsDir, 'erros.txt'));

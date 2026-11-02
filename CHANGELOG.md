@@ -3,6 +3,22 @@
 Formato baseado em [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/) e versões no padrão
 [SemVer](https://semver.org/lang/pt-BR/): MAJOR.MINOR.PATCH — correções sobem o PATCH, recursos novos o MINOR.
 
+## [1.12.1] — 2026-11-02
+
+### Alterado
+- **Exportar pelo processador ou pela placa de vídeo**: a opção virou uma escolha clara na janela de exportação
+  ("Processamento": Processador (CPU) / Placa de vídeo (GPU)), com o que cada uma faz. Com uma placa NVIDIA
+  compatível, a placa é o padrão — num vídeo de 4,5 min com 98 fotos, em partes: 2,9 min em vez de 4,2, pico de
+  memória de 3,9 GB em vez de 5,5, mesma qualidade contra a prévia (o arquivo sai uns 7% maior na mesma taxa de
+  bits). A escolha fica guardada. Quando a placa não dá, o botão fica desligado e o texto diz por quê: formato que
+  só sai pelo processador (ProRes, WebM, GIF, AVI), driver NVIDIA antigo (precisa do 570 ou mais novo) ou nenhuma
+  placa NVIDIA compatível.
+- A placa de vídeo também vale na exportação em partes (conferido: as partes H.264 e H.265 do NVENC emendam sem
+  recodificar, com o número certo de quadros).
+
+### Testes
+- `scripts/autotest-v112.js`: escolha do processamento (padrão, guardar a escolha, formato só pelo processador).
+
 ## [1.12.0] — 2026-11-02
 
 ### Corrigido

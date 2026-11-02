@@ -65,6 +65,7 @@ clique em **Mais informações → Executar assim mesmo**.
   com qualidade por taxa de bits e tamanho estimado antes de exportar. "Em partes" (MP4/MOV/MKV): o vídeo é montado
   em trechos de ~30 s, cada um num FFmpeg separado, e emendado sem recodificar — a memória fica do tamanho de um
   trecho (bom para computadores com pouca RAM; com 24 GB ou mais, dois trechos rodam ao mesmo tempo).
+  "Processamento": pelo processador (comprime melhor) ou pela placa de vídeo NVIDIA (NVENC, mais rápido).
 - Projetos salvos automaticamente em `Documentos\Munnin Cut\Projetos`; cópia em arquivo `.mcut`.
 
 ## Como funciona
