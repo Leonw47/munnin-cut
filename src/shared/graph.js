@@ -14,6 +14,10 @@ import { audioFxFilters } from './audiofx.js';
 import { splitKf, maxScale, maxScaleX, maxScaleY, kfExpr, kfWindows, KF_PROPS, COLOR_PROPS } from './keyframes.js';
 
 const r3 = (x) => String(Math.round(x * 1000) / 1000);
+// Tempo de um quadro exato (n/FPS) para o FFmpeg, sem passar do quadro: arredondado PARA BAIXO no microssegundo.
+// (r3 em 7,0667 dava 7,067 — depois do quadro —, e o xfade de uma sequência de fotos punha tudo o que vinha
+// depois um quadro atrasado.)
+const tq = (x) => String(Math.floor(x * 1e6 + 1e-4) / 1e6);
 const n4 = (x) => String(Math.round(x * 10000) / 10000);
 const even = (x) => Math.max(2, Math.round(x / 2) * 2);
 const hex = (c) => (/^#[0-9a-f]{6}$/i.test(c || '') ? c : '#000000');
@@ -70,7 +74,12 @@ export function effectSegments(src, FPS) {
  *   project, mediaMap {id: media}, out {format, width, height, fps, quality, hw},
  *   textAssets {clipId: {path, cx, cy}}, outPath, graphPath
  */
-export function buildExport({ project: src, mediaMap, out, textAssets = {}, fxAssets = {}, vozAssets = {}, chromaAssets = {}, areaAssets = {}, coverAsset = null, outPath, graphPath }) {
+/**
+ * janela {a, b}: exportar em partes — monta só o trecho [a, b) do vídeo (segundos), tudo deslocado para começar
+ * em 0. O que começou antes fica com início negativo (animações e pontos de modificação seguem no tempo certo) e
+ * vídeos/faixa principal pulam o pedaço anterior; o que passa do fim é cortado. soVideo: sem áudio (feito à parte).
+ */
+export function buildExport({ project: src, mediaMap, out, textAssets = {}, fxAssets = {}, vozAssets = {}, chromaAssets = {}, areaAssets = {}, coverAsset = null, outPath, graphPath, janela = null, soVideo = false }) {
   const project = layoutProject(structuredClone(src));
   // pontos de modificação: valores constantes viram fixos; o que muda fica em c.__dyn
   for (const tr of project.tracks) {
@@ -84,7 +93,17 @@ export function buildExport({ project: src, mediaMap, out, textAssets = {}, fxAs
   const wantVideo = fmt.kind !== 'audio';
   const wantAudio = fmt.kind !== 'gif';
   const W = even(out.width), H = even(out.height), FPS = out.fps || 30;
-  const T = Math.max(1 / FPS, out.endAt ? Math.min(out.endAt, projectDuration(project)) : projectDuration(project));
+  const A0 = janela ? Math.round(janela.a * FPS) : 0, B0 = janela ? Math.round(janela.b * FPS) : 0;
+  if (janela) {
+    // faixas de cima: o que toca a janela (com folga, para as transições entre clipes seguirem inteiras), deslocado
+    const a = A0 / FPS, b = B0 / FPS, folga = 3;
+    for (const tr of project.tracks) {
+      if (tr.main) continue;
+      tr.clips = tr.clips.filter((c) => c.start < b + folga && c.start + c.duration > a - folga).map((c) => ({ ...c, start: c.start - a }));
+    }
+  }
+  const T = janela ? Math.max(1, B0 - A0) / FPS
+    : Math.max(1 / FPS, out.endAt ? Math.min(out.endAt, projectDuration(project)) : projectDuration(project));
   const bgDefault = project.background || { type: 'color', color: '#000000' };
   const q = (x) => Math.max(1, Math.round(x * FPS)) / FPS; // duração em quadros inteiros
 
@@ -115,12 +134,13 @@ export function buildExport({ project: src, mediaMap, out, textAssets = {}, fxAs
     return { sw, sh, w: even(wMax * k), h: even(hMax * k), wMax: even(wMax), hMax: even(hMax), k };
   }
 
-  function inputFor(c, m) {
+  // corte: segundos do começo do clipe que não entram (exportar em partes: o clipe começou antes da janela)
+  function inputFor(c, m, corte = 0) {
     if (inputCache.has(c.id)) return inputCache.get(c.id);
     // "Reverter": usa a cópia invertida; o trecho [in, in + dur·vel] do original fica em [D − in − dur·vel, D − in]
     const rev = c.reverse && m.rev ? m.rev[c.type === 'audio' ? 'audio' : 'video'] : null;
     const p = rev ? rev.path : m.renderPath || m.path;
-    const inPt = rev ? Math.max(0, rev.duration - (c.in || 0) - c.duration * (c.speed || 1)) : c.in || 0;
+    const inPt = (rev ? Math.max(0, rev.duration - (c.in || 0) - c.duration * (c.speed || 1)) : c.in || 0) + corte * (c.speed || 1);
     let idx;
     if (m.type === 'image') {
       // foto com "remover fundo": o PNG já recortado pela mesma conta da prévia (engine/chromaImg.js)
@@ -133,13 +153,27 @@ export function buildExport({ project: src, mediaMap, out, textAssets = {}, fxAs
         while (lowres < 3 && sw / 2 ** (lowres + 1) >= w && sh / 2 ** (lowres + 1) >= h) lowres++;
       }
       idx = addInput([...(lowres ? ['-lowres', String(lowres)] : []), '-i', src]);
-    } else idx = addInput(['-ss', r3(inPt), '-t', r3(c.duration * (c.speed || 1) + 0.25), '-i', p]);
+    } else idx = addInput(['-ss', r3(inPt), '-t', r3((c.duration - corte) * (c.speed || 1) + 0.25), '-i', p]);
     inputCache.set(c.id, idx);
     return idx;
   }
 
   // Laço que transforma o quadro único de uma imagem num trecho de vídeo (sem decodificar de novo).
-  const loopFor = (dur) => ['loop=loop=-1:size=1:start=0', `setpts=N/(${FPS}*TB)`, `trim=duration=${r3(dur)}`, 'setpts=PTS-STARTPTS'];
+  // settb antes de numerar: a imagem chega com a base de tempo de 25/s e N/(30*TB) nessa base arredondava —
+  // 1 quadro em cada 6 caía no mesmo instante do anterior e todo zoom/movimento de foto "soluçava" 5 vezes por segundo.
+  // O grafo inteiro trabalha em 1/FPS (cada quadro é um inteiro): em microssegundos 1/30 s não é exato e, depois de
+  // cada xfade, os quadros da foto seguinte saíam um atrás e um deles repetido.
+  const loopFor = (dur) => ['loop=loop=-1:size=1:start=0', `settb=1/${FPS}`, `setpts=N/(${FPS}*TB)`, `trim=duration=${r3(dur)}`, 'setpts=PTS-STARTPTS'];
+
+  // Leva a camada para começar em t0, MAS no primeiro quadro do vídeo a partir de t0 (um múltiplo de 1/FPS). Fora da
+  // grade (ex.: clipe em 13,716 s), a camada vinha com quadros em 13,749, 13,782… e o vídeo, em 13,733, 13,767…:
+  // cada quadro mostrava o zoom/opacidade de meio quadro antes e a posição do instante certo — diferente da prévia.
+  // Na grade, o tempo da camada é o do vídeo e tudo é calculado no mesmo instante. (Em frações de quadro, sem
+  // arredondar para milésimos: um quadro da camada não pode cair depois do quadro do vídeo que ele preenche.)
+  const naGrade = (t0) => {
+    const k = Math.ceil(t0 * FPS - 1e-6);
+    return k ? [`setpts=PTS+${k}/(${FPS}*TB)`] : [];
+  };
 
   // Giro fixo exato: múltiplos de 90° viram espelhar/transpor (sem interpolação); o resto, rotate.
   // (Todo rotate usa fundo transparente explícito, c=black@0: com c=none o FFmpeg não limpa o quadro de saída e
@@ -157,14 +191,15 @@ export function buildExport({ project: src, mediaMap, out, textAssets = {}, fxAs
   // Fonte → recorte → escala da camada → cor/efeitos do clipe.
   // Para imagens, tudo isso é estático: roda uma vez e o laço (loopFor) entra depois (veja o "static").
   // girarAqui: numa foto, espelhar/girar fixos entram aqui (uma vez) e não a cada quadro — devolve girado: true.
-  function preChain(c, m, { girarAqui = false } = {}) {
+  // corte: segundos do começo do clipe que não entram (o fluxo começa nesse ponto do clipe)
+  function preChain(c, m, { girarAqui = false, corte = 0 } = {}) {
     const f = [];
     const sp = c.speed || 1;
     if (m.type === 'video') {
       f.push('setpts=PTS-STARTPTS');
       if (Math.abs(sp - 1) > 1e-3) f.push(`setpts=PTS/${n4(sp)}`);
       f.push(`fps=${FPS}`, 'tpad=stop_mode=clone:stop_duration=1');
-      f.push(`trim=duration=${r3(c.duration)}`, 'setpts=PTS-STARTPTS');
+      f.push(`trim=duration=${r3(c.duration - corte)}`, 'setpts=PTS-STARTPTS');
     }
     const cr = c.crop || {};
     if (cr.l || cr.r || cr.t || cr.b) {
@@ -182,7 +217,7 @@ export function buildExport({ project: src, mediaMap, out, textAssets = {}, fxAs
     const fx = colorDyn ? [] : ffFilters(clipOps(c), { w, h, alpha: !!m.hasAlpha });
     // alguns filtros (vinheta, eq) descartam o alfa; a rotação e as animações precisam dele
     if (fx.length) f.push(...fx, 'format=rgba');
-    const steps = colorDyn ? colorSteps(c, dyn, w, h, m) : [];
+    const steps = colorDyn ? colorSteps(c, dyn, w, h, m, corte) : [];
     const isStatic = m.type === 'image';
     if (!isStatic) return { f: [...f, ...steps], stat: null, loop: null, w, h, wMax, hMax, k };
     let girado = false;
@@ -193,19 +228,19 @@ export function buildExport({ project: src, mediaMap, out, textAssets = {}, fxAs
       f.push(...giroFixo(((tf.rotation || 0) * Math.PI) / 180));
       girado = true;
     }
-    const loop = [...loopFor(c.duration), ...steps];
+    const loop = [...loopFor(c.duration - corte), ...steps];
     return { f: [...f, ...loop], stat: f, loop, w, h, wMax, hMax, k, girado };
   }
 
   // Ajustes/filtro que mudam ao longo do clipe: um conjunto de filtros por trecho (a cada 2 quadros).
-  function colorSteps(c, dyn, w, h, m) {
+  function colorSteps(c, dyn, w, h, m, corte = 0) {
     const props = COLOR_PROPS.filter((p) => dyn[p]);
     const wins = kfWindows({ ...c, kf: dyn }, props, FPS, { step: 2, quant: (p, v) => Math.round(v) });
     const out = [];
     wins.forEach((wd, i) => {
       const rc = { ...c, adjust: { ...(c.adjust || {}) }, filter: c.filter ? { ...c.filter } : c.filter };
       for (const p of props) KF_PROPS[p].set(rc, wd.vals[p]);
-      const a = i === 0 ? -1e6 : wd.a, b = i === wins.length - 1 ? 1e6 : wd.b;
+      const a = i === 0 ? -1e6 : wd.a - corte, b = i === wins.length - 1 ? 1e6 : wd.b - corte;
       out.push(...ffFilters(clipOps(rc), { w, h, alpha: !!m.hasAlpha, enable: `gte(t,${r3(a)})*lt(t,${r3(b)})` }));
     });
     return out.length ? [...out, 'format=rgba'] : [];
@@ -293,8 +328,8 @@ export function buildExport({ project: src, mediaMap, out, textAssets = {}, fxAs
     if (staticRot && !hasDynStretch && !girado) f.push(...giroFixo(staticRot));
     const op = c.opacity ?? 1;
     if (!dyn.opacity && op < 0.999) f.push(`colorchannelmixer=aa=${n4(op)}`);
-    if (t0 > 0) f.push(`setpts=PTS+${r3(t0)}/TB`);
-    f.push(...motionFilters(c, dyn, at0, { rotBaked: false, staticRot: hasDynStretch ? staticRot : 0, boxW, boxH, alfa: animFades(c, at0), k }));
+    f.push(...naGrade(t0));
+    f.push(...motionFilters(c, dyn, at0, { rotBaked: false, staticRot: hasDynStretch ? staticRot : 0, boxW, boxH, alfa: animFades(c, at0, FPS), k }));
     const cx = W / 2 + (tf.x || 0) * W, cy = H / 2 + (tf.y || 0) * H;
     return { f, ...posExprs(c, dyn, at0, cx, cy) };
   }
@@ -324,21 +359,35 @@ export function buildExport({ project: src, mediaMap, out, textAssets = {}, fxAs
   }
 
   const main = mainTrack(project);
-  const mainClips = main ? main.clips : [];
+  let mainClips = main ? main.clips : [];
   let base = null;
 
   if (wantVideo) {
     // ---- Faixa principal: cada clipe vira um quadro completo, depois concat/xfade ----
     const parts = [];
     const showMain = main && !main.hidden;
-    const tdqs = mainClips.map((c, i) => {
+    let tdqs = mainClips.map((c, i) => {
       const dur = q(c.duration);
       const td = transitionDuration(c, mainClips[i + 1]);
       return td > 0 ? Math.min(Math.round(td * FPS) / FPS, dur / 2) : 0;
     });
+    // exportar em partes: os mesmos quadros da exportação inteira — conta onde cada clipe começa (em quadros, como
+    // o concat/xfade abaixo), fica só com os que tocam a janela e corta o começo do primeiro
+    let corteMain = 0;
+    if (janela) {
+      const ini = [];
+      let S = 0;
+      mainClips.forEach((c, i) => { ini.push(S); S += Math.round(q(c.duration) * FPS) - Math.round(tdqs[i] * FPS); });
+      const fica = mainClips.map((c, i) => ini[i] + Math.round(q(c.duration) * FPS) > A0 && ini[i] < B0);
+      const prim = fica.indexOf(true);
+      corteMain = prim >= 0 ? Math.max(0, A0 - ini[prim]) / FPS : 0;
+      tdqs = tdqs.filter((_, i) => fica[i]);
+      mainClips = mainClips.filter((_, i) => fica[i]);
+    }
     mainClips.forEach((c, i) => {
       const m = mediaOf(c);
-      const dur = q(c.duration);
+      const corte = i === 0 ? corteMain : 0;
+      const dur = q(c.duration) - corte;
       const tdq = tdqs[i];
       const outT = tdq > 0 && isCamTransition(c.transition?.id) ? { id: c.transition.id, d: tdq } : null;
       const prevC = mainClips[i - 1];
@@ -346,13 +395,14 @@ export function buildExport({ project: src, mediaMap, out, textAssets = {}, fxAs
       const camL = outT || inT ? L('cv') : null;
       const lab = camL ? L('vr') : L('v');
       if (!showMain || !usable(m) || (m.type !== 'video' && m.type !== 'image')) {
-        F.push(`color=c=${hex(bgDefault.color)}:s=${W}x${H}:r=${FPS}:d=${r3(dur)},format=yuv420p,setsar=1,settb=AVTB[${lab}]`);
+        F.push(`color=c=${hex(bgDefault.color)}:s=${W}x${H}:r=${FPS}:d=${r3(dur)},format=yuv420p,setsar=1,settb=1/${FPS}[${lab}]`);
       } else {
         c = clipVisivel(c, m, W, H);   // escala grande parada: só a parte visível
-        const idx = inputFor(c, m);
+        const idx = inputFor(c, m, corte);
         const bg = c.bg || bgDefault;
-        const { f: pre, stat, loop, wMax, hMax, k, girado } = preChain(c, m, { girarAqui: bg.type !== 'blur' });
-        const pl = placeChain(c, 0, 0, wMax, hMax, girado, k);
+        const { f: pre, stat, loop, wMax, hMax, k, girado } = preChain(c, m, { girarAqui: bg.type !== 'blur', corte });
+        // com corte, o fluxo começa no meio do clipe: as animações contam a partir do começo de verdade (−corte)
+        const pl = placeChain(c, 0, -corte, wMax, hMax, girado, k);
         const bgL = L('bg'), fgL = L('fg');
         if (bg.type === 'blur') {
           const a = L('s'), b = L('s');
@@ -367,7 +417,7 @@ export function buildExport({ project: src, mediaMap, out, textAssets = {}, fxAs
           F.push(`color=c=${hex(bg.color)}:s=${W}x${H}:r=${FPS}:d=${r3(dur)}[${bgL}]`);
           F.push(`[${idx}:v]${[...pre, ...pl.f].join(',')}[${fgL}]`);
         }
-        F.push(`[${bgL}][${fgL}]overlay=x='${pl.x}':y='${pl.y}':eof_action=pass:format=auto,trim=duration=${r3(dur)},setpts=PTS-STARTPTS,fps=${FPS},format=yuv420p,setsar=1,settb=AVTB[${lab}]`);
+        F.push(`[${bgL}][${fgL}]overlay=x='${pl.x}':y='${pl.y}':eof_action=pass:format=auto,trim=duration=${r3(dur)},setpts=PTS-STARTPTS,fps=${FPS},format=yuv420p,setsar=1,settb=1/${FPS}[${lab}]`);
       }
       if (camL) F.push(...camClipChain({ inL: lab, outL: camL, inc: inT, out: outT, dur, FPS, H, L }));
       parts.push({ lab: camL || lab, dur, tdq, tid: c.transition?.id });
@@ -383,13 +433,14 @@ export function buildExport({ project: src, mediaMap, out, textAssets = {}, fxAs
         let gl = group[0];
         if (group.length > 1) {
           gl = L('c');
-          F.push(`${group.map((g) => `[${g}]`).join('')}concat=n=${group.length}:v=1:a=0[${gl}]`);
+          // (o concat devolve em microssegundos: de volta a 1/FPS, como o resto — o xfade exige a mesma base)
+          F.push(`${group.map((g) => `[${g}]`).join('')}concat=n=${group.length}:v=1:a=0,settb=1/${FPS}[${gl}]`);
         }
         if (acc === null) { acc = gl; accDur = groupDur; }
         else {
           const l = L('x');
           const tr = isCamTransition(prevId) ? `custom:expr='${camMixExpr(prevId)}'` : prevId;
-          F.push(`[${acc}][${gl}]xfade=transition=${tr}:duration=${r3(prevTd)}:offset=${r3(accDur - prevTd)}[${l}]`);
+          F.push(`[${acc}][${gl}]xfade=transition=${tr}:duration=${tq(prevTd)}:offset=${tq(accDur - prevTd)}[${l}]`);
           acc = l;
           accDur += groupDur - prevTd;
         }
@@ -418,7 +469,7 @@ export function buildExport({ project: src, mediaMap, out, textAssets = {}, fxAs
         if (!a) return null;
         const dyn = c.__dyn || {};
         const idx = addInput(['-i', a.path]);
-        const f = ['format=rgba', ...loopFor(c.duration + pre + post + 0.05), `setpts=PTS-STARTPTS+${r3(t0)}/TB`];
+        const f = ['format=rgba', ...loopFor(c.duration + pre + post + 0.05), ...naGrade(t0)];
         // o PNG já vem com escala/giro/opacidade fixos; o que muda (pontos de modificação) é aplicado aqui
         const rotBaked = !dyn.rotation && !dyn.scaleX && !dyn.scaleY;
         const staticRot = !rotBaked && !dyn.rotation ? ((c.transform?.rotation || 0) * Math.PI) / 180 : 0;
@@ -429,7 +480,7 @@ export function buildExport({ project: src, mediaMap, out, textAssets = {}, fxAs
           scaleXBase: a.scaleX ?? maxScaleX(c, dyn),
           scaleYBase: a.scaleY ?? maxScaleY(c, dyn),
           boxW: a.w, boxH: a.h,
-          alfa: animFades(c, at0),
+          alfa: animFades(c, at0, FPS),
         }));
         const l = L('t');
         F.push(`[${idx}:v]${f.join(',')}[${l}]`);
@@ -438,12 +489,14 @@ export function buildExport({ project: src, mediaMap, out, textAssets = {}, fxAs
       const m = mediaOf(c);
       if (!usable(m)) return null;
       c = clipVisivel(c, m, W, H);   // escala grande parada: só a parte visível
-      const idx = inputFor(c, m);
+      // exportar em partes: vídeo que começou antes da janela pula o pedaço anterior (não decodifica para jogar fora)
+      const corte = m.type === 'video' && pre === 0 && t0 < 0 ? Math.min(-t0, Math.max(0, c.duration - 1 / FPS)) : 0;
+      const idx = inputFor(c, m, corte);
       // (fotos: o laço, os trechos de cor e o giro fixo já vêm no preChain; os quadros parados entram depois)
-      const { f: pf, wMax, hMax, k, girado } = preChain(c, m, { girarAqui: true });
+      const { f: pf, wMax, hMax, k, girado } = preChain(c, m, { girarAqui: true, corte });
       let f = pf;
       if (pre > 0 || post > 0) f = [...pf, `tpad=start_mode=clone:start_duration=${r3(pre)}:stop_mode=clone:stop_duration=${r3(post)}`];
-      const pl = placeChain(c, t0, at0, wMax, hMax, girado, k);
+      const pl = placeChain(c, t0 + corte, at0, wMax, hMax, girado, k);
       const l = L('o');
       F.push(`[${idx}:v]${[...f, ...pl.f].join(',')}[${l}]`);
       return { l, x: pl.x, y: pl.y };
@@ -467,26 +520,27 @@ export function buildExport({ project: src, mediaMap, out, textAssets = {}, fxAs
       for (let i = 0; i < n; i++) {
         const c = chain[i];
         const aF = i === 0 ? 0 : cuts[i - 1] - ds[i - 1] / 2;
-        const bF = i === n - 1 ? TF : cuts[i] + ds[i] / 2;
+        // o último pedaço vai 2 quadros além do fim (o xfade come um quadro; o excesso é cortado na saída)
+        const bF = i === n - 1 ? TF + 2 : cuts[i] + ds[i] / 2;
         const pre = i === 0 ? 0 : ds[i - 1] / 2 / FPS;
         const post = i === n - 1 ? 0 : ds[i] / 2 / FPS;
         const t0 = i === 0 ? c.start : 0;
         const sg = L('sx'), out = L('sy');
         F.push(`color=c=black@0:s=${W}x${H}:r=${FPS},format=gbrap,trim=end_frame=${bF - aF},setpts=PTS-STARTPTS,setsar=1[${sg}]`);
         const ly = layerOf(c, t0, pre, post);
-        if (ly) F.push(`[${sg}][${ly.l}]overlay=x='${ly.x}':y='${ly.y}':eof_action=pass:enable='between(t,${r3(t0)},${r3(t0 + pre + c.duration + post)})':format=auto,premultiply=inplace=1,settb=AVTB[${out}]`);
-        else F.push(`[${sg}]settb=AVTB[${out}]`);
+        if (ly) F.push(`[${sg}][${ly.l}]overlay=x='${ly.x}':y='${ly.y}':eof_action=pass:enable='between(t,${r3(t0)},${r3(t0 + pre + c.duration + post)})':format=auto,premultiply=inplace=1,settb=1/${FPS}[${out}]`);
+        else F.push(`[${sg}]settb=1/${FPS}[${out}]`);
         segs.push(out);
       }
       let acc = segs[0];
       for (let i = 1; i < n; i++) {
         const l = L('xo');
-        F.push(`[${acc}][${segs[i]}]xfade=transition=${chain[i - 1].transition.id}:duration=${r3(ds[i - 1] / FPS)}:offset=${r3((cuts[i - 1] - ds[i - 1] / 2) / FPS)}[${l}]`);
+        F.push(`[${acc}][${segs[i]}]xfade=transition=${chain[i - 1].transition.id}:duration=${tq(ds[i - 1] / FPS)}:offset=${tq((cuts[i - 1] - ds[i - 1] / 2) / FPS)}[${l}]`);
         acc = l;
       }
       const u = L('xu'), o = L('xo');
       F.push(`[${acc}]unpremultiply=inplace=1[${u}]`);
-      F.push(`[${X}][${u}]overlay=eof_action=pass:format=auto,format=yuv420p,setsar=1,settb=AVTB[${o}]`);
+      F.push(`[${X}][${u}]overlay=eof_action=pass:format=auto,format=yuv420p,setsar=1,settb=1/${FPS}[${o}]`);
       return o;
     }
 
@@ -495,10 +549,17 @@ export function buildExport({ project: src, mediaMap, out, textAssets = {}, fxAs
     for (let ti = mi - 1; ti >= 0; ti--) {
       const tr = project.tracks[ti];
       if (tr.hidden || tr.kind === 'audio') continue;
-      // cadeias com transição (só as que cabem inteiras no trecho exportado)
+      // cadeias com transição, aparadas no trecho exportado: saem do fim os clipes cuja transição passaria do fim e
+      // (exportar em partes) do começo os que já terminaram antes da janela — o resto da cadeia segue com as transições
       const TFr = Math.round(T * FPS);
-      const chains = tr.kind === 'effect' ? [] : overlayChains(tr).filter((ch) => ch.every((c, i) => i === 0
-        || Math.round(c.start * FPS) + Math.max(1, Math.round((overlayTransDur(ch[i - 1], c) * FPS) / 2)) <= TFr));
+      const meiaTr = (a, b) => Math.max(1, Math.round((overlayTransDur(a, b) * FPS) / 2));
+      const aparar = (ch) => {
+        let fim = ch.length, ini = 0;
+        while (fim > 1 && Math.round(ch[fim - 1].start * FPS) + meiaTr(ch[fim - 2], ch[fim - 1]) > TFr) fim--;
+        while (fim - ini > 1 && Math.round(ch[ini + 1].start * FPS) + meiaTr(ch[ini], ch[ini + 1]) <= 0) ini++;
+        return ch.slice(ini, fim);
+      };
+      const chains = tr.kind === 'effect' ? [] : overlayChains(tr).map(aparar).filter((ch) => ch.length > 1);
       const chained = new Set(chains.flat().map((c) => c.id));
       for (const ch of chains) base = chainTransition(base, ch);
       for (const c of [...tr.clips].sort((a, b) => a.start - b.start)) {
@@ -579,7 +640,7 @@ export function buildExport({ project: src, mediaMap, out, textAssets = {}, fxAs
           segs.push(me);
           if (post) { const l = L('sg'); F.push(`[${lq}]trim=start_frame=${b},setpts=PTS-STARTPTS,format=yuv420p,setsar=1[${l}]`); segs.push(l); }
           const nb = L('b');
-          F.push(segs.length > 1 ? `${segs.map((x) => `[${x}]`).join('')}concat=n=${segs.length}:v=1:a=0,settb=AVTB[${nb}]` : `[${segs[0]}]null[${nb}]`);
+          F.push(segs.length > 1 ? `${segs.map((x) => `[${x}]`).join('')}concat=n=${segs.length}:v=1:a=0,settb=1/${FPS}[${nb}]` : `[${segs[0]}]null[${nb}]`);
           base = nb;
         } else if (c.type === 'text' || c.type === 'shape' || c.type === 'video' || c.type === 'image') {
           const ly = layerOf(c, s);
@@ -606,7 +667,7 @@ export function buildExport({ project: src, mediaMap, out, textAssets = {}, fxAs
   }
 
   // ---- Áudio de todas as faixas ----
-  if (wantAudio) {
+  if (wantAudio && !soVideo) {
     for (const tr of project.tracks) {
       if (tr.muted) continue;
       for (const c of tr.clips) {
@@ -670,7 +731,11 @@ export function buildExport({ project: src, mediaMap, out, textAssets = {}, fxAs
 
   const args = ['-y', '-hide_banner', '-nostdin', ...inputs, '-/filter_complex', graphPath];
   if (wantVideo) args.push('-map', '[vout]', ...v, '-r', String(fmt.kind === 'gif' ? Math.min(FPS, 15) : FPS));
-  if (wantAudio) args.push('-map', '[aout]', ...a, '-ar', '48000');
-  args.push('-t', r3(T), '-progress', 'pipe:1', '-nostats', '-loglevel', 'error', outPath);
+  if (wantAudio && !soVideo) args.push('-map', '[aout]', ...a, '-ar', '48000');
+  // uma parte termina num número exato de quadros: `-t` arredondado para milésimos (30,1667 → 30,167 s) dava um
+  // quadro a mais, e cada parte assim empurrava o resto do vídeo emendado um quadro para trás
+  if (janela) args.push('-frames:v', String(Math.max(1, B0 - A0)));
+  else args.push('-t', r3(T));
+  args.push('-progress', 'pipe:1', '-nostats', '-loglevel', 'error', outPath);
   return { args, graph: rgbSafe(F.join(';\n')), duration: T };
 }

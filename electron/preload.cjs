@@ -69,6 +69,7 @@ contextBridge.exposeInMainWorld('api', {
   pickExportPath: (name, ext, label) => ipcRenderer.invoke('export:pickPath', name, ext, label),
   exportStart: (job) => ipcRenderer.invoke('export:start', job),
   exportCancel: (jobId) => ipcRenderer.invoke('export:cancel', jobId),
+  exportLimpar: (jobId) => ipcRenderer.invoke('export:limpar', jobId),
   exportLogPath: () => ipcRenderer.invoke('export:logPath'),
   onExportProgress: on('export:progress'),
 

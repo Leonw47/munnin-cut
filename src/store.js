@@ -125,8 +125,22 @@ function guessType(name) {
   return 'video';
 }
 
+// Fotos conferidas no máximo 3 de cada vez (cada uma é decodificada inteira; dezenas juntas travavam a abertura).
+let fotosConferindo = 0;
+const filaFotos = [];
+function umaFotoPorVez(fn) {
+  return new Promise((resolve) => {
+    const vai = () => { fotosConferindo++; fn().then(resolve).finally(() => { fotosConferindo--; filaFotos.shift()?.(); }); };
+    if (fotosConferindo < 3) vai(); else filaFotos.push(vai);
+  });
+}
+
 // Testa se o Chromium consegue tocar/mostrar a mídia diretamente.
 function canPlay(m) {
+  if (m.type === 'image') return umaFotoPorVez(() => canPlayDireto(m));
+  return canPlayDireto(m);
+}
+function canPlayDireto(m) {
   return new Promise((resolve) => {
     const url = mediaUrl(m.path);
     if (m.type === 'image') {
@@ -439,7 +453,11 @@ export const useStore = create((set, get) => ({
         get().updateMediaSilent(id, { fp: { size: st.size, mtimeMs: st.mtimeMs } });
       }
       get().setMeta(id, { status: 'checking' });
-      const res = await canPlay(m);
+      // foto já conferida (mesmo arquivo, mesmo tamanho e data): não decodifica de novo ao abrir o projeto —
+      // antes cada abertura carregava TODAS as fotos inteiras ao mesmo tempo só para ver se abriam
+      const conferida = m.type === 'image' && m.chk && m.chk.size === st.size && Math.abs(m.chk.mtimeMs - st.mtimeMs) <= 2000;
+      const res = conferida ? { ok: true } : await canPlay(m);
+      if (m.type === 'image' && res.ok && !conferida) get().updateMediaSilent(id, { chk: { size: st.size, mtimeMs: st.mtimeMs } });
       let proxy = null;
       const badAudio = m.type !== 'image' && m.hasAudio && m.acodec && !OK_AUDIO.has(m.acodec);
       const heif = m.type === 'image' && /\.(heic|heif|hif)$/i.test(m.path);
@@ -460,7 +478,7 @@ export const useStore = create((set, get) => ({
       get().setMeta(id, { status: 'ready', proxy, error: null, ver: st.mtimeMs });
       m = get().project.media.find((x) => x.id === id);
       const [thumbs, waveform] = await Promise.all([
-        m.type === 'video' ? api.thumbs(m.path, m).catch(() => null) : null,
+        m.type === 'video' || m.type === 'image' ? api.thumbs(m.type === 'image' ? m.renderPath || m.path : m.path, m).catch(() => null) : null,
         m.hasAudio ? api.waveform(m.path).catch(() => null) : null,
       ]);
       get().setMeta(id, { thumbs, waveform });

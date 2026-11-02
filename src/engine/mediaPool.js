@@ -53,9 +53,24 @@ export class MediaPool {
       img.decoding = 'async';
       img.onload = () => this.onNeedRender();
       img.src = mediaUrl(src.split('|')[0]) + (src.includes('|') ? `?v=${src.split('|')[1]}` : '');
+      // decodifica fora do desenho: uma foto de 24 MP decodificada na hora de desenhar travava a prévia na troca
+      img.decode?.().then(() => this.onNeedRender()).catch(() => {});
       this.imgs.set(src, img);
     }
+    img.__uso = performance.now();
     return img.complete && img.naturalWidth ? img : null;
+  }
+
+  // Solta as fotos que não aparecem há um tempo e não estão perto da agulha (manter: srcFor delas),
+  // para a memória não crescer sem parar ao tocar um projeto com muitas fotos.
+  soltarFotos(manter) {
+    const agora = performance.now();
+    for (const [src, img] of this.imgs) {
+      if (manter.has(src) || agora - (img.__uso || 0) < 15000) continue;
+      img.onload = null;
+      img.removeAttribute('src');
+      this.imgs.delete(src);
+    }
   }
 
   element(clip, media, meta) {

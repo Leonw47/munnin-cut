@@ -11,6 +11,7 @@ import { DEFAULT_CHROMA } from './shared/chroma.js';
 import { areaCaixa, desenhaMascara } from './shared/area.js';
 import { EXPORT_FORMATS } from './shared/defs.js';
 import { uid } from './shared/timeline.js';
+import { planejarPartes, FORMATOS_EM_PARTES } from './shared/partes.js';
 
 // Mude quando o desenho de alguma camada mudar, para invalidar o cache antigo.
 const LAYER_VERSION = 3;
@@ -25,12 +26,15 @@ function hashKey(str) {
 }
 
 /**
- * opts: { project, meta, format, res, fps, quality, vKbps, aKbps, hw, outPath, onProgress(pct, speed, label) }
+ * opts: { project, meta, format, res, fps, quality, vKbps, aKbps, hw, outPath, onProgress(pct, speed, label),
+ *         partes (exportar em partes: menos memória), alvoParte (segundos por parte), paralelo (partes ao mesmo tempo) }
  * Retorna { jobId, promise, cancel } — promise resolve com { ok, outPath, cancelled, error }.
  */
 export function startExport(opts) {
   const jobId = uid('job');
   const { project, meta, format, res, fps, quality, vKbps, aKbps, hw, outPath, onProgress, endAt } = opts;
+  const rodando = new Set([jobId]); // FFmpegs deste trabalho (as partes têm o próprio id)
+  let cancelado = false;
   const promise = (async () => {
     const fmt = EXPORT_FORMATS.find((f) => f.id === format) || EXPORT_FORMATS[0];
     const size = exportSize(project, res);
@@ -224,15 +228,85 @@ export function startExport(opts) {
       const [cst] = await window.api.statFiles([project.cover.path]).catch(() => [null]);
       if (cst?.exists) coverAsset = { path: project.cover.path };
     }
-    const { args, graph, duration } = buildExport({
-      project, mediaMap,
-      out: { format, width: size.width, height: size.height, fps, quality, vKbps, aKbps, hw, endAt },
-      textAssets, fxAssets, vozAssets, chromaAssets, areaAssets, coverAsset, outPath, graphPath: '__GRAPH__',
-    });
+    const out = { format, width: size.width, height: size.height, fps, quality, vKbps, aKbps, hw, endAt };
+    const assets = { project, mediaMap, textAssets, fxAssets, vozAssets, chromaAssets, areaAssets };
+    if (opts.partes && FORMATOS_EM_PARTES.has(format)) {
+      const janelas = planejarPartes(project, fps, opts.alvoParte || 30, endAt || null);
+      if (janelas.length > 1) {
+        const r = await exportarEmPartes({ jobId, janelas, assets, out, coverAsset, outPath, onProgress, rodando, paralelo: opts.paralelo || 1, cancelado: () => cancelado });
+        if (!r.ok) window.api.exportLimpar(jobId);
+        return r;
+      }
+    }
+    const { args, graph, duration } = buildExport({ ...assets, out, coverAsset, outPath, graphPath: '__GRAPH__' });
     const off = window.api.onExportProgress((p) => { if (p.jobId === jobId && onProgress) onProgress(p.pct, p.speed); });
     try {
       return await window.api.exportStart({ jobId, args, graph, duration, outPath });
     } finally { off(); }
   })();
-  return { jobId, promise, cancel: () => window.api.exportCancel(jobId) };
+  return { jobId, promise, cancel: () => { cancelado = true; for (const j of rodando) window.api.exportCancel(j); } };
+}
+
+const r3 = (x) => String(Math.round(x * 1000) / 1000);
+
+/**
+ * Exportar em partes: o vídeo é montado janela por janela (cada uma num FFmpeg separado, só com o que aparece nela —
+ * shared/partes.js), o áudio do vídeo todo é feito à parte e, no fim, tudo é emendado sem recodificar. A memória
+ * fica do tamanho de uma parte; com `paralelo` > 1, várias partes rodam ao mesmo tempo (a montagem do FFmpeg usa
+ * um núcleo só, então isso também acelera).
+ */
+async function exportarEmPartes({ jobId, janelas, assets, out, coverAsset, outPath, onProgress, rodando, paralelo, cancelado }) {
+  const info = await window.api.info();
+  const dir = `${info.tempDir}\\${jobId}`; // pasta do trabalho: some na junção (ou em exportLimpar)
+  await window.api.writeFile(`job:${jobId}`, 'lista.txt', new Uint8Array());
+  const T = janelas[janelas.length - 1][1];
+  const peso = janelas.map(([a, b]) => (b - a) / T);
+  const feito = janelas.map(() => 0);
+  let feitoAudio = 0;
+  const avisar = (rotulo) => onProgress && onProgress(Math.min(0.99, 0.04 * feitoAudio + 0.94 * feito.reduce((s, x, i) => s + x * peso[i], 0)), null, rotulo);
+  const ouvintes = new Map();
+  const off = window.api.onExportProgress((p) => ouvintes.get(p.jobId)?.(p.pct));
+  const rodar = async (id, r, saida, args = r.args) => {
+    rodando.add(id);
+    // o áudio (o primeiro) começa o log da exportação; as partes e a junção entram no fim dele
+    try { return await window.api.exportStart({ jobId: id, args, graph: r.graph, duration: r.duration, outPath: saida, anexarLog: id !== `${jobId}_a` }); } finally { rodando.delete(id); }
+  };
+  try {
+    // 1) áudio do vídeo todo (rápido; a mesma mixagem da exportação inteira)
+    const audio = `${dir}\\audio.m4a`;
+    const ra = buildExport({ ...assets, out: { ...out, format: 'm4a', hw: null }, outPath: audio, graphPath: '__GRAPH__' });
+    ouvintes.set(`${jobId}_a`, (pct) => { feitoAudio = pct; avisar('Preparando o áudio…'); });
+    const resA = await rodar(`${jobId}_a`, ra, audio);
+    if (cancelado()) return { ok: false, cancelled: true };
+    if (!resA.ok) return resA;
+    feitoAudio = 1;
+    // 2) partes de vídeo (sem áudio), MPEG-TS: carimbos de tempo exatos para emendar
+    const partes = janelas.map((_, i) => `${dir}\\parte_${String(i).padStart(3, '0')}.ts`);
+    let prox = 0, erro = null;
+    const trabalhador = async () => {
+      while (prox < janelas.length && !erro && !cancelado()) {
+        const i = prox++;
+        const [a, b] = janelas[i];
+        const r = buildExport({ ...assets, out, coverAsset: i === 0 ? coverAsset : null, outPath: partes[i], graphPath: '__GRAPH__', janela: { a, b }, soVideo: true });
+        const args = r.args.filter((x, k, l) => !(x === '-movflags' || l[k - 1] === '-movflags' || x === '-tag:v' || l[k - 1] === '-tag:v'));
+        ouvintes.set(`${jobId}_p${i}`, (pct) => { feito[i] = pct; avisar(`Exportando a parte ${i + 1} de ${janelas.length}…`); });
+        const res = await rodar(`${jobId}_p${i}`, r, partes[i], args);
+        if (!res.ok) { if (!erro) erro = res; break; }
+        feito[i] = 1;
+      }
+    };
+    await Promise.all(Array.from({ length: Math.max(1, Math.min(paralelo, janelas.length)) }, trabalhador));
+    if (cancelado()) return { ok: false, cancelled: true };
+    if (erro) return erro;
+    // 3) junção: as partes emendadas sem recodificar + o áudio
+    const lista = partes.map((x) => `file '${x.replace(/\\/g, '/').replace(/'/g, "'\\''")}'`).join('\n');
+    await window.api.writeFile(`job:${jobId}`, 'lista.txt', new TextEncoder().encode(lista));
+    const extra = [];
+    if (out.format === 'mp4' || out.format === 'mov') extra.push('-movflags', '+faststart');
+    if (out.format === 'mp4_hevc' || out.format === 'mov_hevc') extra.push('-tag:v', 'hvc1', '-movflags', '+faststart');
+    const args = ['-y', '-hide_banner', '-nostdin', '-f', 'concat', '-safe', '0', '-i', `${dir}\\lista.txt`, '-i', audio,
+      '-map', '0:v', '-map', '1:a', '-c', 'copy', ...extra, '-t', r3(T), '-progress', 'pipe:1', '-nostats', '-loglevel', 'error', outPath];
+    avisar('Juntando as partes…');
+    return await rodar(jobId, { graph: '', duration: T }, outPath, args);
+  } finally { off(); }
 }

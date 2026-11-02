@@ -10,7 +10,7 @@ import os from 'node:os';
 import { buildExport } from '../src/shared/graph.js';
 import { clipVisivel } from '../src/shared/visivel.js';
 import { resolveAt, splitKf } from '../src/shared/keyframes.js';
-import { mediaLayerSize } from '../src/shared/timeline.js';
+import { mediaLayerSize, layoutProject } from '../src/shared/timeline.js';
 
 const FF = path.resolve('resources/bin/ffmpeg.exe');
 const DIR = path.join(os.tmpdir(), 'munnin-cut-test', 'paridade');
@@ -36,11 +36,12 @@ ok(clipVisivel(base, media, W, H).__visivel === true, 'parada e grande: continua
 
 // 2) exporta e mede o quadrado vermelho em t = 1 s
 // 2) exporta e mede o quadrado vermelho (caixa no quadro) contra a conta da prévia, em vários instantes
-function conferir(nome, c, tempos, md = media) {
-  const project = { width: W, height: H, fps: 30, background: { type: 'color', color: '#000000' }, media: [md],
-    tracks: [{ id: 'ov', kind: 'overlay', clips: [c] }, { id: 'main', kind: 'video', main: true, clips: [] }] };
+// antes: clipes da mesma faixa antes de c (uma sequência com transição), com as mídias deles em `outras`
+function conferir(nome, c, tempos, md = media, antes = [], outras = []) {
+  const project = { width: W, height: H, fps: 30, background: { type: 'color', color: '#000000' }, media: [md, ...outras],
+    tracks: [{ id: 'ov', kind: 'overlay', clips: [...antes, c] }, { id: 'main', kind: 'video', main: true, clips: [] }] };
   const outPath = p(`paridade_${nome}.mp4`);
-  const r = buildExport({ project, mediaMap: { [md.id]: md }, out: { format: 'mp4', width: W, height: H, fps: 30, quality: 'high', vKbps: 4000, aKbps: 128 }, outPath, graphPath: '__GRAPH__' });
+  const r = buildExport({ project, mediaMap: Object.fromEntries([md, ...outras].map((m) => [m.id, m])), out: { format: 'mp4', width: W, height: H, fps: 30, quality: 'high', vKbps: 4000, aKbps: 128 }, outPath, graphPath: '__GRAPH__' });
   fs.writeFileSync(p(`grafo_${nome}.txt`), r.graph);
   execFileSync(FF, r.args.map((a) => (a === '__GRAPH__' ? p(`grafo_${nome}.txt`) : a === 'pipe:1' ? p('prog.txt') : a)), { stdio: ['ignore', 'pipe', 'pipe'] });
   for (const t of tempos) {
@@ -107,6 +108,44 @@ conferir('giro_esticar', { ...zoomGrande, id: 'G2', transform: { ...zoomGrande.t
   let n = 0;
   for (let i = 0; i < bytes.length; i += 3) if (bytes[i] > 120 && bytes[i + 1] < 90) n++;
   ok(Math.abs(n - w * h) / (w * h) < 0.05, 'giro animado sem rastro: só a área da camada fica vermelha', `${n} px vermelhos, esperado ${Math.round(w * h)}`);
+}
+
+// 9) camada que começa fora da grade de quadros (0,516 s) com zoom rápido: os quadros dela têm de cair nos do vídeo
+//    (antes caíam meio quadro depois, e o tamanho saía o de meio quadro antes enquanto a posição era a do instante certo)
+conferir('fora_da_grade', { ...clip, id: 'F', start: 0.516, duration: 2, transform: { x: 0, y: 0, scale: 0.2, scaleX: 1, scaleY: 1, rotation: 0 },
+  kf: { scale: [{ t: 0, v: 0.2 }, { t: 0.6, v: 1 }] } }, [0.7, 0.8, 0.9]);
+ok(/setpts=PTS\+16\/\(30\*TB\)/.test(fs.readFileSync(p('grafo_fora_da_grade.txt'), 'utf8')), 'camada fora da grade entra no quadro 16 (0,533 s), o primeiro a partir de 0,516 s');
+
+// 10) sequência com transição (azul → vermelho, "Dissolver"): a mistura começa no quadro 53 (1,7667 s) — em
+//     milésimos 1,767, depois do quadro — e a foto seguinte, com zoom rápido, saía um quadro atrasada
+{
+  const azul = { id: 'b', type: 'image', path: p('azul.png'), width: 400, height: 400, duration: 0 };
+  if (!fs.existsSync(azul.path)) execFileSync(FF, ['-v', 'error', '-y', '-f', 'lavfi', '-i', 'color=blue:s=400x400', '-frames:v', '1', azul.path]);
+  const A = { ...clip, id: 'A', mediaId: 'b', start: 0, duration: 62 / 30, kf: undefined, transform: { x: 0, y: 0, scale: 0.3, scaleX: 1, scaleY: 1, rotation: 0 },
+    transition: { id: 'fade', duration: 0.6 } };
+  const B = { ...clip, id: 'B', start: 62 / 30, duration: 2, transform: { x: 0, y: 0, scale: 0.2, scaleX: 1, scaleY: 1, rotation: 0 },
+    kf: { scale: [{ t: 0.3, v: 0.2 }, { t: 0.9, v: 1 }] } };
+  const rs = conferir('sequencia_transicao', B, [2.6, 2.7, 2.8], media, [A], [azul]);
+  ok(/offset=1\.766666/.test(rs.graph), 'início da transição no quadro exato (1,766666 s, não 1,767)', (rs.graph.match(/offset=[\d.]+/) || [''])[0]);
+
+  // 11) o mesmo na faixa principal: depois da transição, a foto com zoom em todos os quadros (a base de tempo em
+  //     microssegundos — 1/30 s não é inteiro — atrasava e repetia quadros depois de cada xfade)
+  const proj = { width: W, height: H, fps: 30, background: { type: 'color', color: '#000000' }, media: [azul, media],
+    tracks: [{ id: 'main', kind: 'video', main: true, clips: [{ ...A, start: undefined }, { ...B, start: undefined, kf: { scale: [{ t: 0.3, v: 0.2 }, { t: 0.9, v: 0.9 }] } }] }] };
+  const out = p('paridade_principal.mp4');
+  const rp = buildExport({ project: proj, mediaMap: { b: azul, r: media }, out: { format: 'mp4', width: W, height: H, fps: 30, quality: 'high', vKbps: 4000, aKbps: 128 }, outPath: out, graphPath: '__GRAPH__' });
+  fs.writeFileSync(p('grafo_principal.txt'), rp.graph);
+  execFileSync(FF, rp.args.map((a) => (a === '__GRAPH__' ? p('grafo_principal.txt') : a === 'pipe:1' ? p('prog.txt') : a)), { stdio: ['ignore', 'pipe', 'pipe'] });
+  const Bl = layoutProject(structuredClone(proj)).tracks[0].clips[1];
+  const erros = [];
+  for (let n = 56; n <= 74; n++) {
+    const bytes = execFileSync(FF, ['-v', 'error', '-i', out, '-vf', `select=eq(n\\,${n}),format=rgb24`, '-frames:v', '1', '-f', 'rawvideo', '-']);
+    let y0 = -1, y1 = -1;
+    for (let y = 0; y < H; y++) { const i = (y * W + W / 2) * 3; if (bytes[i] > 120 && bytes[i + 1] < 90 && bytes[i + 2] < 90) { if (y0 < 0) y0 = y; y1 = y; } }
+    const esp = resolveAt(Bl, n / 30 - Bl.start).transform.scale * H;
+    if (Math.abs(y1 - y0 + 1 - esp) > 3) erros.push(`quadro ${n}: ${y1 - y0 + 1} × ${esp.toFixed(0)}`);
+  }
+  ok(!erros.length, 'faixa principal: depois da transição, o zoom bate com a prévia em todos os quadros', erros.slice(0, 4).join(' · '));
 }
 
 console.log(falhas ? `\n${falhas} FALHA(S)` : '\nTudo certo.');

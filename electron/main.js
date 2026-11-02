@@ -153,7 +153,10 @@ function createWindow() {
       await new Promise((r) => setTimeout(r, 800));
       try {
         const code = fs.readFileSync(AUTOTEST, 'utf8');
+        // os testes antigos usam os cartões com miniatura da biblioteca (o padrão agora é a lista; o autotest-v112
+        // apaga a escolha e testa a lista)
         const r = await win.webContents.executeJavaScript(`(async () => { try {
+try { localStorage.setItem('mc.libVer', 'miniaturas'); } catch {}
 ${code}
  } catch (e) { await window.api.testLog('EXCECAO ' + (e && e.stack)); throw e; } })()`);
         console.log('AUTOTEST FIM', JSON.stringify(r));
@@ -194,6 +197,7 @@ ipcMain.handle('app:info', async () => ({
   draftsDir,
   recordingsDir,
   tempDir: jobsRoot,
+  memoria: os.totalmem(),
 }));
 
 let nvencCache = null;
@@ -690,14 +694,15 @@ ipcMain.handle('export:pickPath', async (_e, defaultName, ext, label) => {
 
 const jobs = new Map();
 ipcMain.handle('export:start', (e, job) => new Promise((resolve) => {
-  const { jobId, args, graph, duration, outPath } = job;
+  const { jobId, args, graph, duration, outPath, anexarLog } = job;
   const dir = scopeDir(`job:${jobId}`);
   const graphPath = path.join(dir, 'graph.txt');
   fs.writeFileSync(graphPath, graph);
   const finalArgs = args.map((a) => (a === '__GRAPH__' ? graphPath : a));
   const partPath = `${outPath}`;
-  fs.writeFileSync(path.join(logsDir, 'ultima-exportacao.txt'),
-    `${new Date().toISOString()}\n${FFMPEG}\n${JSON.stringify(finalArgs, null, 1)}\n\n--- filter_complex ---\n${graph}\n`);
+  // exportar em partes: cada parte entra no fim do mesmo log (senão a parte com erro some sob as outras)
+  (anexarLog ? fs.appendFileSync : fs.writeFileSync)(path.join(logsDir, 'ultima-exportacao.txt'),
+    `${anexarLog ? `\n===== ${jobId} =====\n` : ''}${new Date().toISOString()}\n${FFMPEG}\n${JSON.stringify(finalArgs, null, 1)}\n\n--- filter_complex ---\n${graph}\n`);
   const p = spawn(FFMPEG, finalArgs, { windowsHide: true });
   jobs.set(jobId, p);
   let err = '';
@@ -723,7 +728,7 @@ ipcMain.handle('export:start', (e, job) => new Promise((resolve) => {
     const cancelled = !jobs.has(jobId) || signal === 'SIGKILL';
     jobs.delete(jobId);
     fs.appendFileSync(path.join(logsDir, 'ultima-exportacao.txt'), `\n--- saída (código ${code}) ---\n${err}\n`);
-    if (!(AUTOTEST && process.env.MC_KEEP_JOB === '1')) fs.rm(dir, { recursive: true, force: true }, () => {});
+    if (!(AUTOTEST && process.env.MC_KEEP_JOB === '1')) fs.rm(dir, { recursive: true, force: true, maxRetries: 3 }, () => {});
     if (code === 0) { let size = null; try { size = fs.statSync(partPath).size; } catch { /* ignore */ } resolve({ ok: true, outPath: partPath, size }); }
     else {
       fs.rm(partPath, { force: true }, () => {});
@@ -737,6 +742,12 @@ ipcMain.handle('export:cancel', (_e, jobId) => {
   return true;
 });
 ipcMain.handle('export:logPath', () => path.join(logsDir, 'ultima-exportacao.txt'));
+// exportar em partes: apaga a pasta do trabalho (partes, áudio, lista) quando não chegou à junção (erro/cancelado)
+ipcMain.handle('export:limpar', (_e, jobId) => {
+  const dir = path.join(jobsRoot, String(jobId).replace(/[^a-z0-9_-]/gi, ''));
+  if (!(AUTOTEST && process.env.MC_KEEP_JOB === '1')) fs.rm(dir, { recursive: true, force: true }, () => {});
+  return true;
+});
 
 ipcMain.handle('test:capture', async (_e, name) => {
   if (!AUTOTEST) return null;

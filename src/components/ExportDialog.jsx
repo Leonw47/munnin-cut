@@ -6,6 +6,7 @@ import { EXPORT_FORMATS, RESOLUTIONS, FPS_LIST, QUALITIES, CONTAINERS, videoKbps
 import { exportSize } from '../shared/graph.js';
 import { projectDuration, fmtTime } from '../shared/timeline.js';
 import { startExport } from '../exporter.js';
+import { FORMATOS_EM_PARTES } from '../shared/partes.js';
 import { mediaUrl } from '../engine/util.js';
 import { Modal, Seg, Toggle, Slider } from './ui.jsx';
 
@@ -26,6 +27,8 @@ export default function ExportDialog() {
   const [customMbps, setCustomMbps] = useState(() => Number(ls('mc.mbps', 10)));
   const [nvenc, setNvenc] = useState(false);
   const [hw, setHw] = useState(() => ls('mc.hw', '0') === '1');
+  const [partes, setPartes] = useState(() => ls('mc.partes', '1') === '1');
+  const [memoria, setMemoria] = useState(0);
   const [st, setSt] = useState({ phase: 'setup' });
   const [cutTail, setCutTail] = useState(true);
   const [cover, setCover] = useState(null);
@@ -33,6 +36,7 @@ export default function ExportDialog() {
 
   useEffect(() => {
     window.api.nvenc().then(setNvenc).catch(() => setNvenc(false));
+    window.api.info().then((i) => setMemoria(i.memoria || 0)).catch(() => {});
     try { setCover(engine.canvas?.toDataURL('image/jpeg', 0.7)); } catch { setCover(null); }
   }, []);
   useEffect(() => {
@@ -40,8 +44,9 @@ export default function ExportDialog() {
       localStorage.setItem('mc.container', container); localStorage.setItem('mc.codec', codec); localStorage.setItem('mc.other', other);
       localStorage.setItem('mc.res', String(res)); localStorage.setItem('mc.quality2', quality); localStorage.setItem('mc.mbps', String(customMbps));
       localStorage.setItem('mc.hw', hw ? '1' : '0');
+      localStorage.setItem('mc.partes', partes ? '1' : '0');
     } catch { /* ignore */ }
-  }, [container, codec, other, res, quality, customMbps, hw]);
+  }, [container, codec, other, res, quality, customMbps, hw, partes]);
 
   const codecs = CONTAINERS[container]?.codecs || [];
   const codecDef = codecs.find((c) => c.id === codec) || codecs[0];
@@ -56,6 +61,8 @@ export default function ExportDialog() {
   const size = exportSize(project, res);
   const hwUsable = nvenc && ['mp4', 'mov', 'mkv', 'mp4_hevc', 'mov_hevc'].includes(format);
   const hasQuality = !['prores', 'gif', 'wav', 'flac'].includes(format);
+  // exportar em partes: vídeos de mais de 1 minuto em MP4/MOV/MKV (as partes são emendadas sem recodificar)
+  const partesUsavel = FORMATOS_EM_PARTES.has(format) && duration > 60;
   const vK = fmt.kind === 'audio' || fmt.kind === 'gif' ? 0 : videoKbps({ format, res, fps, width: size.width, height: size.height, quality, customMbps });
   const aK = audioKbps(format, quality);
   const bytes = useMemo(() => estimateBytes({ kind: fmt.kind, width: size.width, height: size.height, fps, duration, vKbps: vK, aKbps: aK }), [fmt.kind, size.width, size.height, fps, duration, vK, aK]);
@@ -73,6 +80,9 @@ export default function ExportDialog() {
         vKbps: hasQuality && fmt.kind === 'video' ? vK : 0,
         aKbps: hasQuality ? aK : 0,
         hw: hw && hwUsable ? 'nvenc' : null, outPath,
+        partes: partes && partesUsavel, alvoParte: 30,
+        // com bastante memória, 2 partes ao mesmo tempo (mais rápido); com pouca, uma de cada vez
+        paralelo: memoria >= 24 * 1024 ** 3 ? 2 : 1,
         onProgress: (pct, speed, label) => setSt((s) => (s.phase === 'running' ? { ...s, pct, speed, label: label || 'Exportando…' } : s)),
       });
       job.current = run;
@@ -182,6 +192,14 @@ export default function ExportDialog() {
           {fmt.kind === 'video' && <>
             <label>Capa</label>
             <CapaEscolha />
+          </>}
+
+          {partesUsavel && <>
+            <label>Em partes</label>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <Toggle on={partes} onChange={setPartes} />
+              <span className="hint">Monta o vídeo em pedaços de ~30 s e junta no fim — usa bem menos memória (bom para computadores com pouca RAM e vídeos longos com muitas fotos)</span>
+            </div>
           </>}
 
           {hwUsable && <>

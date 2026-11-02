@@ -198,6 +198,20 @@ textarea { resize: vertical; width: 100%; }
 .itrim-play:hover { background: var(--accent); color: var(--accent-ink); }
 .itrim-play.full { left: 12px; }
 .media-card.multi .thumb { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-soft); }
+.media-list { display: flex; flex-direction: column; gap: 2px; }
+.media-row { display: flex; align-items: center; gap: 7px; height: 28px; padding: 0 6px; border-radius: 6px; border: 1px solid transparent; cursor: grab; color: var(--text-2); font-size: 12px; }
+.media-row:hover { background: var(--panel-2); }
+.media-row.selected { border-color: var(--accent); background: var(--accent-soft); color: var(--text); }
+.media-row .ic { display: grid; color: var(--muted); flex: 0 0 auto; }
+.media-row .nm { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.media-row .inf { flex: 0 0 auto; font-size: 10.5px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.media-row .inf.err { color: #ff8a8a; }
+.media-row .inf.wait { color: var(--accent); }
+.media-row .used { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); flex: 0 0 auto; }
+.media-row .cut { display: grid; color: var(--accent); flex: 0 0 auto; }
+.media-row .see, .media-row .add { display: none; flex: 0 0 auto; width: 22px; height: 22px; border-radius: 5px; place-items: center; background: var(--panel-3, rgba(255,255,255,0.08)); color: var(--text); border: 0; cursor: pointer; }
+.media-row:hover .see, .media-row:hover .add { display: grid; }
+.media-row .add:hover, .media-row .see:hover { color: var(--accent); }
 .media-card .sel-count { position: absolute; right: 4px; bottom: 4px; background: var(--accent); color: var(--accent-ink); border-radius: 9px; min-width: 18px; height: 18px; padding: 0 5px; font-size: 10px; font-weight: 700; display: grid; place-items: center; }
 .list-item.selected { background: var(--accent-soft); box-shadow: inset 0 0 0 1.5px var(--accent); }
 .list-trim { position: relative; height: 42px; border-radius: 6px; overflow: hidden; margin: -2px 0 8px; }

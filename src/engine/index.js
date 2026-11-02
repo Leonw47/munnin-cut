@@ -143,6 +143,7 @@ class Engine {
       }
     }
     this.pool.prune(live);
+    this.fotosPerto(project, mediaMap, s.meta, t);
     if (this.comp && (this.dirty || s.playing || s.fxPreview)) {
       this.dirty = false;
       // conta-gotas: mostra o clipe sem o recorte para escolher a cor original
@@ -154,6 +155,25 @@ class Engine {
       this.comp.render(env);
       if (this.fora) this.desenhaFora(env);
     }
+  }
+
+  // Fotos dos próximos segundos: começam a carregar/decodificar antes de aparecer (a troca de uma foto para outra
+  // não engasga); as que ficaram longe da agulha são soltas. Roda no máximo 2–3 vezes por segundo.
+  fotosPerto(project, mediaMap, meta, t) {
+    const agora = performance.now();
+    if (this.fotosEm && agora - this.fotosEm < 400) return;
+    this.fotosEm = agora;
+    const manter = new Set();
+    for (const tr of project.tracks) {
+      for (const c of tr.clips) {
+        if (c.type !== 'image' || c.start > t + 4 || c.start + c.duration < t - 1) continue;
+        const m = mediaMap[c.mediaId], mt = meta[c.mediaId];
+        if (!m || mt?.status !== 'ready') continue;
+        this.pool.image(m, mt);
+        manter.add(this.pool.srcFor(m, mt));
+      }
+    }
+    this.pool.soltarFotos(manter);
   }
 
   // Zoom para fora: o que passa da borda da tela aparece meio transparente em volta (canvas atrás do quadro).

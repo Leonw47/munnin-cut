@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from 'react';
-import { Upload, Plus, Film, Image as ImageIcon, Music, Loader2, AlertTriangle, Search, Layers, Trash2, FolderOpen, Link, Scissors, Replace, Download, Eye } from 'lucide-react';
+import { Upload, Plus, Film, Image as ImageIcon, Music, Loader2, AlertTriangle, Search, Layers, Trash2, FolderOpen, Link, Scissors, Replace, Download, Eye, EyeOff } from 'lucide-react';
 import { useStore, libView } from '../store.js';
 import { fmtTime } from '../shared/timeline.js';
 import { mediaUrl } from '../engine/util.js';
@@ -10,8 +10,9 @@ import InlineTrim from '../components/InlineTrim.jsx';
 /** at: tempo (s) para mostrar o quadro do vídeo nesse ponto (durante o corte no cartão) */
 export function MediaThumb({ m, meta, at = null }) {
   if (m.type === 'image') {
-    const src = meta?.proxy || m.renderPath || m.path;
-    return meta?.status === 'ready' ? <img src={mediaUrl(src) + (meta.ver ? `?v=${meta.ver}` : '')} alt="" draggable={false} /> : null;
+    // miniatura pequena gerada no cache (nunca a foto original: dezenas de fotos de 24 MP pesavam o app)
+    const src = meta?.thumbs?.mini;
+    return meta?.status === 'ready' && src ? <img src={mediaUrl(src) + (meta.ver ? `?v=${meta.ver}` : '')} alt="" draggable={false} /> : null;
   }
   if (m.type === 'video' && meta?.thumbs) {
     const t = meta.thumbs;
@@ -93,6 +94,39 @@ const MediaCard = React.memo(function MediaCard({ m, mt, used, selected, multi, 
   );
 });
 
+// Modo lista (sem imagens): nome, tipo e duração. Mais leve com muitas mídias; as miniaturas aparecem ao clicar
+// em "Visualizar" (a escolha fica guardada).
+const MediaRow = React.memo(function MediaRow({ m, mt, used, selected, multi, onMenu }) {
+  const s = useStore.getState;
+  const ready = mt?.status === 'ready';
+  const st = mt?.status === 'error' ? 'formato não suportado' : mt?.status === 'missing' ? 'arquivo não encontrado'
+    : mt?.status === 'proxy' ? `convertendo ${Math.round((mt.progress || 0) * 100)}%` : !ready ? 'lendo…' : null;
+  const info = m.type === 'image' ? (m.width ? `${m.width}×${m.height}` : '') : m.duration > 0 ? fmtTime(m.duration) : '';
+  return (
+    <div className={`media-row ${selected ? 'selected' : ''} ${selected && multi ? 'multi' : ''}`} data-id={m.id} draggable={ready}
+      onDragStart={(e) => dragMedia(e, m, libView.order)}
+      onDragEnd={endDrag}
+      onClick={(e) => s().libClick(m.id, { ctrl: e.ctrlKey || e.metaKey, shift: e.shiftKey, order: libView.order })}
+      onDoubleClick={() => ready && s().addMedia(m.id)}
+      onContextMenu={(e) => {
+        e.preventDefault();
+        if (!s().libSel.includes(m.id)) s().libClick(m.id, { order: libView.order });
+        onMenu({ x: e.clientX, y: e.clientY, m });
+      }}
+      title={`${m.name}${m.width ? ` · ${m.width}×${m.height}` : ''} — clique para selecionar (Ctrl/Shift: vários), clique duplo para adicionar`}>
+      <span className="ic">{m.type === 'video' ? <Film size={13} /> : m.type === 'image' ? <ImageIcon size={13} /> : <Music size={13} />}</span>
+      <span className="nm">{m.name}</span>
+      {used && <span className="used" title="Em uso na linha do tempo" />}
+      {m.trim && <span className="cut" title="Corte definido antes de inserir"><Scissors size={10} /></span>}
+      <span className={`inf ${st ? (mt?.status === 'error' || mt?.status === 'missing' ? 'err' : 'wait') : ''}`}>{st || info}</span>
+      {ready && <button className="see" title="Ver no reprodutor (prévia, sem pôr na linha do tempo)" onClick={(e) => { e.stopPropagation(); s().openLibPreview(m.id); }}><Eye size={12} /></button>}
+      {ready && <button className="add" title="Adicionar à linha do tempo" onClick={(e) => { e.stopPropagation(); s().addMedia(m.id); }}><Plus size={13} /></button>}
+    </div>
+  );
+});
+
+const lerVer = () => { try { return localStorage.getItem('mc.libVer') || 'lista'; } catch { return 'lista'; } };
+
 export default function MediaPanel() {
   const media = useStore((s) => s.project.media);
   const meta = useStore((s) => s.meta);
@@ -101,6 +135,8 @@ export default function MediaPanel() {
   const [filter, setFilter] = useState('all');
   const [q, setQ] = useState('');
   const [menu, setMenu] = useState(null);
+  const [ver, setVer] = useState(lerVer); // 'lista' (padrão, mais leve) | 'miniaturas'
+  const trocarVer = () => { const v = ver === 'lista' ? 'miniaturas' : 'lista'; setVer(v); try { localStorage.setItem('mc.libVer', v); } catch { /* ignora */ } };
   const s = useStore.getState;
 
   const used = useMemo(() => {
@@ -138,6 +174,10 @@ export default function MediaPanel() {
           <Seg value={filter} onChange={setFilter} options={[
             { value: 'all', label: 'Todos' }, { value: 'video', label: 'Vídeos' }, { value: 'image', label: 'Fotos' }, { value: 'audio', label: 'Áudios' },
           ]} />
+          <button className={`btn small ${ver === 'miniaturas' ? 'primary' : ''}`} style={{ marginLeft: 'auto' }} onClick={trocarVer}
+            title={ver === 'lista' ? 'Mostrar as miniaturas das mídias' : 'Esconder as miniaturas (lista simples, mais leve)'}>
+            {ver === 'lista' ? <><Eye size={13} /> Visualizar</> : <><EyeOff size={13} /> Ocultar</>}
+          </button>
         </div>
       )}
       {!media.length && (
@@ -154,15 +194,25 @@ export default function MediaPanel() {
         </div>
       )}
       <Paginador p={pg} total={list.length} rotulo="mídias" />
-      <div className="grid">
-        {pagina.map((m) => (
-          <MediaCard key={m.id} m={m} mt={meta[m.id]} used={used.has(m.id)} selected={libSel.includes(m.id)} multi={multi} onMenu={setMenu} />
-        ))}
-      </div>
+      {ver === 'lista' ? (
+        <div className="media-list">
+          {pagina.map((m) => (
+            <MediaRow key={m.id} m={m} mt={meta[m.id]} used={used.has(m.id)} selected={libSel.includes(m.id)} multi={multi} onMenu={setMenu} />
+          ))}
+        </div>
+      ) : (
+        <div className="grid">
+          {pagina.map((m) => (
+            <MediaCard key={m.id} m={m} mt={meta[m.id]} used={used.has(m.id)} selected={libSel.includes(m.id)} multi={multi} onMenu={setMenu} />
+          ))}
+        </div>
+      )}
       {pg.paginas > 1 && <div style={{ marginTop: 8 }}><Paginador p={pg} total={list.length} rotulo="mídias" /></div>}
       {media.length > 0 && !multi && (
         <div className="hint" style={{ marginTop: 10 }}>
-          Clique num vídeo ou áudio para cortar direto no cartão (arraste as alças; Shift = ajuste fino). Ctrl+clique ou Shift+clique selecionam vários; Delete remove.
+          {ver === 'lista'
+            ? 'Clique duplo adiciona; Ctrl+clique ou Shift+clique selecionam vários; Delete remove. "Visualizar" mostra as miniaturas (e o corte direto no cartão).'
+            : 'Clique num vídeo ou áudio para cortar direto no cartão (arraste as alças; Shift = ajuste fino). Ctrl+clique ou Shift+clique selecionam vários; Delete remove.'}
         </div>
       )}
       {menu && (

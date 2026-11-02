@@ -244,10 +244,26 @@ export function animRotExpr(clip, t0) {
   return terms.join('+');
 }
 
-export function animFades(clip, t0) {
+export function animFades(clip, t0, fps = 30) {
   const { di, dout } = animDurations(clip);
   const f = [];
-  if (di > 0 && DEFS.in[clip.animIn.id].alpha !== undefined) f.push(`fade=t=in:st=${n4(t0)}:d=${n4(di)}:alpha=1`);
-  if (dout > 0 && DEFS.out[clip.animOut.id].alpha !== undefined) f.push(`fade=t=out:st=${n4(t0 + clip.duration - dout)}:d=${n4(dout)}:alpha=1`);
+  if (di > 0 && DEFS.in[clip.animIn.id].alpha !== undefined) f.push(...rampaAlfa('in', t0, di, fps));
+  if (dout > 0 && DEFS.out[clip.animOut.id].alpha !== undefined) f.push(...rampaAlfa('out', t0 + clip.duration - dout, dout, fps));
   return f;
+}
+
+// Esmaecer de st a st+d. O fade do FFmpeg não começa no meio da rampa (st < 0 dá erro): quando a rampa começou antes
+// do trecho (exportar em partes), o que falta dela vai quadro a quadro — uma cópia alterável e um colorchannelmixer
+// por quadro, como a opacidade dos pontos de modificação.
+function rampaAlfa(tipo, st, d, fps) {
+  if (st >= 0) return [`fade=t=${tipo}:st=${n4(st)}:d=${n4(d)}:alpha=1`];
+  const fim = st + d;
+  if (fim <= 0) return tipo === 'in' ? [] : ['colorchannelmixer=aa=0'];
+  const out = [];
+  for (let i = 0; i / fps < fim; i++) {
+    const t = i / fps, v = Math.max(0, Math.min(1, (t - st) / d));
+    out.push(`colorchannelmixer=aa=${n4(tipo === 'in' ? v : 1 - v)}:enable='gte(t,${n4(t - 0.5 / fps)})*lt(t,${n4(t + 0.5 / fps)})'`);
+  }
+  if (tipo === 'out') out.push(`colorchannelmixer=aa=0:enable='gte(t,${n4(fim)})'`);
+  return out.length > 1 ? [`colorchannelmixer=aa=1:enable='lt(t,${n4(fim + 1 / fps)})'`, ...out] : out;
 }

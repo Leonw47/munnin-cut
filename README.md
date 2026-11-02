@@ -38,7 +38,8 @@ clique em **Mais informações → Executar assim mesmo**.
 - Cortar áudio direto no bloco da linha do tempo (com a duração à vista) ou antes de inserir: direto no cartão
   da biblioteca (clique e arraste as alças; Shift = ajuste fino) ou na janela de corte (botão direito; teclas I e O).
 - Biblioteca de mídia com seleção de vários itens (clique, Ctrl+clique, Shift+clique, Ctrl+A): Delete remove do
-  projeto; arrastar leva todos para a linha do tempo.
+  projeto; arrastar leva todos para a linha do tempo. Aparece em lista (leve, sem imagens); "Visualizar" mostra as
+  miniaturas — das fotos, uma cópia pequena feita na importação, nunca a foto original.
 - 1124 efeitos sonoros em 18 categorias (transições, interface, impactos, engraçados, pessoas, animais, natureza,
   ambientes, cidade, casa, alertas, música e vinhetas, games, ficção científica, esportes, armas, locução…): 97
   sintetizados pelo próprio app e 1027 de domínio público (CC0) da Kenney e do BigSoundBank — créditos em
@@ -61,7 +62,9 @@ clique em **Mais informações → Executar assim mesmo**.
 - Fundo desfocado para vídeos que não preenchem o quadro (ex.: vídeo deitado em 9:16).
 - Importa praticamente qualquer formato (o que o Chromium não toca ganha um proxy só para a prévia).
 - Exporta MP4 e MOV (H.264/H.265/ProRes), WebM, MKV, AVI, GIF, MP3, WAV, M4A e FLAC, de 480p a 4K,
-  com qualidade por taxa de bits e tamanho estimado antes de exportar.
+  com qualidade por taxa de bits e tamanho estimado antes de exportar. "Em partes" (MP4/MOV/MKV): o vídeo é montado
+  em trechos de ~30 s, cada um num FFmpeg separado, e emendado sem recodificar — a memória fica do tamanho de um
+  trecho (bom para computadores com pouca RAM; com 24 GB ou mais, dois trechos rodam ao mesmo tempo).
 - Projetos salvos automaticamente em `Documentos\Munnin Cut\Projetos`; cópia em arquivo `.mcut`.
 
 ## Como funciona
@@ -72,8 +75,9 @@ clique em **Mais informações → Executar assim mesmo**.
 - `src/shared/` — regras puras usadas na prévia **e** na exportação: `ops.js` (matrizes de cor iguais às do CSS),
   `anim.js`, `timeline.js`, `graph.js` (monta o `filter_complex` do FFmpeg), `camtrans.js` (transições de câmera),
   `expr.js` (avalia na prévia as mesmas expressões que vão para o FFmpeg), `keyframes.js` (pontos de modificação),
-  `chroma.js` (mesmas contas do chromakey/despill do FFmpeg) e `audiofx.js` (efeitos de voz: um plano só para
-  o Web Audio da prévia e os filtros do FFmpeg).
+  `chroma.js` (mesmas contas do chromakey/despill do FFmpeg), `audiofx.js` (efeitos de voz: um plano só para
+  o Web Audio da prévia e os filtros do FFmpeg) e `partes.js` (onde cortar a exportação em partes: fora de
+  transições e de efeitos que contam o próprio tempo).
 - `public/voz-worklet.js` + `src/engine/voz.js` + `electron/voz.js` — limpeza da voz: o mesmo processador roda
   no AudioWorklet da prévia, no OfflineAudioContext da exportação e (perfil do ruído) no processo principal.
 - `electron/ytdlp.js` — áudio do YouTube: instala/atualiza o yt-dlp e usa o próprio Electron como runtime de
@@ -100,6 +104,7 @@ node scripts/test-youtube.mjs                         # baixador do YouTube: ins
 node scripts/test-legendas-grupo.mjs                  # tempos das legendas (voz × silêncio) e edição em grupo
 node scripts/test-cadeia.mjs                          # sequência longa de fotos com transição: exporta até o fim, mistura certa
 node scripts/test-paridade.mjs                        # vídeo exportado = prévia (tamanho/posição das camadas animadas)
+node scripts/test-partes.mjs                          # exportar em partes = exportar inteiro (quadro a quadro, sem perda)
 ```
-Testes de interface: `MC_AUTOTEST=scripts/autotest-ui.js npx electron .` (também `autotest-interact.js`, `autotest-fx.js`, `autotest-v12.js`, `autotest-v13.js`, `autotest-v14.js`, `autotest-v15.js`, `autotest-v16.js`, `autotest-v17.js`, `autotest-v18.js`, `autotest-fx18.js`, `autotest-v110.js`, `autotest-v111.js` e `autotest-scroll.js`).
+Testes de interface: `MC_AUTOTEST=scripts/autotest-ui.js npx electron .` (também `autotest-interact.js`, `autotest-fx.js`, `autotest-v12.js`, `autotest-v13.js`, `autotest-v14.js`, `autotest-v15.js`, `autotest-v16.js`, `autotest-v17.js`, `autotest-v18.js`, `autotest-fx18.js`, `autotest-v110.js`, `autotest-v111.js`, `autotest-v112.js` e `autotest-scroll.js`).
 O FFmpeg fica em `resources/bin/` (não versionado). Histórico de versões em [CHANGELOG.md](CHANGELOG.md).

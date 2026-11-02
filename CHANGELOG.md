@@ -3,6 +3,53 @@
 Formato baseado em [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/) e versões no padrão
 [SemVer](https://semver.org/lang/pt-BR/): MAJOR.MINOR.PATCH — correções sobem o PATCH, recursos novos o MINOR.
 
+## [1.12.0] — 2026-11-02
+
+### Corrigido
+- **Engasgos nas fotos do vídeo exportado** (zoom e Ken Burns "agarrando", passagem de uma foto para outra aos
+  trancos): o FFmpeg lê uma foto parada com relógio de 25 quadros/s e, ao repeti-la a 30 quadros/s, arredondava o
+  tempo de um em cada seis quadros para o mesmo instante — o movimento parava 5 vezes por segundo. Agora a montagem
+  inteira conta o tempo em quadros (1/30 s): nenhum quadro repetido (conferido quadro a quadro).
+- **Foto depois de uma transição um quadro atrasada** (e um quadro repetido logo depois), na faixa principal e nas
+  sequências de fotos das faixas de cima: o início da transição era escrito em milésimos (1,7667 s → 1,767, depois
+  do quadro) e o FFmpeg contava o tempo em microssegundos, onde 1/30 s não é exato. No projeto de 274 s, do meio
+  para o fim tudo saía um quadro atrás da prévia.
+- **Zoom e opacidade de fotos e textos meio quadro atrasados** em relação à posição: uma camada que começa fora da
+  grade de quadros (ex.: em 13,716 s) tinha quadros em 13,749, 13,782… e o vídeo em 13,733, 13,767… — cada quadro
+  mostrava a posição do instante certo com o tamanho e a opacidade de meio quadro antes. Agora a camada entra no
+  primeiro quadro do vídeo a partir do início dela e tudo é calculado no mesmo instante, como na prévia.
+
+### Adicionado
+- **Exportar em partes** (MP4, MOV e MKV; liga/desliga na janela de exportação, ligado por padrão em vídeos com mais
+  de 1 minuto): o vídeo é montado em trechos de ~30 s, cada um num FFmpeg separado e só com o que aparece nele, o
+  áudio é feito uma vez só e no fim tudo é emendado sem recodificar. A memória fica do tamanho de um trecho, e não do
+  vídeo todo — bom para computadores com pouca RAM; com 24 GB ou mais, dois trechos rodam ao mesmo tempo (mais
+  rápido). Os cortes caem fora de transições e de efeitos que contam o próprio tempo; o resultado é o mesmo da
+  exportação inteira (conferido quadro a quadro, sem perda).
+- **Biblioteca em lista**: as mídias importadas aparecem numa lista leve (nome, duração/tamanho, se já está no
+  projeto), sem imagens. **Visualizar** mostra as miniaturas e **Ocultar** volta para a lista (a escolha fica
+  guardada).
+
+### Desempenho
+- Miniaturas pequenas das fotos (até 360 px), feitas uma vez na importação: a biblioteca e a linha do tempo não
+  carregam mais a foto original (uma foto de 24 megapixels ocupava ~100 MB só para virar um quadradinho).
+- Abrir projeto mais rápido: cada foto é conferida (se abre) uma vez só — nas próximas aberturas, se o arquivo não
+  mudou, não é lida de novo — e no máximo 3 de cada vez.
+- Prévia: as fotos dos próximos segundos são carregadas e decodificadas antes de aparecer (sem engasgo na troca) e
+  as que ficaram longe da agulha saem da memória.
+
+### Testes
+- `scripts/test-partes.mjs`: o mesmo projeto (vídeo, transição de câmera, sequência de fotos com Ken Burns e
+  transição, vídeo sobreposto que começou antes do corte, texto, zoom/giro/opacidade animados, filtro) exportado
+  inteiro e em partes, sem perda — mesmo número de quadros, mesma imagem e o áudio do vídeo todo.
+- `scripts/test-paridade.mjs`: camada que começa fora da grade de quadros com zoom rápido (tamanho e posição do
+  mesmo instante) e foto com zoom logo depois de uma transição — numa sequência das faixas de cima e na faixa
+  principal —, quadro a quadro.
+- `scripts/test-partes.mjs` também confere que cada parte tem o número exato de quadros da janela (com a duração em
+  milésimos, uma parte de 30,1667 s saía com um quadro a mais e atrasava o resto do vídeo emendado).
+- `scripts/autotest-v112.js`: biblioteca em lista/Visualizar, miniaturas pequenas, foto conferida não relida ao abrir,
+  pré-carregamento e liberação de fotos na prévia e exportar em partes pelo app.
+
 ## [1.11.2] — 2026-10-30
 
 ### Corrigido

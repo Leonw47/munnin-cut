@@ -239,6 +239,20 @@ export function createMedia({ ffmpeg, ffprobe, cacheDir }) {
 
   // Tira de miniaturas: um único JPEG com N quadros lado a lado.
   async function thumbs(file, info) {
+    // foto: uma miniatura pequena (até 360 px) para a biblioteca e a linha do tempo — antes elas mostravam a foto
+    // original (até 24 megapixels decodificados para um quadradinho), o que pesava o app com o painel aberto
+    if (info.type === 'image') {
+      const png = /\.png$/i.test(file);
+      const key = await keyFor(file, 'mini1');
+      const out = path.join(cacheDir, `${key}_mini.${png ? 'png' : 'jpg'}`);
+      if (!fs.existsSync(out)) {
+        await enqueue(() => run(ffmpeg, [
+          '-v', 'error', '-y', ...(/\.jpe?g$/i.test(file) && Math.max(info.width || 0, info.height || 0) >= 1440 ? ['-lowres', '2'] : []), '-i', file,
+          '-vf', 'scale=w=360:h=360:force_original_aspect_ratio=decrease:flags=bicubic', '-frames:v', '1', ...(png ? [] : ['-q:v', '4']), out,
+        ]));
+      }
+      return { mini: out };
+    }
     if (info.type !== 'video') return null;
     const key = await keyFor(file, info.hdr ? 'thumbs4' : 'thumbs3');
     const out = path.join(cacheDir, `${key}_thumbs.jpg`);

@@ -92,7 +92,8 @@ function Wave({ path, clip, width, height, viewL = 0, viewW = 4000, color = '#7f
 function Thumbs({ clip, media, meta, width, height, zoom }) {
   if (!media) return null;
   if (media.type === 'image') {
-    const src = mediaUrl(meta?.proxy || media.renderPath || media.path) + (meta?.ver ? `?v=${meta.ver}` : '');
+    // miniatura pequena do cache (a foto original só enquanto ela não fica pronta)
+    const src = mediaUrl(meta?.thumbs?.mini || meta?.proxy || media.renderPath || media.path) + (meta?.ver ? `?v=${meta.ver}` : '');
     const tileW = Math.max(20, height * ((media.width || 16) / (media.height || 9)));
     const n = Math.min(120, Math.ceil(width / tileW));
     return (
