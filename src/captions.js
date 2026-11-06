@@ -4,6 +4,7 @@ import { startExport } from './exporter.js';
 import { DEFAULT_TEXT } from './shared/defs.js';
 import { regioesDeFala, temposDasPalavras, groupWords } from './shared/legendas.js';
 import { projectDuration } from './shared/timeline.js';
+import { meuEstilo } from './shared/legendaPadrao.js';
 
 export { groupWords };
 
@@ -22,7 +23,11 @@ export const CAPTION_LANGS = [
   { id: 'es', name: 'Espanhol' },
 ];
 
-export const captionStyle = (id) => ({ ...structuredClone(DEFAULT_TEXT), ...structuredClone((CAPTION_STYLES.find((s) => s.id === id) || CAPTION_STYLES[0]).style) });
+export const captionStyle = (id) => {
+  const meu = meuEstilo(id);
+  if (meu) return { ...structuredClone(DEFAULT_TEXT), ...structuredClone(meu.padrao.text) };
+  return { ...structuredClone(DEFAULT_TEXT), ...structuredClone((CAPTION_STYLES.find((s) => s.id === id) || CAPTION_STYLES[0]).style) };
+};
 
 /**
  * opts: { source: 'project' | 'clip', clipId, language, model, styleId, lines, replace, prompt, onStage(stage, pct) }
@@ -68,6 +73,8 @@ export async function generateCaptions(opts) {
 
   // 3) clipes de texto
   stage('apply', 1);
-  const n = S().applyCaptions(caps, captionStyle(styleId), { replace });
+  // "meu estilo": a aparência completa (posição, tamanho, animações) já entra nas legendas novas
+  const meu = meuEstilo(styleId);
+  const n = S().applyCaptions(caps, captionStyle(styleId), { replace, padrao: meu?.padrao || null });
   return n;
 }

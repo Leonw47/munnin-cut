@@ -5,7 +5,7 @@ import { fmtTime } from '../shared/timeline.js';
 import { endDrag } from '../dnd.js';
 import { ContextMenu, MenuItem, Toggle, Paginador, usePaginas } from '../components/ui.jsx';
 import InlineTrim from '../components/InlineTrim.jsx';
-import YoutubePreview from '../components/YoutubePreview.jsx';
+import YoutubePreview, { EscolhaQualidade, useQualidade } from '../components/YoutubePreview.jsx';
 import { dragMedia } from './MediaPanel.jsx';
 
 const cleanErr = (e) => String(e?.message || e).replace(/^Error invoking remote method '[^']+': (Error: )?/, '');
@@ -82,6 +82,7 @@ export function YoutubeImport() {
   const [res, setRes] = useState(null); // resultados da pesquisa
   const [prev, setPrev] = useState(null); // vídeo aberto na prévia
   const [ultimo, setUltimo] = useState(null); // escolhas da última prévia (áudio/vídeo, linha do tempo)
+  const [qualidade, setQualidade] = useQualidade(); // vídeo do Instagram (no YouTube, escolhida na prévia)
 
   const refresh = () => window.api.ytStatus().then(setStatus).catch(() => {});
   useEffect(() => { refresh(); }, []);
@@ -102,11 +103,14 @@ export function YoutubeImport() {
     setProg({ stage: 'info', text: 'Preparando…' });
     try {
       const url = /^https?:\/\//i.test(opts.url) ? opts.url : `https://${opts.url.replace(/^\/+/, '')}`;
-      const r = await window.api.ytDownload({ url, start: opts.start, end: opts.end, kind: opts.kind });
+      const r = await window.api.ytDownload({ url, start: opts.start, end: opts.end, kind: opts.kind, qualidade: opts.qualidade || qualidade });
       const [id] = await useStore.getState().importPaths([r.path]);
       if (id && opts.toTimeline) useStore.getState().addMedia(id, opts.kind === 'video' ? {} : { target: 'audio', time: at });
       const onde = opts.toTimeline ? (opts.kind === 'video' ? 'foi para o fim da faixa principal' : 'foi adicionado à linha do tempo') : 'está na biblioteca';
-      useStore.getState().toastMsg(`"${r.title}" ${onde}.`, 'info', 5000);
+      // a qualidade que veio de verdade (o vídeo pode não ter a escolhida)
+      const m = useStore.getState().project.media.find((x) => x.id === id);
+      const alt = opts.kind === 'video' && m?.height ? ` (${Math.min(m.width || m.height, m.height)}p)` : '';
+      useStore.getState().toastMsg(`"${r.title}"${alt} ${onde}.`, 'info', 5000);
     } catch (e) {
       setErr(cleanErr(e));
     } finally {
@@ -157,6 +161,7 @@ export function YoutubeImport() {
           ? <button className="btn" title="Cancelar" onClick={() => window.api.ytCancel()}><X size={14} /> Cancelar</button>
           : ehIg ? (
             <>
+              <EscolhaQualidade value={qualidade} onChange={setQualidade} />
               <button className="btn primary" onClick={() => baixar({ url: q.trim(), kind: 'video', toTimeline: true })} title="Baixa o vídeo do post/reel e põe no fim da faixa principal"><Download size={14} /> Vídeo</button>
               <button className="btn" onClick={() => baixar({ url: q.trim(), kind: 'audio', toTimeline: true })} title="Baixa só o som e põe no cursor"><Music size={14} /> Áudio</button>
             </>

@@ -19,13 +19,16 @@ export function MediaThumb({ m, meta, at = null }) {
     const idx = at != null && m.duration > 0
       ? Math.max(0, Math.min(t.count - 1, Math.round((at / m.duration) * (t.count - 1))))
       : Math.min(t.count - 1, Math.floor(t.count * 0.15));
+    // o quadro na proporção do vídeo, encaixado no cartão (16:10): vídeo em pé não fica esticado de lado
     return (
-      <div style={{
-        position: 'absolute', inset: 0,
-        backgroundImage: `url("${mediaUrl(t.sprite)}")`,
-        backgroundSize: `${t.count * 100}% 100%`,
-        backgroundPosition: `${t.count > 1 ? (idx / (t.count - 1)) * 100 : 0}% 0`,
-      }} />
+      <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+        <div style={{
+          aspectRatio: `${t.tw} / ${t.th}`, ...(t.tw / t.th >= 1.6 ? { width: '100%' } : { height: '100%' }),
+          backgroundImage: `url("${mediaUrl(t.sprite)}")`,
+          backgroundSize: `${t.count * 100}% 100%`,
+          backgroundPosition: `${t.count > 1 ? (idx / (t.count - 1)) * 100 : 0}% 0`,
+        }} />
+      </div>
     );
   }
   if (m.type === 'audio') {

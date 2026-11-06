@@ -11,6 +11,8 @@ import { buildExport } from '../src/shared/graph.js';
 import { clipVisivel } from '../src/shared/visivel.js';
 import { resolveAt, splitKf } from '../src/shared/keyframes.js';
 import { mediaLayerSize, layoutProject } from '../src/shared/timeline.js';
+import { quadLocal } from '../src/shared/perspectiva.js';
+import { centroDoPivo } from '../src/shared/pivo.js';
 
 const FF = path.resolve('resources/bin/ffmpeg.exe');
 const DIR = path.join(os.tmpdir(), 'munnin-cut-test', 'paridade');
@@ -146,6 +148,62 @@ ok(/setpts=PTS\+16\/\(30\*TB\)/.test(fs.readFileSync(p('grafo_fora_da_grade.txt'
     if (Math.abs(y1 - y0 + 1 - esp) > 3) erros.push(`quadro ${n}: ${y1 - y0 + 1} × ${esp.toFixed(0)}`);
   }
   ok(!erros.length, 'faixa principal: depois da transição, o zoom bate com a prévia em todos os quadros', erros.slice(0, 4).join(' · '));
+}
+
+// 12) perspectiva, pivô, giro e espelhar: os pixels vermelhos têm de formar exatamente o quadrilátero que a prévia
+//     calcula (perspectiva no sentido da camada, depois de espelhar; giro e escala em volta do pivô)
+{
+  const larga = { id: 'L', type: 'image', path: p('largo43.png'), width: 400, height: 300, duration: 0 };
+  if (!fs.existsSync(larga.path)) execFileSync(FF, ['-v', 'error', '-y', '-f', 'lavfi', '-i', 'color=red:s=400x300', '-frames:v', '1', larga.path]);
+  const persp = { on: true, tl: { x: 0.15, y: 0.1 }, tr: { x: 0, y: -0.05 }, br: { x: -0.1, y: 0.05 }, bl: { x: 0, y: 0 } };
+  const casos = [
+    ['perspectiva', { persp }],
+    ['perspectiva_giro', { persp, rotation: 25 }],
+    ['pivo_canto_giro', { pivoX: -0.5, pivoY: -0.5, x: -0.2, y: -0.25, rotation: 30 }],
+    ['perspectiva_pivo_giro_espelhado', { persp, pivoX: 0.5, pivoY: 0, x: 0.2, rotation: -20, flipH: true }],
+  ];
+  for (const [nome, extra] of casos) {
+    const c = { id: 'P', type: 'image', mediaId: 'L', start: 0, duration: 1, in: 0, speed: 1, opacity: 1, transform: { x: 0, y: 0, scale: 0.6, scaleX: 1, scaleY: 1, rotation: 0, ...extra } };
+    const proj = { width: W, height: H, fps: 30, background: { type: 'color', color: '#808080' }, media: [larga], tracks: [{ id: 'ov', kind: 'overlay', clips: [c] }, { id: 'main', kind: 'video', main: true, clips: [] }] };
+    const out = p(`paridade_${nome}.mp4`);
+    const rr = buildExport({ project: proj, mediaMap: { L: larga }, out: { format: 'mp4', width: W, height: H, fps: 30, quality: 'high', vKbps: 6000, aKbps: 128 }, outPath: out, graphPath: '__GRAPH__' });
+    fs.writeFileSync(p(`grafo_${nome}.txt`), rr.graph);
+    execFileSync(FF, rr.args.map((a) => (a === '__GRAPH__' ? p(`grafo_${nome}.txt`) : a === 'pipe:1' ? p('prog.txt') : a)), { stdio: ['ignore', 'pipe', 'pipe'] });
+    const bytes = execFileSync(FF, ['-v', 'error', '-i', out, '-vf', 'select=eq(n\\,10),format=rgb24', '-frames:v', '1', '-f', 'rawvideo', '-']);
+    const { w, h } = mediaLayerSize(c, larga, W, H);
+    const t = c.transform, rot = ((t.rotation || 0) * Math.PI) / 180;
+    const qx = W / 2 + t.x * W, qy = H / 2 + t.y * H;
+    const ce = t.pivoX || t.pivoY ? centroDoPivo(qx, qy, w, h, t.rotation, t.pivoX || 0, t.pivoY || 0) : { cx: qx, cy: qy };
+    const quad = quadLocal(t.persp?.on ? t.persp : {}, w, h).map(([x, y]) => [ce.cx + x * Math.cos(rot) - y * Math.sin(rot), ce.cy + x * Math.sin(rot) + y * Math.cos(rot)]);
+    const dentro = (x, y) => quad.every(([ax, ay], i) => { const [bx, by] = quad[(i + 1) % 4]; return (bx - ax) * (y - ay) - (by - ay) * (x - ax) >= 0; }) || quad.every(([ax, ay], i) => { const [bx, by] = quad[(i + 1) % 4]; return (bx - ax) * (y - ay) - (by - ay) * (x - ax) <= 0; });
+    const borda = (x, y) => Math.min(...quad.map(([ax, ay], i) => { const [bx, by] = quad[(i + 1) % 4]; const L2 = (bx - ax) ** 2 + (by - ay) ** 2; const u = Math.max(0, Math.min(1, ((x - ax) * (bx - ax) + (y - ay) * (by - ay)) / L2)); return Math.hypot(x - ax - u * (bx - ax), y - ay - u * (by - ay)); }));
+    let erros = 0, total = 0;
+    for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+      if (borda(x + 0.5, y + 0.5) < 2.5) continue;
+      const i = (y * W + x) * 3;
+      total++;
+      if ((bytes[i] > 150 && bytes[i + 1] < 90) !== dentro(x + 0.5, y + 0.5)) erros++;
+    }
+    ok(erros < total * 0.001, `${nome}: a camada no lugar e na forma da prévia`, `${erros} pixels fora do lugar`);
+  }
+}
+
+// 13) sombra (foto nas faixas de cima): a camada não muda, a sombra aparece do lado certo e com a cor certa
+{
+  const c = { id: 'S', type: 'image', mediaId: 'r', start: 0, duration: 1, in: 0, speed: 1, opacity: 1, transform: { x: 0, y: 0, scale: 0.5, scaleX: 1, scaleY: 1, rotation: 0 },
+    sombra: { on: true, cor: '#0000ff', opacidade: 1, desfoque: 10, distancia: 60, angulo: 0 } };
+  const proj = { width: W, height: H, fps: 30, background: { type: 'color', color: '#808080' }, media: [media], tracks: [{ id: 'ov', kind: 'overlay', clips: [c] }, { id: 'main', kind: 'video', main: true, clips: [] }] };
+  const out = p('paridade_sombra.mp4');
+  const rr = buildExport({ project: proj, mediaMap: { r: media }, out: { format: 'mp4', width: W, height: H, fps: 30, quality: 'high', vKbps: 6000, aKbps: 128 }, outPath: out, graphPath: '__GRAPH__' });
+  fs.writeFileSync(p('grafo_sombra.txt'), rr.graph);
+  execFileSync(FF, rr.args.map((a) => (a === '__GRAPH__' ? p('grafo_sombra.txt') : a === 'pipe:1' ? p('prog.txt') : a)), { stdio: ['ignore', 'pipe', 'pipe'] });
+  const bytes = execFileSync(FF, ['-v', 'error', '-i', out, '-vf', 'select=eq(n\\,10),format=rgb24', '-frames:v', '1', '-f', 'rawvideo', '-']);
+  const px = (x, y) => { const i = (Math.round(y) * W + Math.round(x)) * 3; return [bytes[i], bytes[i + 1], bytes[i + 2]]; };
+  const { w } = mediaLayerSize(c, media, W, H); // quadrado de 180 px; sombra 0,6 × 0,15 × 180 ≈ 16 px para a direita
+  const meio = px(W / 2, H / 2), dir = px(W / 2 + w / 2 + 8, H / 2), esq = px(W / 2 - w / 2 - 8, H / 2);
+  ok(meio[0] > 200 && meio[2] < 60, 'sombra: a camada continua igual', JSON.stringify(meio));
+  ok(dir[2] > 150 && dir[0] < 90, 'sombra: azul à direita (ângulo 0°)', JSON.stringify(dir));
+  ok(Math.abs(esq[0] - 128) < 14 && Math.abs(esq[2] - 128) < 14, 'sombra: nada do outro lado', JSON.stringify(esq));
 }
 
 console.log(falhas ? `\n${falhas} FALHA(S)` : '\nTudo certo.');

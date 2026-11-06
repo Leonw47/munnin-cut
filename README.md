@@ -17,6 +17,9 @@ clique em **Mais informações → Executar assim mesmo**.
   que encosta nas bordas some; reverter clipes (imagem e som); efeitos de voz
   (eco, igreja, robô, telefone, rádio, megafone, debaixo d'água, voz fina/grossa), graves, agudos e redução de ruído.
 - Largura (X) e altura (Y) independentes, com alças laterais no reprodutor (contribuição do Douglas Zanetti).
+- Ponto pivô (escala e giro em volta dele), perspectiva (arrastar os cantos para dar profundidade) e sombra em
+  fotos/vídeos — iguais na prévia e no vídeo exportado.
+- Camadas: trazer para frente / enviar para trás (Ctrl+] / Ctrl+[) e setas para mudar a ordem das faixas.
 - Voz — limpar e realçar, em tempo real: reduzir ruído, realçar a voz, clareza e ambientes (sala, auditório, igreja,
   chorus, voz dupla), com atalhos prontos e "comparar com o original"; a exportação usa a mesma cadeia.
 - Formas padrão (quadrado, círculo, estrela, coração, seta, balão…) com cor, contorno, cantos e sombra.
@@ -46,11 +49,12 @@ clique em **Mais informações → Executar assim mesmo**.
   `resources/sfx-livres/CREDITOS.txt` — e "Meus sons", a biblioteca pessoal com categorias suas (pastas em
   Documentos\Munnin Cut\Meus sons).
 - YouTube e Instagram: pesquisa no YouTube, prévia com o player oficial para conferir e marcar o trecho, e download do
-  áudio ou do vídeo (inteiro ou só o trecho) direto para o projeto; links de posts/reels do Instagram. Usa o yt-dlp oficial,
+  áudio ou do vídeo (inteiro ou só o trecho, na qualidade escolhida — até 4K) direto para o projeto; links de posts/reels do Instagram. Usa o yt-dlp oficial,
   instalado na primeira vez (com conferência SHA-256) e atualizado sozinho: confere todo dia e, se o YouTube
   mudar algo e o download falhar, atualiza e tenta de novo (inclusive na versão noturna).
 - Legendas automáticas offline (whisper.cpp) com estilos e revisão do texto, presas à voz: entram quando a fala
   começa e saem na pausa (alinhamento palavra a palavra + volume do áudio), nada sobre silêncio ou clipe mudo.
+  Uma legenda personalizada pode virar o padrão de todas, e o estilo fica guardado em "Meus estilos".
 - Resiliência: arquivos trocados com o mesmo nome são relidos mantendo os efeitos; arquivos movidos são
   reencontrados pelo nome; ausentes aparecem com Localizar/Substituir. Projetos podem ser duplicados como modelo.
 - Texto com fontes embutidas, contorno, sombra e fundo; stickers de emoji.
@@ -76,7 +80,8 @@ clique em **Mais informações → Executar assim mesmo**.
 - `src/shared/` — regras puras usadas na prévia **e** na exportação: `ops.js` (matrizes de cor iguais às do CSS),
   `anim.js`, `timeline.js`, `graph.js` (monta o `filter_complex` do FFmpeg), `camtrans.js` (transições de câmera),
   `expr.js` (avalia na prévia as mesmas expressões que vão para o FFmpeg), `keyframes.js` (pontos de modificação),
-  `chroma.js` (mesmas contas do chromakey/despill do FFmpeg), `audiofx.js` (efeitos de voz: um plano só para
+  `chroma.js` (mesmas contas do chromakey/despill do FFmpeg), `sombra.js`/`pivo.js`/`perspectiva.js` (sombra, ponto
+  pivô e homografia da perspectiva, usados pelo canvas e pelo FFmpeg), `audiofx.js` (efeitos de voz: um plano só para
   o Web Audio da prévia e os filtros do FFmpeg) e `partes.js` (onde cortar a exportação em partes: fora de
   transições e de efeitos que contam o próprio tempo).
 - `public/voz-worklet.js` + `src/engine/voz.js` + `electron/voz.js` — limpeza da voz: o mesmo processador roda
@@ -107,5 +112,5 @@ node scripts/test-cadeia.mjs                          # sequência longa de foto
 node scripts/test-paridade.mjs                        # vídeo exportado = prévia (tamanho/posição das camadas animadas)
 node scripts/test-partes.mjs                          # exportar em partes = exportar inteiro (quadro a quadro, sem perda)
 ```
-Testes de interface: `MC_AUTOTEST=scripts/autotest-ui.js npx electron .` (também `autotest-interact.js`, `autotest-fx.js`, `autotest-v12.js`, `autotest-v13.js`, `autotest-v14.js`, `autotest-v15.js`, `autotest-v16.js`, `autotest-v17.js`, `autotest-v18.js`, `autotest-fx18.js`, `autotest-v110.js`, `autotest-v111.js`, `autotest-v112.js` e `autotest-scroll.js`).
+Testes de interface: `MC_AUTOTEST=scripts/autotest-ui.js npx electron .` (também `autotest-interact.js`, `autotest-fx.js`, `autotest-v12.js`, `autotest-v13.js`, `autotest-v14.js`, `autotest-v15.js`, `autotest-v16.js`, `autotest-v17.js`, `autotest-v18.js`, `autotest-fx18.js`, `autotest-v110.js`, `autotest-v111.js`, `autotest-v112.js`, `autotest-v113.js` e `autotest-scroll.js`).
 O FFmpeg fica em `resources/bin/` (não versionado). Histórico de versões em [CHANGELOG.md](CHANGELOG.md).

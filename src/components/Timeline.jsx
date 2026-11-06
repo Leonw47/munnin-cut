@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useSta
 import {
   Undo2, Redo2, Scissors, Trash2, CopyPlus, AudioLines, FlipHorizontal2, RotateCw, Magnet, ZoomIn, ZoomOut, MoveHorizontal,
   Lock, LockOpen, Eye, EyeOff, Volume2, VolumeX, Film, Type, Sparkles, Music, Layers, Copy, Clipboard, ArrowLeftRight, Smile, Palette, Rewind,
-  DiamondPlus, ChevronLeft, ChevronRight, Repeat,
+  DiamondPlus, ChevronLeft, ChevronRight, Repeat, ChevronUp, ChevronDown, BringToFront, SendToBack,
 } from 'lucide-react';
 import { useStore, kindFor, placeInTrack, selIds } from '../store.js';
 import { mainTrack, findClip, projectDuration, fmtTime, MIN_CLIP, maxDurationFor, transitionDuration, nextAdjacent, overlayTransDur } from '../shared/timeline.js';
@@ -521,6 +521,10 @@ export default function Timeline({ height }) {
           line = null;
         } else if (hit.row && !hit.row.track.main && hit.row.track.kind === (track.main ? 'overlay' : kind)) {
           target = { type: 'track', trackId: hit.row.track.id, rowTop: hit.row.top, h: hit.row.h };
+        } else if (hit.row && !hit.row.track.main && hit.row.track.kind !== 'audio' && kind !== 'audio') {
+          // faixa visual de outro tipo (ex.: foto sobre a faixa de textos): uma faixa nova logo acima dela — a camada
+          // fica exatamente nessa posição
+          target = { type: 'acima', trackId: hit.row.track.id, rowTop: hit.row.top - 11, h: 22 };
         } else if (hit.zone === 'top' && kind !== 'audio') {
           target = { type: 'new-top', rowTop: RULER + topZone - 26, h: 26 };
         } else if (hit.zone === 'bottom' && kind === 'audio') {
@@ -566,7 +570,7 @@ export default function Timeline({ height }) {
         if (target.type === 'main') {
           f.track.clips.splice(f.index, 1);
           const main = mainTrack(p);
-          if (!fromMain) { c.transform.scale = 1; c.transform.x = 0; c.transform.y = 0; }
+          if (!fromMain) { c.transform.scale = 1; c.transform.x = 0; c.transform.y = 0; delete c.transform.pivoX; delete c.transform.pivoY; delete c.sombra; }
           main.clips.splice(Math.min(target.index, main.clips.length), 0, c);
           return;
         }
@@ -574,6 +578,7 @@ export default function Timeline({ height }) {
         c.start = t;
         if (fromMain) { c.transition = null; if ((c.transform.scale ?? 1) === 1) c.transform.scale = 0.6; }
         if (target.type === 'track') placeInTrack(p, c, target.trackId);
+        else if (target.type === 'acima') placeInTrack(p, c, null, Math.max(0, p.tracks.findIndex((t) => t.id === target.trackId)));
         else if (target.type === 'new-top') placeInTrack(p, c, null, 0);
         else if (target.type === 'new-bottom') placeInTrack(p, c, null, p.tracks.length);
       });
@@ -768,6 +773,13 @@ export default function Timeline({ height }) {
                       {track.muted ? <VolumeX size={12} color="#ff8b8b" /> : <Volume2 size={12} />}
                     </button>
                   )}
+                  {/* ordem das camadas: a faixa de cima aparece por cima (a principal fica no lugar) */}
+                  {!track.main && (
+                    <span className="ordem">
+                      <button className="icon-btn" title={visual ? 'Subir a faixa (camada por cima)' : 'Subir a faixa'} onClick={() => S().moverFaixa(track.id, -1)}><ChevronUp size={11} /></button>
+                      <button className="icon-btn" title={visual ? 'Descer a faixa (camada por baixo)' : 'Descer a faixa'} onClick={() => S().moverFaixa(track.id, 1)}><ChevronDown size={11} /></button>
+                    </span>
+                  )}
                 </div>
               );
             })}
@@ -837,7 +849,9 @@ export default function Timeline({ height }) {
                   return (
                     <React.Fragment key={`otr${c.id}`}>
                       {has && <div className="tr-zone" style={{ left: (nx.start - d / 2) * zoom + PAD, width: d * zoom }} />}
-                      <button data-tr={c.id} className={`trans-btn ${has ? '' : 'empty'} ${selected ? 'selected' : ''}`} style={{ left: nx.start * zoom + PAD }}
+                      {/* pequeno, na borda de cima da emenda: a parte de baixo fica para as alças de aparar (nas legendas,
+                          faixa baixa e clipes curtos, o botão no meio cobria as duas alças) */}
+                      <button data-tr={c.id} className={`trans-btn topo ${has ? '' : 'empty'} ${selected ? 'selected' : ''}`} style={{ left: nx.start * zoom + PAD }}
                         title={has ? 'Transição (clique para editar)' : 'Adicionar transição'}
                         onPointerDown={(e) => e.stopPropagation()}
                         onClick={(e) => {
@@ -845,7 +859,7 @@ export default function Timeline({ height }) {
                           if (has) S().select({ type: 'transition', id: c.id });
                           else S().setTransition(c.id, 'fade', 0.6);
                         }}>
-                        <ArrowLeftRight size={12} />
+                        <ArrowLeftRight size={10} />
                       </button>
                     </React.Fragment>
                   );
@@ -909,6 +923,11 @@ export default function Timeline({ height }) {
             {mediaMap[menu.clip.mediaId]?.hasAudio && <MenuItem icon={<Scissors size={14} />} label="Cortar silêncios…" onClick={() => S().openSilencios(menu.clip.id)} />}
             <MenuItem icon={menu.clip.muted ? <Volume2 size={14} /> : <VolumeX size={14} />} label={menu.clip.muted ? 'Ativar som' : 'Silenciar'} onClick={() => S().updateClip(menu.clip.id, { muted: !menu.clip.muted })} />
             <MenuItem icon={<Rewind size={14} />} on={!!menu.clip.reverse} label={menu.clip.reverse ? 'Tocar normal (desfazer reverso)' : 'Reverter (de trás para frente)'} onClick={() => S().toggleReverse(menu.clip.id)} />
+          </>}
+          {!menu.track.main && menu.track.kind !== 'audio' && <>
+            <div className="dd-sep" />
+            <MenuItem icon={<BringToFront size={14} />} label="Trazer para frente" kbd="Ctrl+]" onClick={() => S().moverCamada('frente')} />
+            <MenuItem icon={<SendToBack size={14} />} label="Enviar para trás" kbd="Ctrl+[" onClick={() => S().moverCamada('tras')} />
           </>}
           <div className="dd-sep" />
           <MenuItem icon={<Trash2 size={14} />} label="Excluir" kbd="Delete" onClick={() => S().deleteSelection()} />

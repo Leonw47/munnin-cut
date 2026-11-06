@@ -9,6 +9,9 @@ import { effectDef, isSegmentEffect, seedOf } from './effects.js';
 import { isCamTransition, camClipChain, camMixExpr } from './camtrans.js';
 import { chromaFilters } from './chroma.js';
 import { clipVisivel } from './visivel.js';
+import { sombraDe, sombraPx } from './sombra.js';
+import { pivoDe, temPivo, padPivo, filtroPivo } from './pivo.js';
+import { temPersp, filtroPerspectiva } from './perspectiva.js';
 import { areaCaixa } from './area.js';
 import { audioFxFilters } from './audiofx.js';
 import { splitKf, maxScale, maxScaleX, maxScaleY, kfExpr, kfWindows, KF_PROPS, COLOR_PROPS } from './keyframes.js';
@@ -219,7 +222,7 @@ export function buildExport({ project: src, mediaMap, out, textAssets = {}, fxAs
     if (fx.length) f.push(...fx, 'format=rgba');
     const steps = colorDyn ? colorSteps(c, dyn, w, h, m, corte) : [];
     const isStatic = m.type === 'image';
-    if (!isStatic) return { f: [...f, ...steps], stat: null, loop: null, w, h, wMax, hMax, k };
+    if (!isStatic) return { f: [...f, ...steps], stat: null, loop: null, w, h, wMax, hMax, k, passos: steps.length };
     let girado = false;
     if (girarAqui && giroEstatico(c)) {
       const tf = c.transform || {};
@@ -229,7 +232,7 @@ export function buildExport({ project: src, mediaMap, out, textAssets = {}, fxAs
       girado = true;
     }
     const loop = [...loopFor(c.duration - corte), ...steps];
-    return { f: [...f, ...loop], stat: f, loop, w, h, wMax, hMax, k, girado };
+    return { f: [...f, ...loop], stat: f, loop, w, h, wMax, hMax, k, girado, passos: steps.length };
   }
 
   // Ajustes/filtro que mudam ao longo do clipe: um conjunto de filtros por trecho (a cada 2 quadros).
@@ -316,12 +319,14 @@ export function buildExport({ project: src, mediaMap, out, textAssets = {}, fxAs
   // t0: onde o fluxo da camada começa; at0: onde o clipe "de verdade" começa (difere quando há
   // quadros parados antes dele, nas transições das faixas de cima).
   // girado: espelhar/girar fixos já feitos na parte estática (preChain com girarAqui).
-  function placeChain(c, t0, at0 = t0, boxW = null, boxH = null, girado = false, k = 1) {
+  // pivo: filtros da margem do pivô (shared/pivo.js) — depois de espelhar, antes de girar/escalar
+  function placeChain(c, t0, at0 = t0, boxW = null, boxH = null, girado = false, k = 1, pivo = []) {
     const f = [];
     const tf = c.transform || {};
     const dyn = c.__dyn || {};
     if (tf.flipH && !girado) f.push('hflip');
     if (tf.flipV && !girado) f.push('vflip');
+    f.push(...pivo);
     const rot = ((tf.rotation || 0) * Math.PI) / 180;
     const staticRot = !dyn.rotation && Math.abs(rot) > 1e-4 ? rot : 0;
     const hasDynStretch = !!(dyn.scaleX || dyn.scaleY);
@@ -469,9 +474,15 @@ export function buildExport({ project: src, mediaMap, out, textAssets = {}, fxAs
         if (!a) return null;
         const dyn = c.__dyn || {};
         const idx = addInput(['-i', a.path]);
-        const f = ['format=rgba', ...loopFor(c.duration + pre + post + 0.05), ...naGrade(t0)];
+        // perspectiva e pivô: o PNG vem sem giro (exporter); a distorção e a margem que põe o pivô no centro são
+        // feitas uma vez, antes do laço
+        const comPivo = temPivo(c.transform), comPersp = temPersp(c.transform) && c.type === 'shape';
+        const bw = a.bw ?? a.w, bh = a.bh ?? a.h;
+        const pe = comPersp ? filtroPerspectiva(c.transform.persp, bw, bh, a.w, a.h) : { M: 0, f: [] };
+        const pp = comPivo ? padPivo(pivoDe(c.transform).px, pivoDe(c.transform).py, bw, bh) : { dW: 0, dH: 0 };
+        const f = ['format=rgba', ...pe.f, ...(comPivo ? filtroPivo(pp) : []), ...loopFor(c.duration + pre + post + 0.05), ...naGrade(t0)];
         // o PNG já vem com escala/giro/opacidade fixos; o que muda (pontos de modificação) é aplicado aqui
-        const rotBaked = !dyn.rotation && !dyn.scaleX && !dyn.scaleY;
+        const rotBaked = !dyn.rotation && !dyn.scaleX && !dyn.scaleY && !comPivo && !comPersp;
         const staticRot = !rotBaked && !dyn.rotation ? ((c.transform?.rotation || 0) * Math.PI) / 180 : 0;
         f.push(...motionFilters(c, dyn, at0, {
           rotBaked,
@@ -479,7 +490,7 @@ export function buildExport({ project: src, mediaMap, out, textAssets = {}, fxAs
           scaleBase: a.scale ?? maxScale(c, dyn),
           scaleXBase: a.scaleX ?? maxScaleX(c, dyn),
           scaleYBase: a.scaleY ?? maxScaleY(c, dyn),
-          boxW: a.w, boxH: a.h,
+          boxW: a.w + 2 * pe.M + pp.dW, boxH: a.h + 2 * pe.M + pp.dH,
           alfa: animFades(c, at0, FPS),
         }));
         const l = L('t');
@@ -493,12 +504,40 @@ export function buildExport({ project: src, mediaMap, out, textAssets = {}, fxAs
       const corte = m.type === 'video' && pre === 0 && t0 < 0 ? Math.min(-t0, Math.max(0, c.duration - 1 / FPS)) : 0;
       const idx = inputFor(c, m, corte);
       // (fotos: o laço, os trechos de cor e o giro fixo já vêm no preChain; os quadros parados entram depois)
-      const { f: pf, wMax, hMax, k, girado } = preChain(c, m, { girarAqui: true, corte });
-      let f = pf;
-      if (pre > 0 || post > 0) f = [...pf, `tpad=start_mode=clone:start_duration=${r3(pre)}:stop_mode=clone:stop_duration=${r3(post)}`];
-      const pl = placeChain(c, t0 + corte, at0, wMax, hMax, girado, k);
+      // com sombra, o giro fica para depois dela (a sombra gira junto com a camada, como na prévia); com pivô, depois
+      // da margem que põe o pivô no centro
+      // (perspectiva: idem — depois de espelhar, antes do pivô e do giro)
+      const sb = sombraDe(c);
+      const comPivo = temPivo(c.transform), comPersp = temPersp(c.transform);
+      const pc = preChain(c, m, { girarAqui: !sb && !comPivo && !comPersp, corte });
+      const { k, girado } = pc;
+      const P = sb ? sombraPx(sb, pc.w, pc.h).P : 0;
+      const pe = comPersp ? filtroPerspectiva(c.transform.persp, pc.w, pc.h, pc.w + 2 * P, pc.h + 2 * P) : { M: 0, f: [] };
+      const pp = comPivo ? padPivo(pivoDe(c.transform).px, pivoDe(c.transform).py, pc.w, pc.h) : { dW: 0, dH: 0 };
+      const pivo = [...pe.f, ...(comPivo ? filtroPivo(pp) : [])];
+      // as caixas fixas (giro com esticar) crescem junto com as margens (sombra, perspectiva, pivô)
+      const wMax = pc.wMax * ((pc.w + 2 * P + 2 * pe.M + pp.dW) / pc.w), hMax = pc.hMax * ((pc.h + 2 * P + 2 * pe.M + pp.dH) / pc.h);
+      const tpad = pre > 0 || post > 0 ? [`tpad=start_mode=clone:start_duration=${r3(pre)}:stop_mode=clone:stop_duration=${r3(post)}`] : [];
       const l = L('o');
-      F.push(`[${idx}:v]${[...f, ...pl.f].join(',')}[${l}]`);
+      if (!sb) {
+        const pl = placeChain(c, t0 + corte, at0, wMax, hMax, girado, k, pivo);
+        F.push(`[${idx}:v]${[...pc.f, ...tpad, ...pl.f].join(',')}[${l}]`);
+        return { l, x: pl.x, y: pl.y };
+      }
+      // Sombra: a camada (sem giro/animação) ganha uma margem com a sombra — cor da sombra no lugar das cores, alfa ×
+      // opacidade, deslocada e desfocada — e a camada por cima. A margem é igual dos dois lados: o centro não muda.
+      // Numa foto sem ajustes de cor que mudam, é feita uma vez só, antes do laço.
+      const { sigma, dx, dy } = sombraPx(sb, pc.w, pc.h);
+      const fixa = !!pc.stat && !pc.passos;
+      const [cr, cg, cb] = [1, 3, 5].map((i) => parseInt(hex(sb.cor).slice(i, i + 2), 16) || 0);
+      const s0 = L('sa'), s1 = L('sb'), s2 = L('sc'), s3 = L('sd');
+      F.push(`[${idx}:v]${(fixa ? pc.stat : pc.f).join(',') || 'null'},split[${s0}][${s1}]`);
+      F.push(`[${s1}]lutrgb=r=${cr}:g=${cg}:b=${cb}:a=val*${n4(Math.max(0, Math.min(1, sb.opacidade)))},` +
+        `pad=${pc.w + 2 * P}:${pc.h + 2 * P}:${P + Math.round(dx)}:${P + Math.round(dy)}:color=${hex(sb.cor)}@0,` +
+        `format=gbrap,gblur=sigma=${Math.max(0.01, sigma).toFixed(2)},format=rgba[${s2}]`);
+      F.push(`[${s2}][${s0}]overlay=${P}:${P}:format=auto[${s3}]`);
+      const pl = placeChain(c, t0 + corte, at0, wMax, hMax, girado, k, pivo);
+      F.push(`[${s3}]${[...(fixa ? pc.loop : []), ...tpad, ...pl.f].join(',') || 'null'}[${l}]`);
       return { l, x: pl.x, y: pl.y };
     }
 

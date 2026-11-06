@@ -43,6 +43,16 @@ stages.clear();
 const r2 = await yt.download({ url: 'https://youtu.be/aqz-KE-bpKQ', start: 0, end: 5 }, prog);
 check('verificação diária roda antes de baixar', stages.has('update') && JSON.parse(fs.readFileSync(sp, 'utf8')).checkedAt > Date.now() - 600e3 && fs.existsSync(r2.path), [...stages].join(','));
 
+// qualidade do vídeo: a altura pedida é o máximo (vem a maior até ela); "max" pega a melhor que o vídeo tiver
+const altura = (f) => Number(execFileSync(FFPROBE, ['-v', 'error', '-select_streams', 'v:0', '-show_entries', 'stream=height', '-of', 'csv=p=0', f]).toString().trim().split(/\s+/)[0]);
+const alturas = {};
+for (const q of ['360', '720', 'max']) {
+  const rv = await yt.download({ url: VIDEO, start: 30, end: 33, kind: 'video', qualidade: q }, prog);
+  alturas[q] = altura(rv.path);
+  fs.rmSync(rv.path, { force: true });
+}
+check('qualidade do vídeo escolhida', alturas['360'] <= 360 && alturas['360'] >= 240 && alturas['720'] <= 720 && alturas['720'] > alturas['360'] && alturas.max >= alturas['720'], JSON.stringify(alturas));
+
 const up = await yt.update({});
 check('atualizar agora', up.installed && up.ok !== false, JSON.stringify(up));
 

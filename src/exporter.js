@@ -1,6 +1,8 @@
 // Pipeline de exportação: gera os PNGs de texto, monta o grafo do FFmpeg e dispara o processo.
-import { renderTextPng } from './engine/text.js';
-import { renderShapePng } from './engine/shapes.js';
+import { renderTextPng, layoutText } from './engine/text.js';
+import { renderShapePng, shapeSize } from './engine/shapes.js';
+import { temPivo } from './shared/pivo.js';
+import { temPersp } from './shared/perspectiva.js';
 import { splitKf, maxScale, maxScaleX, maxScaleY } from './shared/keyframes.js';
 import { buildExport, exportSize, effectSegments } from './shared/graph.js';
 import { makeCanvas, mediaUrl } from './engine/util.js';
@@ -47,11 +49,12 @@ export function startExport(opts) {
           if (c.type !== 'text' && c.type !== 'shape') continue;
           // pontos de modificação: o que muda (escala, giro, opacidade) não vai "assado" no PNG
           const { base, dyn } = splitKf(c);
+          // com pivô o giro não vai no PNG: ele é feito depois da margem do pivô (shared/pivo.js)
           const opts = {
             scale: maxScale(base, dyn),
             scaleX: maxScaleX(base, dyn),
             scaleY: maxScaleY(base, dyn),
-            rotate: !dyn.rotation && !dyn.scaleX && !dyn.scaleY,
+            rotate: !dyn.rotation && !dyn.scaleX && !dyn.scaleY && !temPivo(base.transform) && !(c.type === 'shape' && temPersp(base.transform)),
             opacity: !dyn.opacity,
           };
           const bytes = c.type === 'shape' ? await renderShapePng(base, k, opts) : await renderTextPng(base, k, opts);
@@ -59,9 +62,13 @@ export function startExport(opts) {
           // tamanho do PNG (cabeçalho IHDR): com largura/altura animadas e giro, o FFmpeg precisa de uma
           // caixa fixa antes do rotate (ele fixa o tamanho de saída no primeiro quadro)
           const dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+          // caixa do conteúdo no PNG (sem a margem de contorno/sombra): a referência do pivô, igual à da prévia
+          const kk = k * opts.scale;
+          const caixa = c.type === 'shape' ? shapeSize(base.shape, kk) : (({ boxW, boxH }) => ({ w: boxW, h: boxH }))(layoutText(base.text, kk));
           textAssets[c.id] = {
             path,
             w: dv.getUint32(16), h: dv.getUint32(20),
+            bw: caixa.w * opts.scaleX, bh: caixa.h * opts.scaleY,
             scale: opts.scale,
             scaleX: opts.scaleX,
             scaleY: opts.scaleY,

@@ -3,6 +3,44 @@
 Formato baseado em [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/) e versões no padrão
 [SemVer](https://semver.org/lang/pt-BR/): MAJOR.MINOR.PATCH — correções sobem o PATCH, recursos novos o MINOR.
 
+## [1.13.0] — 2026-11-06
+
+### Corrigido
+- **Forma: Largura/Altura e Largura X/Altura Y não conversavam** — eram dois controles para o mesmo tamanho. Agora
+  Largura/Altura (aba Forma) mostram o tamanho final na tela e mudam a Largura X/Altura Y (aba Posição e alças do
+  reprodutor), com os pontos de modificação; mexer em um aparece no outro.
+- **Prévia da biblioteca cortava vídeo/foto em pé** (só a parte de cima aparecia): agora a mídia se encaixa inteira
+  na área. As miniaturas de vídeo em pé nos cartões também não ficam mais esticadas de lado.
+- **Legendas: o botão de transição cobria as alças de aparar** das duas legendas vizinhas (faixa baixa, clipes
+  curtos). Nas faixas de cima o botão virou uma etiqueta pequena na borda de cima da emenda, e o botão escondido não
+  pega mais o clique.
+
+### Adicionado
+- **Camadas**: "Trazer para frente" / "Enviar para trás" no menu do clipe (Ctrl+] / Ctrl+[) — o clipe passa para
+  cima (ou para baixo) da próxima camada que aparece junto com ele; setas ↑↓ no cabeçalho de cada faixa para mudar a
+  ordem; arrastar um clipe para uma faixa de outro tipo (ex.: foto sobre a faixa de textos) cria uma faixa nova ali,
+  e soltar num trecho ocupado cria uma faixa logo acima da escolhida (antes ia para uma faixa qualquer).
+- **Ctrl+B com vários clipes selecionados** divide todos os que estão sob a agulha (as partes da direita ficam
+  selecionadas).
+- **Padrão das legendas**: com uma legenda personalizada selecionada, "Aplicar a todas as legendas" copia a aparência
+  dela (fonte, cores, contorno, fundo, posição, tamanho e animações) para as outras, cada uma com o próprio texto; e
+  "Salvar" guarda o estilo em **Meus estilos** (aba Legendas) para usar em outros projetos e nas próximas legendas
+  geradas.
+- **Sombra em fotos e vídeos** (faixas de cima): cor, opacidade, desfoque, distância e direção; gira e cresce junto
+  com a camada, igual na prévia e no vídeo exportado.
+- **Ponto pivô** de fotos, vídeos, textos e formas: escala, largura/altura e giro acontecem em volta dele — 9 pontos
+  prontos no inspetor ou o alvo ⊕ arrastado no reprodutor; trocar o pivô não tira a camada do lugar.
+- **Perspectiva** de fotos, vídeos e formas: "Editar no reprodutor" mostra os cantos (e o meio dos lados) para
+  arrastar e inclinar a imagem, dando profundidade. Na prévia e na exportação a mesma conta (homografia).
+- **Qualidade do vídeo baixado** do YouTube e do Instagram: da melhor que tiver (até 4K) a 360p; até 1080p vem em
+  H.264. A escolha fica guardada e o aviso diz a qualidade que veio de verdade.
+
+### Testes
+- `scripts/test-paridade.mjs`: perspectiva, pivô, giro e espelhar (0 pixel fora do lugar) e sombra.
+- `scripts/test-youtube.mjs`: qualidade do vídeo (360p, 720p e a melhor).
+- `scripts/autotest-v113.js`: forma, prévia em pé, botão de transição nas legendas, Ctrl+B em vários clipes,
+  camadas, padrão das legendas, sombra/pivô/perspectiva (prévia × exportação) e os controles no reprodutor.
+
 ## [1.12.1] — 2026-11-02
 
 ### Alterado

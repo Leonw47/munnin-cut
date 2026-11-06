@@ -113,6 +113,8 @@ export default function App() {
       if (s.libFocus && k === 'escape') { e.preventDefault(); s.libBlur(); return; }
       if (k === ' ') s.togglePlay();
       else if (ctrl && k === 'b') s.splitAt();
+      else if (ctrl && k === ']') s.moverCamada('frente');
+      else if (ctrl && k === '[') s.moverCamada('tras');
       else if (k === 'delete' || k === 'backspace') s.deleteSelection();
       else if (ctrl && k === 'z' && !e.shiftKey) s.undo();
       else if ((ctrl && k === 'y') || (ctrl && e.shiftKey && k === 'z')) s.redo();
@@ -130,7 +132,7 @@ export default function App() {
       else if (k === 'end') s.setTime(projectDuration(s.project));
       else if (k === '=' || k === '+') useStore.setState({ zoom: Math.min(600, s.zoom * 1.25) });
       else if (k === '-') useStore.setState({ zoom: Math.max(2, s.zoom / 1.25) });
-      else if (k === 'escape') { if (s.pickColor) useStore.setState({ pickColor: null }); else s.select(null); }
+      else if (k === 'escape') { if (s.pickColor) useStore.setState({ pickColor: null }); else if (s.perspEdit) useStore.setState({ perspEdit: null }); else s.select(null); }
       else handled = false;
       if (handled) e.preventDefault();
     };

@@ -8,6 +8,10 @@ import { SHAPES, DEFAULT_SHAPE } from './engine/shapes.js';
 import { sliceKf, kfPropsFor, hasKfAt, removeKfAt, upsertKf, propAt, kfTimes } from './shared/keyframes.js';
 import { sfxFileName } from './shared/sfx.js';
 import { espelhar } from './shared/grupo.js';
+import { aplicaPadrao } from './shared/legendaPadrao.js';
+import { pivoDe } from './shared/pivo.js';
+import { clipBox } from './engine/compositor.js';
+import { resolveAt } from './shared/keyframes.js';
 
 const api = window.api;
 // ordem dos itens mostrados no painel da biblioteca aberto (para Shift+clique e Ctrl+A)
@@ -99,7 +103,9 @@ function overlaps(tr, clip) {
 export function placeInTrack(project, clip, preferredId = null, newTrackPos = null) {
   const kind = kindFor(clip);
   let tr = preferredId ? project.tracks.find((t) => t.id === preferredId && t.kind === kind && !t.main) : null;
-  if (!tr || overlaps(tr, clip)) {
+  // faixa escolhida ocupada nesse trecho: uma faixa nova logo acima dela (como no CapCut), não uma faixa qualquer
+  if (tr && overlaps(tr, clip)) { newTrackPos = project.tracks.indexOf(tr); tr = null; }
+  if (!tr) {
     tr = newTrackPos === null ? project.tracks.find((t) => t.kind === kind && !t.main && !overlaps(t, clip)) : null;
   }
   if (!tr) {
@@ -237,6 +243,7 @@ export const useStore = create((set, get) => ({
     else get().setLoop(s.time, s.time + 5);
   },
   clearLoop() { set({ loop: null }); },
+  perspEdit: null, // id do clipe com os cantos da perspectiva sendo arrastados no reprodutor
   libPreview: null, // { mediaId } — mídia da biblioteca aberta no reprodutor (sem pôr na linha do tempo)
   openLibPreview(mediaId) { get().pause(); set({ libPreview: { mediaId } }); },
   closeLibPreview() { if (get().libPreview) set({ libPreview: null }); },
@@ -250,7 +257,7 @@ export const useStore = create((set, get) => ({
   // ---------- Telas ----------
   openEditor(project) {
     if (!project.tracks?.some((t) => t.main)) project.tracks = [newTrack('video', true), ...(project.tracks || [])];
-    set({ screen: 'editor', project: layoutProject(project), past: [], future: [], selection: null, time: 0, playing: false, anchor: null, meta: {}, zoom: 60, libSel: [], libAnchor: null, libFocus: false, loop: null, libPreview: null });
+    set({ screen: 'editor', project: layoutProject(project), past: [], future: [], selection: null, time: 0, playing: false, anchor: null, meta: {}, zoom: 60, libSel: [], libAnchor: null, libFocus: false, loop: null, libPreview: null, perspEdit: null });
     get().prepareAll();
   },
   newProject(ratioId) { get().openEditor(createProject(ratioId)); },
@@ -734,7 +741,16 @@ export const useStore = create((set, get) => ({
     return clip.id;
   },
   // Legendas automáticas: substitui as anteriores (se pedido) e cria uma faixa só para elas.
-  applyCaptions(caps, style, { replace = true, y = 0.32 } = {}) {
+  // padrão (shared/legendaPadrao.js): aparência completa de uma legenda — vale para todas as legendas do projeto
+  aplicarPadraoLegendas(pd) {
+    let n = 0;
+    get().commit((p) => {
+      for (const t of p.tracks) for (const c of t.clips) if (c.caption) { aplicaPadrao(c, pd); n++; }
+      return n > 0;
+    }, { keepTracks: true });
+    return n;
+  },
+  applyCaptions(caps, style, { replace = true, y = 0.32, padrao = null } = {}) {
     let n = 0;
     get().commit((p) => {
       if (replace) for (const t of p.tracks) t.clips = t.clips.filter((c) => !c.caption);
@@ -746,6 +762,7 @@ export const useStore = create((set, get) => ({
         const clip = newTextClip(style, { start: c.start, duration: Math.max(MIN_CLIP, c.end - c.start), caption: true });
         clip.text.content = c.text;
         clip.transform.y = y;
+        if (padrao) aplicaPadrao(clip, padrao);
         tr.clips.push(clip);
         n++;
       }
@@ -835,21 +852,88 @@ export const useStore = create((set, get) => ({
   updateTrack(id, patch) {
     get().commit((p) => { const t = p.tracks.find((x) => x.id === id); if (!t) return false; Object.assign(t, patch); }, { keepTracks: true });
   },
+  // Camadas: a faixa de cima é desenhada por cima. "frente" leva os clipes selecionados para cima da próxima camada
+  // que cruza com eles no tempo (foto, texto, forma ou efeito); "tras", para baixo dela — nunca abaixo da faixa
+  // principal. Vai para a faixa vizinha se ela estiver livre naquele trecho; senão, para uma faixa nova ali.
+  moverCamada(dir) {
+    const s = get();
+    const ids = selIds(s.selection);
+    let fim = 0, mexeu = 0;
+    const ok = s.commit((p) => {
+      for (const id of ids) {
+        const f = findClip(p, id);
+        if (!f || f.track.main || f.track.kind === 'audio') continue;
+        const c = f.clip, kind = kindFor(c);
+        const cruza = (t) => t.kind !== 'audio' && t.clips.some((o) => o.id !== c.id && o.start < c.start + c.duration - 1e-6 && o.start + o.duration > c.start + 1e-6);
+        const livre = (t) => t && !t.main && t.kind === kind && !cruza(t);
+        const ti = p.tracks.indexOf(f.track);
+        const mi = p.tracks.findIndex((t) => t.main);
+        const limite = mi < 0 ? p.tracks.length : mi;
+        let j = ti + (dir === 'frente' ? -1 : 1);
+        while (j >= 0 && j < limite && !cruza(p.tracks[j])) j += dir === 'frente' ? -1 : 1;
+        if (j < 0 || j >= limite) { fim++; continue; }
+        f.track.clips.splice(f.index, 1);
+        const viz = p.tracks[j + (dir === 'frente' ? -1 : 1)];
+        let alvo = j + (dir === 'frente' ? -1 : 1) < limite && livre(viz) ? viz : null;
+        if (!alvo) { alvo = newTrack(kind); p.tracks.splice(dir === 'frente' ? j : j + 1, 0, alvo); }
+        alvo.clips.push(c);
+        alvo.clips.sort((a, b) => a.start - b.start);
+        mexeu++;
+      }
+      return mexeu > 0;
+    });
+    if (!ok && fim) s.toastMsg(dir === 'frente' ? 'Já está na frente de tudo o que aparece junto com ele.' : 'Já está atrás de tudo (acima só da faixa principal).');
+  },
+  // Ponto pivô (shared/pivo.js). Muda o pivô sem a camada sair do lugar: X/Y (e os pontos de X/Y) andam o tanto que
+  // o pivô andou na tela, no tamanho e giro do momento da agulha.
+  mudarPivo(clipId, px, py, { silent = false } = {}) {
+    const s = get();
+    const f = findClip(s.project, clipId);
+    if (!f || f.track.main || !['image', 'video', 'text', 'shape'].includes(f.clip.type)) return;
+    const c0 = f.clip;
+    const lt = Math.max(0, Math.min(c0.duration, s.time - c0.start));
+    const mediaMap = Object.fromEntries(s.project.media.map((m) => [m.id, m]));
+    const W = s.project.width, H = s.project.height;
+    const b = clipBox(s.project, mediaMap, resolveAt(c0, lt), W, H);
+    if (!b) return;
+    const a0 = pivoDe(c0.transform);
+    const r = ((b.rot || 0) * Math.PI) / 180;
+    const ox = (px - a0.px) * b.w, oy = (py - a0.py) * b.h;
+    const dx = (ox * Math.cos(r) - oy * Math.sin(r)) / W, dy = (ox * Math.sin(r) + oy * Math.cos(r)) / H;
+    s.commit((p) => {
+      const g = findClip(p, clipId);
+      if (!g) return false;
+      const c = g.clip;
+      c.transform = { ...c.transform, pivoX: px, pivoY: py, x: (c.transform.x || 0) + dx, y: (c.transform.y || 0) + dy };
+      if (!px && !py) { delete c.transform.pivoX; delete c.transform.pivoY; }
+      for (const [k, d] of [['x', dx], ['y', dy]]) if (c.kf?.[k]) c.kf[k] = c.kf[k].map((q) => ({ t: q.t, v: q.v + d }));
+    }, { keepTracks: true, silent });
+  },
+  // Muda a ordem de uma faixa (dir −1 = sobe, +1 = desce). A principal não sai do lugar e ninguém passa por ela.
+  moverFaixa(id, dir) {
+    get().commit((p) => {
+      const i = p.tracks.findIndex((t) => t.id === id);
+      const j = i + dir;
+      if (i < 0 || p.tracks[i].main || j < 0 || j >= p.tracks.length || p.tracks[j].main) return false;
+      [p.tracks[i], p.tracks[j]] = [p.tracks[j], p.tracks[i]];
+    }, { keepTracks: true });
+  },
   updateProject(patch, opts = {}) {
     get().commit((p) => { deepMerge(p, patch); }, opts);
   },
 
   splitAt(t = get().time) {
     const s = get();
-    let ids = [];
-    if (s.selection?.type === 'clip') ids = [s.selection.id];
-    else {
+    // vários selecionados: divide todos os que estão sob a agulha (os outros ficam como estão)
+    const sob = (c) => c && t > c.start + MIN_CLIP / 2 && t < c.start + c.duration - MIN_CLIP / 2;
+    let ids = selIds(s.selection).filter((id) => sob(findClip(s.project, id)?.clip));
+    if (!ids.length && s.selection?.type !== 'clip') {
       const main = mainTrack(s.project);
       const c = main?.clips.find((x) => t > x.start && t < x.start + x.duration);
       if (c) ids = [c.id];
     }
-    if (!ids.length) { s.toastMsg('Selecione um clipe sob o cursor para dividir.'); return; }
-    let newId = null;
+    if (!ids.length) { s.toastMsg(selIds(s.selection).length > 1 ? 'Nenhum dos clipes selecionados está sob a agulha.' : 'Selecione um clipe sob o cursor para dividir.'); return; }
+    const novos = [];
     const ok = get().commit((p) => {
       let any = false;
       for (const id of ids) {
@@ -874,12 +958,13 @@ export const useStore = create((set, get) => ({
         c.fadeOut = 0;
         c.transition = null;
         f.track.clips.splice(f.index + 1, 0, r);
-        newId = r.id;
+        novos.push(r.id);
         any = true;
       }
       return any;
     });
-    if (ok && newId) set({ selection: { type: 'clip', id: newId } });
+    // ficam selecionadas as partes da direita (de todos os divididos)
+    if (ok && novos.length) set({ selection: novos.length > 1 ? { type: 'clip', id: novos[0], ids: novos } : { type: 'clip', id: novos[0] } });
   },
 
   openSilencios(clipId) { get().pause(); set({ modal: 'silencios', silencioClipId: clipId }); },

@@ -10,6 +10,8 @@ import { resolveAt, setPropAt, hasKf, KF_PROPS } from '../shared/keyframes.js';
 import { grupoDaSelecao } from '../shared/grupo.js';
 import LibPreview from './LibPreview.jsx';
 import { AREA_PADRAO } from '../shared/area.js';
+import { PIVOS } from '../shared/pivo.js';
+import { CANTOS, quadLocal } from '../shared/perspectiva.js';
 
 const ZOOMS = [1, 0.75, 0.5, 0.33, 0.25];
 const FUNDOS = [
@@ -70,6 +72,11 @@ function TransformOverlay({ W, H, folga = 0 }) {
   const visible = clip && (clip.type !== 'effect' || isArea) && clip.type !== 'audio' && !found.track.hidden && time >= clip.start && time < clip.start + clip.duration;
   const areaBox = (a0) => { const a = { ...AREA_PADRAO, ...a0 }; return { cx: W / 2 + a.x * W, cy: H / 2 + a.y * H, w: a.w * W, h: a.h * H, rot: 0 }; };
   const box = !visible ? null : isArea ? areaBox(clip.area) : clipBox(project, mediaMap, resolveAt(clip, time - clip.start), W, H);
+  // pivô: fotos, vídeos, textos e formas fora da faixa principal
+  const podePivo = !!box && !isArea && !found.track.main && ['image', 'video', 'text', 'shape'].includes(clip.type);
+  // perspectiva: no modo de edição, as alças normais dão lugar aos cantos (e meios dos lados) da camada
+  const perspEdit = useStore((s) => s.perspEdit);
+  const editandoPersp = podePivo && clip.type !== 'text' && perspEdit === clip.id && !!clip.transform?.persp?.on;
 
   const local = (e) => {
     const r = svgRef.current.getBoundingClientRect();
@@ -82,6 +89,9 @@ function TransformOverlay({ W, H, folga = 0 }) {
     const s = useStore.getState();
     s.pause();
     const p0 = local(e);
+    // referência de escala e giro: o pivô (se a camada tiver um), senão o centro
+    const o = b0 ? ((b0.px || b0.py) ? { x: b0.qx, y: b0.qy } : { x: b0.cx, y: b0.cy }) : null;
+    const persp0 = Object.fromEntries(CANTOS.map((k) => [k, { x: target.transform?.persp?.[k]?.x || 0, y: target.transform?.persp?.[k]?.y || 0 }]));
     // com pontos de modificação, mexer no reprodutor cria/atualiza o ponto no instante da agulha
     const lt = Math.max(0, Math.min(target.duration, s.time - target.start));
     const tf0 = { ...(resolveAt(target, lt).transform || {}) };
@@ -116,16 +126,41 @@ function TransformOverlay({ W, H, folga = 0 }) {
           if (Math.abs(a.y * H) < 6) a.y = 0;
           setGuides({ x: a.x === 0, y: a.y === 0, angle: null });
         } else if (mode === 'scale') {
-          const k = Math.hypot(p.x - b0.cx, p.y - b0.cy) / (Math.hypot(p0.x - b0.cx, p0.y - b0.cy) || 1);
+          const k = Math.hypot(p.x - o.x, p.y - o.y) / (Math.hypot(p0.x - o.x, p0.y - o.y) || 1);
           a.w = Math.max(0.02, Math.min(3, area0.w * k)); a.h = Math.max(0.02, Math.min(3, area0.h * k));
         } else if (mode === 'scale-x') {
-          a.w = Math.max(0.02, Math.min(3, area0.w * (Math.abs(p.x - b0.cx) / Math.max(4, Math.abs(p0.x - b0.cx)))));
+          a.w = Math.max(0.02, Math.min(3, area0.w * (Math.abs(p.x - o.x) / Math.max(4, Math.abs(p0.x - o.x)))));
         } else if (mode === 'scale-y') {
-          a.h = Math.max(0.02, Math.min(3, area0.h * (Math.abs(p.y - b0.cy) / Math.max(4, Math.abs(p0.y - b0.cy)))));
+          a.h = Math.max(0.02, Math.min(3, area0.h * (Math.abs(p.y - o.y) / Math.max(4, Math.abs(p0.y - o.y)))));
         } else return;
         mudar((c) => { c.area = { ...c.area, x: a.x, y: a.y, w: a.w, h: a.h }; }, {
           area: (b) => ({ ...b, x: (b.x || 0) + a.x - area0.x, y: (b.y || 0) + a.y - area0.y, w: Math.max(0.02, (b.w ?? area0.w) * (a.w / area0.w)), h: Math.max(0.02, (b.h ?? area0.h) * (a.h / area0.h)) }),
         });
+        return;
+      }
+      if (mode.startsWith('persp:')) {
+        // cantos da perspectiva: o deslocamento do ponteiro no sentido da camada, em frações do tamanho dela
+        const r0 = ((b0.rot || 0) * Math.PI) / 180;
+        const ddx = p.x - p0.x, ddy = p.y - p0.y;
+        const lx = (ddx * Math.cos(r0) + ddy * Math.sin(r0)) / Math.max(1, b0.w);
+        const ly = (-ddx * Math.sin(r0) + ddy * Math.cos(r0)) / Math.max(1, b0.h);
+        const ks = mode.slice(6).split(',');
+        s.updateClip(target.id, (c) => {
+          const q = structuredClone(persp0);
+          for (const k of ks) q[k] = { x: persp0[k].x + lx, y: persp0[k].y + ly };
+          c.transform = { ...c.transform, persp: { ...q, on: true } };
+        }, { silent: true });
+        return;
+      }
+      if (mode === 'pivo') {
+        // pivô livre: o ponto dentro da camada (frações do tamanho, no sentido dela), com ímã nos 9 pontos prontos
+        const r0 = ((b0.rot || 0) * Math.PI) / 180;
+        const vx = p.x - b0.cx, vy = p.y - b0.cy;
+        let px = (vx * Math.cos(r0) + vy * Math.sin(r0)) / Math.max(1, b0.w);
+        let py = (-vx * Math.sin(r0) + vy * Math.cos(r0)) / Math.max(1, b0.h);
+        px = Math.max(-1, Math.min(1, px)); py = Math.max(-1, Math.min(1, py));
+        for (const q of PIVOS) if (Math.abs((px - q.px) * b0.w) < 7 && Math.abs((py - q.py) * b0.h) < 7) { px = q.px; py = q.py; }
+        s.mudarPivo(target.id, Math.round(px * 1000) / 1000, Math.round(py * 1000) / 1000, { silent: true });
         return;
       }
       if (mode === 'move') {
@@ -138,28 +173,28 @@ function TransformOverlay({ W, H, folga = 0 }) {
         const dx = nx - (tf0.x || 0), dy = ny - (tf0.y || 0);
         mudar((c) => { setPropAt(c, 'x', nx, lt); setPropAt(c, 'y', ny, lt); }, { x: (v) => v + dx, y: (v) => v + dy });
       } else if (mode === 'scale') {
-        const d0 = Math.hypot(p0.x - b0.cx, p0.y - b0.cy) || 1;
-        const d1 = Math.hypot(p.x - b0.cx, p.y - b0.cy);
+        const d0 = Math.hypot(p0.x - o.x, p0.y - o.y) || 1;
+        const d1 = Math.hypot(p.x - o.x, p.y - o.y);
         const ns = Math.max(0.02, Math.min(20, (tf0.scale ?? 1) * (d1 / d0)));
         const k = ns / (tf0.scale ?? 1);
         mudar((c) => { setPropAt(c, 'scale', ns, lt); }, { scale: (v) => Math.max(0.02, Math.min(20, v * k)) });
       } else if (mode === 'scale-x') {
         const rad = (b0.rot * Math.PI) / 180;
-        const d0 = Math.max(4, Math.abs((p0.x - b0.cx) * Math.cos(rad) + (p0.y - b0.cy) * Math.sin(rad)));
-        const d1 = Math.abs((p.x - b0.cx) * Math.cos(rad) + (p.y - b0.cy) * Math.sin(rad));
+        const d0 = Math.max(4, Math.abs((p0.x - o.x) * Math.cos(rad) + (p0.y - o.y) * Math.sin(rad)));
+        const d1 = Math.abs((p.x - o.x) * Math.cos(rad) + (p.y - o.y) * Math.sin(rad));
         const nsx = Math.max(0.01, Math.min(20, (tf0.scaleX ?? 1) * (d1 / d0)));
         const k = nsx / (tf0.scaleX ?? 1);
         mudar((c) => { setPropAt(c, 'scaleX', nsx, lt); }, { scaleX: (v) => Math.max(0.01, Math.min(20, v * k)) });
       } else if (mode === 'scale-y') {
         const rad = (b0.rot * Math.PI) / 180;
-        const d0 = Math.max(4, Math.abs(-(p0.x - b0.cx) * Math.sin(rad) + (p0.y - b0.cy) * Math.cos(rad)));
-        const d1 = Math.abs(-(p.x - b0.cx) * Math.sin(rad) + (p.y - b0.cy) * Math.cos(rad));
+        const d0 = Math.max(4, Math.abs(-(p0.x - o.x) * Math.sin(rad) + (p0.y - o.y) * Math.cos(rad)));
+        const d1 = Math.abs(-(p.x - o.x) * Math.sin(rad) + (p.y - o.y) * Math.cos(rad));
         const nsy = Math.max(0.01, Math.min(20, (tf0.scaleY ?? 1) * (d1 / d0)));
         const k = nsy / (tf0.scaleY ?? 1);
         mudar((c) => { setPropAt(c, 'scaleY', nsy, lt); }, { scaleY: (v) => Math.max(0.01, Math.min(20, v * k)) });
       } else if (mode === 'rotate') {
-        const a0 = Math.atan2(p0.y - b0.cy, p0.x - b0.cx);
-        const a1 = Math.atan2(p.y - b0.cy, p.x - b0.cx);
+        const a0 = Math.atan2(p0.y - o.y, p0.x - o.x);
+        const a1 = Math.atan2(p.y - o.y, p.x - o.x);
         let deg = (tf0.rotation || 0) + ((a1 - a0) * 180) / Math.PI;
         deg = ((deg + 540) % 360) - 180;
         const snap = Math.round(deg / 90) * 90;
@@ -217,7 +252,29 @@ function TransformOverlay({ W, H, folga = 0 }) {
       </>}
       {guides.x && <line x1={W / 2} y1={0} x2={W / 2} y2={H} stroke="#ff4fd8" strokeDasharray="4 3" />}
       {guides.y && <line x1={0} y1={H / 2} x2={W} y2={H / 2} stroke="#ff4fd8" strokeDasharray="4 3" />}
-      {box && !playing && (() => {
+      {box && !playing && editandoPersp && (() => {
+        const q = quadLocal(clip.transform.persp, box.w, box.h).map(([x, y]) => ({ x: box.cx + x * Math.cos(r) - y * Math.sin(r), y: box.cy + x * Math.sin(r) + y * Math.cos(r) }));
+        const lados = [[0, 1], [1, 2], [2, 3], [3, 0]];
+        return (
+          <g>
+            <polygon points={q.map((p) => `${p.x},${p.y}`).join(' ')} fill="transparent" stroke="#19d3df" strokeWidth="1.5"
+              style={{ cursor: 'move' }} onPointerDown={(e) => beginGesture(e, 'move', clip, box)} />
+            {lados.map(([a, b]) => (
+              <rect key={`l${a}`} x={(q[a].x + q[b].x) / 2 - 5} y={(q[a].y + q[b].y) / 2 - 5} width="10" height="10" rx="2" fill="#19d3df" stroke="#0008"
+                style={{ cursor: 'move' }} onPointerDown={(e) => beginGesture(e, `persp:${CANTOS[a]},${CANTOS[b]}`, clip, box)}>
+                <title>Mover este lado</title>
+              </rect>
+            ))}
+            {q.map((p, i) => (
+              <circle key={CANTOS[i]} cx={p.x} cy={p.y} r="7" fill="#fff" stroke="#19d3df" strokeWidth="2.5"
+                style={{ cursor: 'crosshair' }} onPointerDown={(e) => beginGesture(e, `persp:${CANTOS[i]}`, clip, box)}>
+                <title>Arraste para distorcer este canto</title>
+              </circle>
+            ))}
+          </g>
+        );
+      })()}
+      {box && !playing && !editandoPersp && (() => {
         const pts = [corner(-1, -1), corner(1, -1), corner(1, 1), corner(-1, 1)];
         const sides = [
           { p: corner(-1, 0), mode: 'scale-x', w: 6, h: 16, cursor: 'ew-resize', title: 'Esticar largura (X)' },
@@ -245,6 +302,15 @@ function TransformOverlay({ W, H, folga = 0 }) {
                 style={{ cursor: i % 2 ? 'nesw-resize' : 'nwse-resize' }} onPointerDown={(e) => beginGesture(e, 'scale', clip, box)} />
             ))}
             {!isArea && <circle cx={rh.x} cy={rh.y} r="6" fill="#fff" stroke="#0006" style={{ cursor: 'grab' }} onPointerDown={(e) => beginGesture(e, 'rotate', clip, box)} />}
+            {podePivo && (
+              <g transform={`translate(${box.qx},${box.qy})`} style={{ cursor: 'crosshair' }} onPointerDown={(e) => beginGesture(e, 'pivo', clip, box)}>
+                <title>Pivô: arraste para mudar o ponto em volta do qual a camada cresce e gira</title>
+                <circle r="9" fill="transparent" />
+                <circle r="6" fill="none" stroke="#ffd23f" strokeWidth="1.6" />
+                <line x1="-9" y1="0" x2="9" y2="0" stroke="#ffd23f" strokeWidth="1.4" />
+                <line x1="0" y1="-9" x2="0" y2="9" stroke="#ffd23f" strokeWidth="1.4" />
+              </g>
+            )}
             {guides.angle !== null && <text x={rh.x + 12} y={rh.y - 8} fill="#fff" fontSize="12" style={{ paintOrder: 'stroke', stroke: '#000', strokeWidth: 3 }}>{guides.angle}°</text>}
           </g>
         );

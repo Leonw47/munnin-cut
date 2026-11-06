@@ -12,6 +12,12 @@ export function clipVisivel(clip, media, W, H) {
   if (!media || (clip.type !== 'video' && clip.type !== 'image')) return clip;
   const tf = clip.transform || {};
   if (Math.abs(tf.rotation || 0) > 1e-6) return clip;
+  // com sombra, o recorte na borda da tela faria uma sombra da borda (a sombra é da camada inteira)
+  if (clip.sombra?.on) return clip;
+  // com pivô, X/Y não é o centro da camada (o recorte é pensado em volta do centro)
+  if (tf.pivoX || tf.pivoY) return clip;
+  if (tf.persp?.on) return clip; // perspectiva: distorce a camada inteira
+
   if (clip.kf && MOVE.some((p) => clip.kf[p]?.length)) return clip;
   // na exportação os pontos que mudam ficam em __dyn (splitKf tira o kf): também é movimento
   if (clip.__dyn && MOVE.some((p) => clip.__dyn[p]?.length)) return clip;

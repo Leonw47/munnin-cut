@@ -7,12 +7,20 @@ import { drawTransition } from './transitions.js';
 import { effectDef, seedOf } from '../shared/effects.js';
 import { sharedSvg } from './svgFilters.js';
 import { makeCanvas } from './util.js';
-import { drawShape, shapeSize } from './shapes.js';
+import { drawShape, shapeSize, shapeMargin } from './shapes.js';
 import { keyPixels, DEFAULT_CHROMA } from '../shared/chroma.js';
 import { recortarFoto } from './chromaImg.js';
 import { clipVisivel } from '../shared/visivel.js';
 import { areaCaixa, desenhaMascara } from '../shared/area.js';
 import { resolveAt } from '../shared/keyframes.js';
+import { sombraDe, sombraPx } from '../shared/sombra.js';
+import { pivoDe, temPivo, centroDoPivo } from '../shared/pivo.js';
+import { temPersp, margemPersp, quadLocal, homografia, aplicaH, desenhaPerspectiva } from '../shared/perspectiva.js';
+
+const rgbaCor = (hex, a) => {
+  const n = parseInt(String(hex || '#000000').replace('#', '').padEnd(6, '0').slice(0, 6), 16);
+  return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${Math.max(0, Math.min(1, a))})`;
+};
 
 const DEF_BG = { type: 'color', color: '#000000', blur: 0.03 };
 
@@ -62,7 +70,11 @@ export function clipBox(project, mediaMap, clip, W, H) {
     if (!m) return null;
     ({ w, h } = mediaLayerSize(clip, m, W, H));
   }
-  return { cx: W / 2 + (tf.x || 0) * W, cy: H / 2 + (tf.y || 0) * H, w, h, rot: tf.rotation || 0 };
+  // com pivô, X/Y é o ponto do pivô; o centro sai dele, do tamanho e do giro (qx/qy: o pivô na tela)
+  const qx = W / 2 + (tf.x || 0) * W, qy = H / 2 + (tf.y || 0) * H;
+  const { px, py } = pivoDe(tf);
+  const c = temPivo(tf) ? centroDoPivo(qx, qy, w, h, tf.rotation, px, py) : { cx: qx, cy: qy };
+  return { cx: c.cx, cy: c.cy, w, h, rot: tf.rotation || 0, qx, qy, px, py };
 }
 
 export class Compositor {
@@ -260,6 +272,58 @@ export class Compositor {
     return { img: L.canvas, sx: 0, sy: 0, sw: ow, sh: oh, w, h };
   }
 
+  // Sombra (shared/sombra.js): a camada com a sombra num quadro maior, no espaço da camada (antes de girar/animar,
+  // como na exportação). Quadros muito grandes são desenhados reduzidos — a sombra é borrada, não perde nada.
+  comSombra(clip, L) {
+    const sb = sombraDe(clip);
+    if (!sb) return L;
+    const { sigma, dx, dy, P } = sombraPx(sb, L.w, L.h);
+    const fw = L.w + 2 * P, fh = L.h + 2 * P;
+    const f = Math.min(1, Math.sqrt(4e6 / (fw * fh)));
+    const ow = Math.max(1, Math.round(fw * f)), oh = Math.max(1, Math.round(fh * f));
+    const T = this.layerCanvas(`${clip.id}:sombra`, ow, oh);
+    const x = T.ctx;
+    x.clearRect(0, 0, ow, oh);
+    x.save();
+    x.shadowColor = rgbaCor(sb.cor, sb.opacidade);
+    x.shadowBlur = 2 * sigma * f; // canvas: desvio do desfoque = shadowBlur / 2
+    x.shadowOffsetX = dx * f;
+    x.shadowOffsetY = dy * f;
+    x.drawImage(L.img, L.sx, L.sy, L.sw, L.sh, P * f, P * f, L.w * f, L.h * f);
+    x.restore();
+    return { img: T.canvas, sx: 0, sy: 0, sw: ow, sh: oh, w: fw, h: fh, w0: L.w, h0: L.h };
+  }
+
+  // Perspectiva (shared/perspectiva.js): a camada (com a sombra, se tiver) distorcida num quadro com margem — a
+  // mesma homografia da exportação (caixa da camada → cantos movidos), desenhada em malha de triângulos. Foto parada
+  // e mesmos cantos: reaproveita o desenho anterior.
+  comPerspectiva(clip, L) {
+    const tf = clip.transform || {};
+    if (!temPersp(tf)) return L;
+    const p = tf.persp;
+    const w0 = L.w0 ?? L.w, h0 = L.h0 ?? L.h;
+    const M = margemPersp(p, w0, h0);
+    const PW = L.w + 2 * M, PH = L.h + 2 * M;
+    const f = Math.min(1, Math.sqrt(4e6 / (PW * PH)));
+    const ow = Math.max(1, Math.round(PW * f)), oh = Math.max(1, Math.round(PH * f));
+    const T = this.layerCanvas(`${clip.id}:persp`, ow, oh);
+    // só a foto (<img>) não muda de um quadro para o outro; vídeo e camadas de canvas são redesenhados sempre
+    const chave = JSON.stringify([p, ow, oh, L.sx, L.sy, L.sw, L.sh, L.w, L.h, w0, h0]);
+    const parado = typeof HTMLImageElement !== 'undefined' && L.img instanceof HTMLImageElement && L.img === T.__src && T.__chave === chave;
+    if (!parado) {
+      const cx = PW / 2, cy = PH / 2;
+      const caixa = [[cx - w0 / 2, cy - h0 / 2], [cx + w0 / 2, cy - h0 / 2], [cx + w0 / 2, cy + h0 / 2], [cx - w0 / 2, cy + h0 / 2]];
+      const H = homografia(caixa, quadLocal(p, w0, h0).map(([x, y]) => [cx + x, cy + y]));
+      // o quadro inteiro da camada (com a margem da sombra) segue a mesma homografia
+      const x0 = cx - L.w / 2, y0 = cy - L.h / 2;
+      const dst = [[x0, y0], [x0 + L.w, y0], [x0 + L.w, y0 + L.h], [x0, y0 + L.h]].map(([x, y]) => aplicaH(H, x, y).map((v) => v * f));
+      T.ctx.clearRect(0, 0, ow, oh);
+      desenhaPerspectiva(T.ctx, L.img, L.sx, L.sy, L.sw, L.sh, dst);
+      T.__src = L.img; T.__chave = chave;
+    }
+    return { img: T.canvas, sx: 0, sy: 0, sw: ow, sh: oh, w: PW, h: PH, w0, h0 };
+  }
+
   place(ctx, clip, L, lt, W, H) {
     const a = animState(clip, lt);
     const tf = clip.transform || {};
@@ -269,7 +333,11 @@ export class Compositor {
     ctx.globalAlpha = alpha;
     ctx.translate(W / 2 + ((tf.x || 0) + a.dx) * W, H / 2 + ((tf.y || 0) + a.dy) * H);
     ctx.rotate(((tf.rotation || 0) * Math.PI) / 180 + (a.rot || 0));
-    ctx.scale(a.scale * (tf.flipH ? -1 : 1), a.scale * (tf.flipV ? -1 : 1));
+    ctx.scale(a.scale, a.scale);
+    // pivô: a origem (posição X/Y) é o pivô; o tamanho de referência é o da camada (sem a margem da sombra)
+    const { px, py } = pivoDe(tf);
+    if (px || py) ctx.translate(-px * (L.w0 ?? L.w), -py * (L.h0 ?? L.h));
+    ctx.scale(tf.flipH ? -1 : 1, tf.flipV ? -1 : 1);
     ctx.drawImage(L.img, L.sx, L.sy, L.sw, L.sh, -L.w / 2, -L.h / 2, L.w, L.h);
     ctx.restore();
   }
@@ -329,13 +397,33 @@ export class Compositor {
     ctx.rotate(((tf.rotation || 0) * Math.PI) / 180 + (a.rot || 0));
     const s = a.scale * (tf.scale ?? 1);
     ctx.scale(s * (tf.scaleX ?? 1), s * (tf.scaleY ?? 1));
+    const { px, py } = pivoDe(tf);
+    if (px || py) { const Lt = layoutText(clip.text, k); ctx.translate(-px * Lt.boxW, -py * Lt.boxH); }
     drawTextBlock(ctx, clip.text, k);
     ctx.restore();
   }
 
   drawShapeClip(ctx, clip, lt, W, H, k) {
-    const a = animState(clip, lt);
     const tf = clip.transform || {};
+    if (temPersp(tf)) {
+      // perspectiva: a forma (com escala, largura/altura e espelhar) num canvas próprio, distorcida e posta como uma
+      // foto (place: animações, giro, pivô) — a mesma ordem da exportação (PNG da forma → perspectiva → giro)
+      const s = tf.scale ?? 1, sx = tf.scaleX ?? 1, sy = tf.scaleY ?? 1;
+      const { w, h } = shapeSize(clip.shape, k * s);
+      const m = shapeMargin(clip.shape, k * s);
+      const ow = Math.ceil((w + 2 * m) * sx) + 2, oh = Math.ceil((h + 2 * m) * sy) + 2;
+      const T = this.layerCanvas(`${clip.id}:forma`, ow, oh);
+      T.ctx.clearRect(0, 0, ow, oh);
+      T.ctx.save();
+      T.ctx.translate(ow / 2, oh / 2);
+      T.ctx.scale(sx * (tf.flipH ? -1 : 1), sy * (tf.flipV ? -1 : 1));
+      drawShape(T.ctx, clip.shape, k * s);
+      T.ctx.restore();
+      const L = this.comPerspectiva(clip, { img: T.canvas, sx: 0, sy: 0, sw: ow, sh: oh, w: ow, h: oh, w0: w * sx, h0: h * sy });
+      this.place(ctx, { ...clip, transform: { ...tf, flipH: false, flipV: false } }, L, lt, W, H);
+      return;
+    }
+    const a = animState(clip, lt);
     const alpha = (clip.opacity ?? 1) * a.alpha;
     if (alpha <= 0.002 || a.scale <= 0.0005) return;
     ctx.save();
@@ -343,7 +431,10 @@ export class Compositor {
     ctx.translate(W / 2 + ((tf.x || 0) + a.dx) * W, H / 2 + ((tf.y || 0) + a.dy) * H);
     ctx.rotate(((tf.rotation || 0) * Math.PI) / 180 + (a.rot || 0));
     const s = a.scale * (tf.scale ?? 1);
-    ctx.scale(s * (tf.scaleX ?? 1) * (tf.flipH ? -1 : 1), s * (tf.scaleY ?? 1) * (tf.flipV ? -1 : 1));
+    ctx.scale(s * (tf.scaleX ?? 1), s * (tf.scaleY ?? 1));
+    const { px, py } = pivoDe(tf);
+    if (px || py) { const z = shapeSize(clip.shape, k); ctx.translate(-px * z.w, -py * z.h); }
+    ctx.scale(tf.flipH ? -1 : 1, tf.flipV ? -1 : 1);
     drawShape(ctx, clip.shape, k);
     ctx.restore();
   }
@@ -546,7 +637,7 @@ export class Compositor {
       if (!src) return;
       const cv = this.semRecorte ? c : clipVisivel(c, media, W, H);
       const L = this.mediaLayer(cv, media, src, W, H, lt);
-      if (L) this.place(ctx, cv, L, lt, W, H);
+      if (L) this.place(ctx, cv, this.comPerspectiva(cv, this.comSombra(cv, L)), lt, W, H);
     }
   }
 

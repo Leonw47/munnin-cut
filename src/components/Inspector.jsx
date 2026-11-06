@@ -17,6 +17,11 @@ import { presetCss } from '../panels/TextPanel.jsx';
 import { ShapeThumb } from '../panels/ShapesPanel.jsx';
 import { SHAPE_KINDS } from '../engine/shapes.js';
 import TextoEmLote from './TextoEmLote.jsx';
+import { PadraoLegenda } from '../panels/CaptionsPanel.jsx';
+import { SOMBRA_PADRAO } from '../shared/sombra.js';
+import { PIVOS } from '../shared/pivo.js';
+
+const PERSP_ZERO = { tl: { x: 0, y: 0 }, tr: { x: 0, y: 0 }, br: { x: 0, y: 0 }, bl: { x: 0, y: 0 } };
 
 function Tabs({ tabs, value, onChange }) {
   return (
@@ -234,6 +239,19 @@ function BasicTab({ clip, isMain }) {
         <KfSlider clip={clip} prop="rotation" label="Rotação" min={-180} max={180} toUi={(v) => Math.round(v)} />
         <KfSlider clip={clip} prop="opacity" label="Opacidade" min={0} max={100} toUi={(v) => Math.round(v * 100)} fromUi={(x) => x / 100} />
         {!grupo && <div className="hint" style={{ marginBottom: 8 }}>◆ marca um ponto de modificação no momento da agulha (ou use a tecla K). Com dois pontos ou mais, o valor muda suavemente entre eles.</div>}
+        {!grupo && !isMain && ['image', 'video', 'text', 'shape'].includes(clip.type) && (
+          <Field label="Pivô">
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+              <div className="pivo-grade" title="Ponto em volta do qual a camada cresce, estica e gira">
+                {PIVOS.map((q) => {
+                  const on = Math.abs((tf.pivoX || 0) - q.px) < 1e-3 && Math.abs((tf.pivoY || 0) - q.py) < 1e-3;
+                  return <button key={`${q.px},${q.py}`} className={on ? 'on' : ''} onClick={() => useStore.getState().mudarPivo(id, q.px, q.py)} />;
+                })}
+              </div>
+              <span className="hint">Escala, largura/altura e giro acontecem em volta deste ponto. No reprodutor, arraste o alvo ⊕ para um ponto livre.</span>
+            </div>
+          </Field>
+        )}
         {(isMedia || clip.type === 'shape') && (
           <Field label="Espelhar">
             <div style={{ display: 'flex', gap: 6 }}>
@@ -251,6 +269,8 @@ function BasicTab({ clip, isMain }) {
         </Section>
       )}
       {isMedia && <ChromaSection clip={clip} />}
+      {isMedia && !isMain && <SombraSection clip={clip} />}
+      {!grupo && !isMain && (isMedia || clip.type === 'shape') && <PerspectivaSection clip={clip} />}
       {isMedia && isMain && (
         <Section title="Fundo">
           <Field label="Tipo">
@@ -637,16 +657,70 @@ function TextTab({ clip }) {
           <Field label="Distância Y"><Slider value={st.shadow.y} min={-50} max={50} onChange={(v) => set((t) => { t.shadow.y = v; })} /></Field>
         </>}
       </Section>
+      {clip.caption && !grupo && <PadraoLegenda clip={clip} />}
     </>
+  );
+}
+
+// Perspectiva: os cantos da camada são arrastados no reprodutor (modo "Editar no reprodutor") para inclinar a imagem.
+function PerspectivaSection({ clip }) {
+  const { upd } = useEdicao();
+  const id = clip.id;
+  const editando = useStore((s) => s.perspEdit === clip.id);
+  const p = clip.transform?.persp;
+  const ligar = (v) => {
+    upd(id, (c) => { c.transform = { ...c.transform, persp: { ...PERSP_ZERO, ...c.transform.persp, on: v } }; });
+    useStore.setState({ perspEdit: v ? id : null });
+  };
+  return (
+    <Section title="Perspectiva" right={<Toggle on={!!p?.on} onChange={ligar} />}>
+      {p?.on && <>
+        <div style={{ display: 'flex', gap: 6, marginBottom: 6 }}>
+          <button className={`btn small ${editando ? 'primary' : ''}`} onClick={() => useStore.setState({ perspEdit: editando ? null : id })}>{editando ? 'Concluir' : 'Editar no reprodutor'}</button>
+          <button className="btn small ghost" onClick={() => upd(id, (c) => { c.transform = { ...c.transform, persp: { ...PERSP_ZERO, on: true } }; })}><RotateCcw size={13} /> Redefinir cantos</button>
+        </div>
+        <div className="hint">Arraste os cantos (ou o meio de um lado) no reprodutor para inclinar a {clip.type === 'shape' ? 'forma' : 'imagem'} e dar profundidade.</div>
+      </>}
+    </Section>
+  );
+}
+
+// Sombra de foto/vídeo (faixas de cima): gira e cresce junto com a camada; desfoque e distância relativos ao tamanho dela.
+function SombraSection({ clip }) {
+  const { ed, upd } = useEdicao();
+  const id = clip.id;
+  const sb = { ...SOMBRA_PADRAO, ...clip.sombra };
+  const set = (patch) => ed(id, (c) => { c.sombra = { ...SOMBRA_PADRAO, ...c.sombra, ...patch }; });
+  return (
+    <Section title="Sombra" right={<Toggle on={!!clip.sombra?.on} onChange={(v) => upd(id, (c) => { c.sombra = { ...SOMBRA_PADRAO, ...c.sombra, on: v }; })} />}>
+      {sb.on && <>
+        <Field label="Cor"><ColorInput value={sb.cor} onChange={(v) => set({ cor: v })} /></Field>
+        <Field label="Opacidade"><Slider value={Math.round(sb.opacidade * 100)} min={0} max={100} onChange={(v) => set({ opacidade: v / 100 })} /></Field>
+        <Field label="Desfoque"><Slider value={sb.desfoque} min={0} max={100} onChange={(v) => set({ desfoque: v })} /></Field>
+        <Field label="Distância"><Slider value={sb.distancia} min={0} max={100} onChange={(v) => set({ distancia: v })} /></Field>
+        <Field label="Direção"><Slider value={sb.angulo} min={0} max={360} onChange={(v) => set({ angulo: v })} /></Field>
+        <div className="hint">Direção em graus: 0 = direita, 90 = para baixo, 180 = esquerda, 270 = para cima.</div>
+      </>}
+    </Section>
   );
 }
 
 function ShapeTab({ clip }) {
   const { ed, upd } = useEdicao();
+  const time = useStore((s) => s.time);
   const id = clip.id;
   const sh = clip.shape;
   const set = (fn) => ed(id, (c) => fn(c.shape));
   const big = Math.max(useStore.getState().project.width, useStore.getState().project.height);
+  // Largura/Altura = tamanho final na tela (base × Escala × Largura X/Altura Y, no momento da agulha). Mexer aqui
+  // muda a Largura X/Altura Y — os mesmos valores das alças do reprodutor e da aba Posição, com os pontos de
+  // modificação. (Antes mudava só a base, e a Largura X/Altura Y não acompanhavam.)
+  const tAqui = (c) => Math.max(0, Math.min(c.duration, time - c.start));
+  const tamanho = (c, eixo) => (eixo === 'x' ? c.shape.w : c.shape.h) * propAt(c, 'scale', tAqui(c)) * propAt(c, eixo === 'x' ? 'scaleX' : 'scaleY', tAqui(c));
+  const mudarTamanho = (eixo, px) => ed(id, (c) => {
+    const base = (eixo === 'x' ? c.shape.w : c.shape.h) * propAt(c, 'scale', tAqui(c));
+    setPropAt(c, eixo === 'x' ? 'scaleX' : 'scaleY', Math.max(0.01, Math.min(20, px / Math.max(1e-6, base))), tAqui(c));
+  }, { porClipe: true });
   return (
     <>
       <Section title="Forma">
@@ -660,8 +734,8 @@ function ShapeTab({ clip }) {
         </div>
       </Section>
       <Section title="Tamanho">
-        <Field label="Largura"><Slider value={Math.round(sh.w)} min={4} max={big * 2} onChange={(v) => set((s) => { s.w = v; })} /></Field>
-        <Field label="Altura"><Slider value={Math.round(sh.h)} min={4} max={big * 2} onChange={(v) => set((s) => { s.h = v; })} /></Field>
+        <Field label="Largura"><Slider value={Math.round(tamanho(clip, 'x'))} min={4} max={big * 2} onChange={(v) => mudarTamanho('x', v)} /></Field>
+        <Field label="Altura"><Slider value={Math.round(tamanho(clip, 'y'))} min={4} max={big * 2} onChange={(v) => mudarTamanho('y', v)} /></Field>
         {(sh.kind === 'roundrect' || sh.kind === 'speech') && (
           <Field label="Cantos"><Slider value={sh.radius || 0} min={0} max={400} onChange={(v) => set((s) => { s.radius = v; })} /></Field>
         )}

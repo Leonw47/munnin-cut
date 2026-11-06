@@ -149,7 +149,16 @@ export function createYtdlp({ binDir, ffmpegDir, nodeExe, outDir, videoDir = out
     return { installed, version: installed ? st.version || await version() : null, checkedAt: st.checkedAt || null, channel: st.channel || 'stable' };
   }
 
-  async function once({ url, start, end, kind }, onProgress) {
+  // vídeo na qualidade escolhida (altura máxima; 'max' = a melhor). Até 1080p, de preferência H.264 + AAC (abre em
+  // qualquer lugar); acima disso o YouTube só tem VP9/AV1. Sem a altura pedida, vem a maior abaixo dela. Juntado em MP4.
+  function formatoVideo(qualidade) {
+    const h = qualidade === 'max' ? 0 : Math.max(144, Number(qualidade) || 1080);
+    const lim = h ? `[height<=${h}]` : '';
+    const ordem = h && h <= 1080 ? `res:${h},vcodec:h264,acodec:m4a` : `res${h ? `:${h}` : ''},acodec:m4a`;
+    return ['-f', `bv*${lim}+ba/b${lim}/bv*+ba/b`, '-S', ordem, '--merge-output-format', 'mp4'];
+  }
+
+  async function once({ url, start, end, kind, qualidade }, onProgress) {
     const video = kind === 'video';
     const dir = video ? videoDir : outDir;
     fs.mkdirSync(dir, { recursive: true });
@@ -164,9 +173,8 @@ export function createYtdlp({ binDir, ffmpegDir, nodeExe, outDir, videoDir = out
       '--progress-template', 'download:MCPROG %(progress._percent_str)s',
       '--js-runtimes', `node:${nodeExe}`,
       '--ffmpeg-location', ffmpegDir,
-      // vídeo: até 1080p, de preferência H.264 + AAC (abre em qualquer lugar), juntado em MP4
       ...(video
-        ? ['-f', 'bv*[height<=1080]+ba/b[height<=1080]/b', '-S', 'res:1080,vcodec:h264,acodec:m4a', '--merge-output-format', 'mp4']
+        ? formatoVideo(qualidade)
         : ['-f', 'bestaudio[ext=m4a]/bestaudio/best', '-x', '--audio-format', 'm4a', '--audio-quality', '0']),
       '--windows-filenames', '--trim-filenames', '150',
       '-o', path.join(dir, `%(title)s${suffix}.%(ext)s`),
@@ -192,7 +200,7 @@ export function createYtdlp({ binDir, ffmpegDir, nodeExe, outDir, videoDir = out
   }
 
   /** baixa o áudio (ou o vídeo, kind: 'video') de um link do YouTube; start/end (s) opcionais para só um trecho */
-  async function download({ url, start, end, kind }, onProgress) {
+  async function download({ url, start, end, kind, qualidade = '1080' }, onProgress) {
     if (busy) throw new Error('Já existe um download em andamento.');
     if (!isYoutubeUrl(url) && !isInstagramUrl(url)) throw new Error('Cole um link do YouTube (youtube.com ou youtu.be) ou do Instagram (post ou reel).');
     cancelled = false;
@@ -202,7 +210,7 @@ export function createYtdlp({ binDir, ffmpegDir, nodeExe, outDir, videoDir = out
       if (cancelled) throw new Error('Download cancelado.');
       for (let attempt = 0; ; attempt++) {
         onProgress?.({ stage: 'info', text: 'Lendo o vídeo no YouTube…' });
-        const r = await once({ url, start, end, kind }, onProgress);
+        const r = await once({ url, start, end, kind, qualidade }, onProgress);
         if (r.ok) return r;
         if (cancelled) throw new Error('Download cancelado.');
         log(`falha no download (tentativa ${attempt + 1}): ${r.err.slice(-600)}`);

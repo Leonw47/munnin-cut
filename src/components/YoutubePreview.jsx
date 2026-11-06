@@ -14,6 +14,31 @@ const LER = `(() => { const v = document.querySelector('video');
   return { t: v ? v.currentTime : 0, d: v && isFinite(v.duration) ? v.duration : 0, tocando: !!(v && !v.paused),
     erro: e && e.offsetParent ? (e.innerText || 'erro').trim().slice(0, 200) : '' }; })()`;
 
+// Qualidade do vídeo baixado (altura máxima). Até 1080p o vídeo vem em H.264 (abre em qualquer lugar); acima disso
+// o YouTube só tem VP9/AV1 — o Munnin Cut abre normalmente. Sem essa qualidade no vídeo, vem a maior abaixo dela.
+export const QUALIDADES = [
+  { id: 'max', nome: 'A melhor que tiver' },
+  { id: '2160', nome: '4K (2160p)' },
+  { id: '1440', nome: '2K (1440p)' },
+  { id: '1080', nome: 'Full HD (1080p)' },
+  { id: '720', nome: 'HD (720p)' },
+  { id: '480', nome: '480p' },
+  { id: '360', nome: '360p (leve)' },
+];
+const lerQual = () => { try { return localStorage.getItem('mc.ytQual') || '1080'; } catch { return '1080'; } };
+export function useQualidade() {
+  const [q, setQ] = useState(lerQual);
+  const mudar = (v) => { setQ(v); try { localStorage.setItem('mc.ytQual', v); } catch { /* ignora */ } };
+  return [q, mudar];
+}
+export function EscolhaQualidade({ value, onChange }) {
+  return (
+    <select className="yt-qual" value={value} title="Qualidade do vídeo" onChange={(e) => onChange(e.target.value)}>
+      {QUALIDADES.map((x) => <option key={x.id} value={x.id}>{x.nome}</option>)}
+    </select>
+  );
+}
+
 export default function YoutubePreview({ video, inicial, onClose, onBaixar }) {
   const wvRef = useRef(null);
   const stripRef = useRef(null);
@@ -26,6 +51,7 @@ export default function YoutubePreview({ video, inicial, onClose, onBaixar }) {
   const [range, setRange] = useState({ a: inicial?.start ?? 0, b: inicial?.end ?? (video.duration || 0) });
   const [kind, setKind] = useState(inicial?.kind || 'audio');
   const [toTimeline, setToTimeline] = useState(inicial?.toTimeline ?? true);
+  const [qualidade, setQualidade] = useQualidade();
   const url = `https://www.youtube.com/watch?v=${video.id}`;
   const src = `https://www.youtube-nocookie.com/embed/${video.id}?autoplay=1&rel=0&playsinline=1&modestbranding=1`;
 
@@ -89,7 +115,7 @@ export default function YoutubePreview({ video, inicial, onClose, onBaixar }) {
   const ateFim = range.b <= 0 || (D > 0 && range.b >= D - 0.05);
   const inteiro = !sect || (range.a <= 0.05 && ateFim);
   const baixar = () => onBaixar({
-    url, kind, toTimeline,
+    url, kind, toTimeline, qualidade,
     ...(inteiro ? {} : { start: range.a, end: ateFim ? undefined : range.b }),
     title: video.title,
   });
@@ -100,6 +126,7 @@ export default function YoutubePreview({ video, inicial, onClose, onBaixar }) {
         <button className={kind === 'audio' ? 'on' : ''} onClick={() => setKind('audio')}><Music size={13} /> Só o áudio</button>
         <button className={kind === 'video' ? 'on' : ''} onClick={() => setKind('video')}><Film size={13} /> Vídeo</button>
       </div>
+      {kind === 'video' && <EscolhaQualidade value={qualidade} onChange={setQualidade} />}
       <label className="yt-opt"><Toggle on={toTimeline} onChange={setToTimeline} /> Pôr na linha do tempo</label>
       <button className="btn primary" onClick={baixar}>
         <Download size={15} /> Baixar {inteiro ? (kind === 'video' ? 'o vídeo' : 'o áudio') : (ateFim && !D ? `a partir de ${fmtPrec(range.a)}` : `o trecho (${fmtPrec((ateFim ? D : range.b) - range.a)})`)}

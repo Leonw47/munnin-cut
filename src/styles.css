@@ -167,8 +167,10 @@ textarea { resize: vertical; width: 100%; }
 .libprev-head { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-bottom: 1px solid var(--line); }
 .libprev-tag { background: var(--accent); color: var(--accent-ink); font-size: 10.5px; font-weight: 700; padding: 2px 7px; border-radius: 4px; white-space: nowrap; }
 .libprev-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-2); font-size: 12px; }
-.libprev-stage { flex: 1; min-height: 0; display: grid; place-items: center; overflow: hidden; cursor: pointer; }
-.libprev-stage video, .libprev-stage img { max-width: 100%; max-height: 100%; object-fit: contain; display: block; }
+.libprev-stage { position: relative; flex: 1; min-height: 0; display: grid; place-items: center; overflow: hidden; cursor: pointer; }
+/* ocupa a área inteira e encaixa (contain): numa grade, max-height: 100% não limita a altura — vídeo/foto em pé
+   saía maior que a área e só a parte de cima aparecia */
+.libprev-stage video, .libprev-stage img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; display: block; }
 .libprev-audio { width: 120px; height: 120px; border-radius: 20px; display: grid; place-items: center; color: #9ff0c8; background: linear-gradient(135deg, #123d2c, #1d6f4d); }
 .libprev-foot { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-top: 1px solid var(--line); }
 .libprev-foot .tc { font-variant-numeric: tabular-nums; color: var(--text-2); font-size: 11.5px; white-space: nowrap; }
@@ -227,6 +229,7 @@ textarea { resize: vertical; width: 100%; }
 /* YouTube */
 .yt-box { background: var(--panel-2); border-radius: 8px; padding: 10px; }
 .yt-opt { display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--text-2); cursor: pointer; }
+.yt-qual { max-width: 150px; font-size: 12px; }
 .yt-bar { height: 5px; border-radius: 3px; background: var(--panel-4); overflow: hidden; margin-top: 6px; }
 .yt-bar > div { height: 100%; background: var(--accent); transition: width 0.2s; }
 .yt-bar > div.indet { width: 30% !important; animation: ytindet 1.1s infinite ease-in-out; }
@@ -243,6 +246,10 @@ textarea { resize: vertical; width: 100%; }
 .yt-handle { position: absolute; top: 0; bottom: 0; width: 10px; background: var(--accent); cursor: ew-resize; }
 
 .fx-card { cursor: pointer; }
+/* meus estilos de legenda: um x para apagar ao passar o mouse */
+.fx-card.meu { position: relative; }
+.fx-card.meu .apagar { position: absolute; top: 2px; right: 2px; width: 16px; height: 16px; padding: 0; border: 0; border-radius: 4px; display: grid; place-items: center; background: #000a; color: #fff; opacity: 0; cursor: pointer; }
+.fx-card.meu:hover .apagar { opacity: 1; }
 .fx-card .sw {
   aspect-ratio: 1 / 1; border-radius: 6px; overflow: hidden; position: relative; border: 1.5px solid transparent;
   background: linear-gradient(160deg, #ffb35c 0%, #ff6f61 30%, #8a5cf6 62%, #1fb5c9 100%);
@@ -323,6 +330,10 @@ input[type="range"]::-webkit-slider-thumb { -webkit-appearance: none; width: 12p
 .seg button { border: 0; background: transparent; padding: 4px 10px; border-radius: 4px; color: var(--text-2); display: inline-flex; align-items: center; gap: 4px; }
 .seg button.on { background: var(--panel-4); color: var(--text); }
 .seg button:disabled { opacity: 0.4; cursor: not-allowed; }
+/* pivô: 3×3 pontos sobre um quadrado (a camada) */
+.pivo-grade { flex: 0 0 auto; display: grid; grid-template-columns: repeat(3, 14px); gap: 6px; padding: 5px; border: 1px solid var(--line-2); border-radius: 5px; background: var(--panel-3); }
+.pivo-grade button { width: 14px; height: 14px; padding: 0; border: 1.5px solid var(--text-2); border-radius: 50%; background: transparent; cursor: pointer; }
+.pivo-grade button.on { background: var(--accent); border-color: var(--accent); }
 .color-in { display: flex; align-items: center; gap: 8px; }
 .color-in input[type="color"] { width: 30px; height: 24px; border: 0; padding: 0; background: transparent; cursor: pointer; }
 .color-in input[type="color"]::-webkit-color-swatch-wrapper { padding: 0; }
@@ -362,6 +373,10 @@ input[type="range"]::-webkit-slider-thumb { -webkit-appearance: none; width: 12p
 .track-head { display: flex; align-items: center; gap: 1px; padding: 0 4px 0 8px; color: var(--muted); border-bottom: 1px solid #ffffff08; }
 .track-head .ico { margin-right: auto; display: grid; color: var(--faint); }
 .track-head.main { background: #ffffff05; }
+/* subir/descer a faixa: duas setinhas empilhadas, aparecem ao passar o mouse na faixa */
+.track-head .ordem { display: flex; flex-direction: column; margin-left: 2px; opacity: 0; transition: opacity .12s; }
+.track-head:hover .ordem { opacity: 1; }
+.track-head .ordem .icon-btn { width: 15px; height: 13px; padding: 0; display: grid; place-items: center; border-radius: 3px; }
 .zone { position: relative; }
 .zone.drop-ok { background: var(--accent-soft); outline: 1px dashed var(--accent); outline-offset: -3px; }
 .clip {
@@ -395,8 +410,11 @@ input[type="range"]::-webkit-slider-thumb { -webkit-appearance: none; width: 12p
   position: absolute; top: 50%; width: 22px; height: 22px; margin: -11px 0 0 -11px; border-radius: 5px; border: 0; z-index: 6;
   background: #e8e8ec; color: #222; display: grid; place-items: center; box-shadow: 0 1px 4px #0008; padding: 0;
 }
-.trans-btn.empty { background: #ffffff30; color: #fff; opacity: 0; }
-.track-row:hover .trans-btn.empty { opacity: 1; }
+.trans-btn.empty { background: #ffffff30; color: #fff; opacity: 0; pointer-events: none; }
+.track-row:hover .trans-btn.empty { opacity: 1; pointer-events: auto; }
+/* faixas de cima: etiqueta na borda de cima da emenda; as alças de aparar ficam livres embaixo */
+.trans-btn.topo { top: 0; width: 18px; height: 13px; margin: 0 0 0 -9px; border-radius: 0 0 5px 5px; }
+.trans-btn.topo.empty { background: #ffffff55; }
 .trans-btn.selected { outline: 2px solid var(--accent); }
 .trans-btn:hover { transform: scale(1.1); }
 .playhead { position: absolute; top: 0; bottom: 0; width: 0; z-index: 8; pointer-events: none; }
