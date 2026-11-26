@@ -36,6 +36,16 @@ const docsRoot = AUTOTEST ? path.join(os.tmpdir(), 'munnin-cut-testdocs') : path
 const draftsDir = path.join(docsRoot, 'Projetos');
 const recordingsDir = path.join(docsRoot, 'Gravações');
 const jobsRoot = path.join(os.tmpdir(), 'munnin-cut-jobs');
+// temporários de exportações antigas (pastas de trabalho com mais de 7 dias) não ficam acumulando
+setTimeout(() => {
+  try {
+    const limite = Date.now() - 7 * 24 * 3600e3;
+    for (const d of fs.readdirSync(jobsRoot)) {
+      const p = path.join(jobsRoot, d);
+      if (/^job_/.test(d) && fs.statSync(p).mtimeMs < limite) fs.rm(p, { recursive: true, force: true }, () => {});
+    }
+  } catch { /* sem pasta ainda */ }
+}, 15000);
 const modelsDir = path.join(userDir, 'models');
 for (const d of [cacheDir, logsDir, draftsDir, recordingsDir, jobsRoot, modelsDir]) fs.mkdirSync(d, { recursive: true });
 
@@ -253,17 +263,24 @@ ipcMain.handle('fs:write', async (_e, scope, name, bytes) => {
   return file;
 });
 // Cache dos quadros das camadas de efeito: reaproveitado quando o efeito não muda entre exportações.
-ipcMain.handle('fxcache:status', (_e, key) => {
+// arquivo: o que o conjunto precisa ter (ex.: voz.wav) — sumiu (apagado, pasta mexida), conta como não feito e é refeito.
+// Usar um conjunto renova a data dele, para a limpeza não apagar o que está em uso.
+ipcMain.handle('fxcache:status', (_e, key, arquivo) => {
   const dir = scopeDir(`fxcache:${key}`);
-  return { dir, done: fs.existsSync(path.join(dir, 'done')) };
+  const marca = path.join(dir, 'done');
+  const done = fs.existsSync(marca) && (!arquivo || fs.existsSync(path.join(dir, arquivo)));
+  if (done) { const agora = new Date(); try { fs.utimesSync(marca, agora, agora); fs.utimesSync(dir, agora, agora); } catch { /* ignore */ } }
+  return { dir, done };
 });
 ipcMain.handle('fxcache:done', (_e, key) => {
   const dir = scopeDir(`fxcache:${key}`);
   fs.writeFileSync(path.join(dir, 'done'), String(Date.now()));
-  // mantém só os 40 conjuntos mais recentes
+  // mantém os 40 conjuntos mais recentes — e nunca apaga os usados nas últimas 12 h: um projeto com 134 clipes com
+  // "Voz" cria 134 conjuntos na mesma exportação, e a limpeza apagava as vozes dos primeiros antes de o FFmpeg lê-las
   try {
+    const limite = Date.now() - 12 * 3600e3;
     const all = fs.readdirSync(fxCacheRoot).map((d) => ({ d, t: fs.statSync(path.join(fxCacheRoot, d)).mtimeMs })).sort((a, b) => b.t - a.t);
-    for (const x of all.slice(40)) fs.rmSync(path.join(fxCacheRoot, x.d), { recursive: true, force: true });
+    for (const x of all.slice(40)) if (x.t < limite) fs.rmSync(path.join(fxCacheRoot, x.d), { recursive: true, force: true });
   } catch { /* ignore */ }
   return true;
 });

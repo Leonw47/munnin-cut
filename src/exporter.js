@@ -191,7 +191,7 @@ export function startExport(opts) {
         const precisaAnalise = v.ruido > 0.5 || v.realce > 0.5;
         const analise = precisaAnalise ? (meta[m.id]?.voz || await window.api.vozAnalisar(m.path, m.duration)) : null;
         const key = `voz_${hashKey(JSON.stringify([VOZ_VERSAO, p, m.fp || null, inPt.toFixed(3), durSrc.toFixed(3), v, analise?.nivel ?? null]))}`;
-        const st = await window.api.fxCacheStatus(key);
+        const st = await window.api.fxCacheStatus(key, 'voz.wav'); // sem o voz.wav (apagado, pasta mexida), refaz
         if (!st.done) {
           const origem = await window.api.vozExtrair(p, inPt.toFixed(3), durSrc.toFixed(3), jobId);
           const bytes = await renderizarVoz(mediaUrl(origem), v, analise);
@@ -213,7 +213,7 @@ export function startExport(opts) {
           const ch = { ...DEFAULT_CHROMA, ...c.chroma };
           const fonte = meta[m.id]?.proxy || m.renderPath || m.path;
           const key = `chroma_${hashKey(JSON.stringify([fonte, m.fp || null, ch.color, ch.similarity, ch.smooth, ch.spill, ch.bordas]))}`;
-          const st = await window.api.fxCacheStatus(key);
+          const st = await window.api.fxCacheStatus(key, 'foto.png');
           if (!st.done) {
             if (onProgress) onProgress(0, null, 'Recortando o fundo das fotos…');
             const img = new Image();

@@ -3,6 +3,19 @@
 Formato baseado em [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/) e versões no padrão
 [SemVer](https://semver.org/lang/pt-BR/): MAJOR.MINOR.PATCH — correções sobem o PATCH, recursos novos o MINOR.
 
+## [1.13.1] — 2026-11-26
+
+### Corrigido
+- **"Não foi possível gerar as legendas: Error opening input ... voz.wav"** (e o mesmo erro ao exportar) em projetos
+  com muitos clipes com "Voz": a voz limpa de cada clipe fica guardada no cache, e a limpeza do cache (que mantinha
+  só os 40 itens mais recentes) apagava as vozes dos primeiros clipes antes de elas serem usadas — num projeto com
+  134 clipes, quase todas. Agora o que foi usado nas últimas 12 horas nunca é apagado, e uma voz que sumiu do cache
+  (apagada ou com a pasta mexida) é refeita sozinha. O mesmo vale para o recorte de fundo das fotos.
+- Temporários de exportações antigas (mais de 7 dias) são apagados sozinhos.
+
+### Testes
+- `scripts/autotest-voz-cache.js`: 45 clipes com Voz exportam; uma voz apagada do cache é refeita.
+
 ## [1.13.0] — 2026-11-06
 
 ### Corrigido

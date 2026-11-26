@@ -38,7 +38,7 @@ contextBridge.exposeInMainWorld('api', {
   captionTranscribe: (opts) => ipcRenderer.invoke('captions:transcribe', opts),
   captionCancel: () => ipcRenderer.invoke('captions:cancel'),
   onCaptionProgress: on('captions:progress'),
-  fxCacheStatus: (key) => ipcRenderer.invoke('fxcache:status', key),
+  fxCacheStatus: (key, arquivo) => ipcRenderer.invoke('fxcache:status', key, arquivo),
   sfxList: () => ipcRenderer.invoke('sfx:list'),
   vozAnalisar: (p, duracao) => ipcRenderer.invoke('voz:analisar', p, duracao),
   vozExtrair: (p, ss, t, jobId) => ipcRenderer.invoke('voz:extrair', p, ss, t, jobId),
